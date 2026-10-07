@@ -1,30 +1,34 @@
 @echo off
-chcp 65001 >nul
-title DEKA BOM Karşılaştırma
+cd /d "%~dp0"
+title DEKA BOM Karsilastirma
 
 echo ====================================================
-echo        DEKA ELEKTRONİK - BOM KARŞILAŞTIRMA
+echo        DEKA ELEKTRONIK - BOM KARSILASTIRMA
 echo ====================================================
 echo.
 
-if not exist ".venv" (
-    echo [1/3] Sanal ortam (.venv) oluşturuluyor...
-    py -m venv .venv 2>nul || python -m venv .venv 2>nul
-    if errorlevel 1 (
-        echo [HATA] Python bulunamadı! Lütfen Python 3.10 veya üzerini yükleyin ve PATH'e ekleyin.
+if not exist ".venv\Scripts\python.exe" (
+    echo [1/3] Sanal ortam olusturuluyor...
+    python -m venv .venv 2>nul
+    if not exist ".venv\Scripts\python.exe" (
+        py -m venv .venv 2>nul
+    )
+    if not exist ".venv\Scripts\python.exe" (
+        echo.
+        echo [HATA] Python bulunamadi!
+        echo Lutfen Python 3.10 veya uzerini yukleyin.
+        echo Kurulum sirasinda "Add python.exe to PATH" secenegini isaretleyin.
+        echo.
         pause
         exit /b 1
     )
-    echo [2/3] Bağımlılıklar yükleniyor, lütfen bekleyin...
-    call .venv\Scripts\activate.bat
-    pip install -e ".[dev]" --quiet
-) else (
-    call .venv\Scripts\activate.bat
+    echo [2/3] Paketler yukleniyor, lutfen bekleyin...
+    ".venv\Scripts\python.exe" -m pip install -e ".[dev]"
 )
 
-echo [3/3] Sunucu başlatılıyor...
+echo [3/3] Web sunucusu baslatiliyor...
 echo.
-echo Tarayıcınız açılıyor: http://127.0.0.1:8000
+echo Tarayicinizda aciliyor: http://127.0.0.1:8000
 start http://127.0.0.1:8000
-python -m bom_enricher.web
+".venv\Scripts\python.exe" -m bom_enricher.web
 pause
