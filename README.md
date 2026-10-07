@@ -30,28 +30,42 @@ Bu proje, müşteri tarafından sağlanan Excel BOM (Bill of Materials) listeler
 
 ---
 
-## 🚀 Hızlı Başlangıç
+## 🚀 Kurulum ve Çalıştırma
 
-### 1. Kurulum
+Projeyi kendi bilgisayarınızda çalıştırmak için aşağıdaki adımları izleyin:
 
+### 1. Repoyu Klonlayın ve Dala Geçin
+```bash
+git clone https://github.com/deka-internship/erp-data-manager.git
+cd erp-data-manager
+git checkout dev-sudem
+```
+
+### 2. Sanal Ortamı Kurun ve Bağımlılıkları Yükleyin
+
+**Windows (PowerShell):**
 ```powershell
-# Sanal ortam oluşturma ve bağımlılıkları yükleme
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 ```
 
-### 2. Web Arayüzünü Çalıştırma
-
-```powershell
-.\.venv\Scripts\python.exe -m bom_enricher.web
+**macOS / Linux:**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
 
-Tarayıcınızda açın: **`http://127.0.0.1:8000`**
+### 3. Web Arayüzünü Başlatın
+```bash
+python -m bom_enricher.web
+```
 
-1. Müşteri BOM ve ERP dosyalarını yükleyin.
+Tarayıcınızdan **`http://127.0.0.1:8000`** adresine gidin:
+1. **Müşteri BOM** ve **ERP** Excel (`.xlsx`) dosyalarını seçin.
 2. **Karşılaştırmayı Başlat** butonuna basın.
-3. Sonuçları görüntüleyin ve Excel raporunu indirin.
+3. Sonuçları anlık inceleyin veya **Excel Raporunu İndir** ile tam raporu alın.
 
 ---
 
