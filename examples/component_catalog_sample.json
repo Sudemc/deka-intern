@@ -1,0 +1,7 @@
+{
+  "synthetic_data_disclaimer": "Entirely fictional synthetic data for software examples and offline tests only. Not manufacturer, product, stock, or ERP truth.",
+  "SYN-CAP-001": {"manufacturer":"Example Components Ltd. (fictional)","short_description":"10 uF 16 V ceramic capacitor","mounting":"SMD","attributes":{"capacitance":"10 uF","voltage":"16 V","dielectric":"X7R","package":"0805"}},
+  "SYN-RES-002": {"manufacturer":"Imaginary Passive Works (fictional)","short_description":"1 kOhm 1% resistor","mounting":"SMD","attributes":{"resistance":"1 kOhm","tolerance":"1%","power":"0.1 W","package":"0603"}},
+  "SYN-CONN-003": {"manufacturer":"Placeholder Devices (fictional)","short_description":"2-position through-hole connector","mounting":"TH","attributes":{"positions":"2","pitch":"2.54 mm","package":"vertical header"}},
+  "SYN-IC-004": {"manufacturer":"Example Silicon (fictional)","short_description":"Generic 8-pin logic device","mounting":"SMD","attributes":{"function":"logic device","pins":"8","package":"SOIC-8"}}
+}

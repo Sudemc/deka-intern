@@ -1,0 +1,1042 @@
+"""Excel-to-Excel BOM comparison and ERP rule validation."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+import re
+import unicodedata
+
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+
+from .excel_io import read_customer_bom
+from .semantic_parser import compare_descriptions, normalize_code_key, normalize_mounting
+
+
+OUTPUT_HEADERS = (
+    "Durum",
+    "Part Number",
+    "Müşteri Qty",
+    "ERP Qty",
+    "Müşteri Value",
+    "ERP Description",
+    "Müşteri TH/SMD",
+    "ERP TH/SMD",
+    "Hata/Uyarı Durumu",
+)
+_MAX_SHEET_SCAN_ROWS = 30
+
+
+def _classify_severity(issues: list[str]) -> str:
+    """Classify issues into 'HATA' (red), 'UYARI' (yellow), or 'UYGUN' (normal)."""
+    if not issues:
+        return "UYGUN"
+    error_keywords = (
+        "Miktar Uyuşmazlığı",
+        "Referans sayısı uyumsuz",
+        "Sistemde Yok",
+        "Montaj Tipi Çelişkisi",
+        "Voltaj farklı",
+        "Kılıf/Paket farklı",
+        "yinelenen Part Number",
+        "TH/SMD ile Description",
+    )
+    for issue in issues:
+        if any(keyword in issue for keyword in error_keywords):
+            return "HATA"
+    return "UYARI"
+
+
+@dataclass(frozen=True)
+class PartRecord:
+    part_number: str
+    description: str
+    mounting: str = ""
+    reference: str = ""
+    material_type: str = ""
+    qty: str = ""
+    manufacturer: str = ""
+    package: str = ""
+    duplicate: bool = False
+
+
+@dataclass(frozen=True)
+class ComparisonResult:
+    rows: list[dict[str, str]]
+    total_part_count: int
+
+
+@dataclass(frozen=True)
+class RuleEntry:
+    """One complete rule row, including type, ordering, language and code affixes."""
+
+    material_type: str
+    attribute_code: str
+    attribute_name: str
+    value: str
+    value_description: str
+    language: str
+    sort_order: str
+    prefix: str
+    suffix: str
+
+
+@dataclass(frozen=True)
+class RuleBook:
+    """The source dictionary indexed by material type and attribute name."""
+
+    entries: tuple[RuleEntry, ...]
+    by_type_attribute: dict[str, dict[str, tuple[RuleEntry, ...]]]
+    by_attribute: dict[str, tuple[RuleEntry, ...]]
+
+    @property
+    def material_types(self) -> set[str]:
+        return set(self.by_type_attribute)
+
+
+def _is_product_code_token(token: str) -> bool:
+    """Return True if *token* looks like a standalone product code (not a short word like MDD)."""
+    stripped = re.sub(r"[^A-Za-z0-9]", "", token)
+    return len(stripped) >= 4 and any(c.isdigit() for c in stripped)
+
+
+def expand_parentheses_variants(code: str) -> list[str]:
+    """Expand slash packaging variants inside parentheses.
+
+    For example:
+    - 'CL10B104KB8NNN(C/D)' -> ['CL10B104KB8NNN(C/D)', 'CL10B104KB8NNNC', 'CL10B104KB8NNND']
+    - '0805(S/W)8F1002T(5/D)E' -> ['0805(S/W)8F1002T(5/D)E', '0805S8F1002T5E', ...]
+    """
+    match = re.search(r"\(([A-Za-z0-9]+(?:/[A-Za-z0-9]+)+)\)", code)
+    if not match:
+        return [code]
+    options = match.group(1).split("/")
+    prefix = code[: match.start()]
+    suffix = code[match.end() :]
+    results: list[str] = []
+    for opt in options:
+        variant = f"{prefix}{opt}{suffix}"
+        results.extend(expand_parentheses_variants(variant))
+    return list(dict.fromkeys([code] + results))
+
+
+def _split_multi_code(raw: str) -> list[str]:
+    """Split an ERP Part Number cell that contains space/comma/slash separated alternative codes.
+
+    Returns a list of individual code strings including packaging variants.
+    If the cell holds only a single code (e.g. 'BAV99 MDD', 'TE 2324 DPN'),
+    it returns the full code (plus any parentheses variants).
+    """
+    cleaned = re.sub(r"[,;|\n\r]+", " ", raw)
+    cleaned = re.sub(r"\s+/\s+", " ", cleaned)
+    tokens = cleaned.split()
+    if len(tokens) <= 1:
+        return expand_parentheses_variants(raw.strip())
+
+    valid = [t for t in tokens if _is_product_code_token(t)]
+    if len(valid) >= 2:
+        results: list[str] = []
+        for v in valid:
+            results.extend(expand_parentheses_variants(v))
+        return list(dict.fromkeys(results))
+
+    return expand_parentheses_variants(raw.strip())
+
+
+def _split_refs(s: str) -> set[str]:
+    """Split reference designators into normalized uppercase tokens."""
+    return {t.strip().upper() for t in re.split(r"[,;|\s/]+", s or "") if t.strip()}
+
+
+def _should_pair_refs(crefs: set[str], erefs: set[str]) -> bool:
+    """Determine whether two sets of reference designators should be paired."""
+    if not crefs or not erefs:
+        return False
+    if crefs == erefs:
+        return True
+    overlap = crefs & erefs
+    if not overlap:
+        return False
+    c_prefixes = {r[:1] for r in crefs if r}
+    e_prefixes = {r[:1] for r in erefs if r}
+    if len(c_prefixes) == 1 and c_prefixes == e_prefixes and list(c_prefixes)[0] in "CRLDQUJSF":
+        if crefs.issubset(erefs) or erefs.issubset(crefs):
+            return True
+        if len(overlap) / min(len(crefs), len(erefs)) >= 0.5:
+            return True
+    return False
+
+
+def compare_workbooks(
+    customer_path: Path,
+    erp_path: Path,
+    rules_path: Path | None = None,
+    output_path: Path | None = None,
+) -> ComparisonResult:
+    """Compare customer/ERP rows by MPN and RefDes, saving only rows requiring review."""
+    rules = load_rulebook(rules_path) if rules_path else None
+    customer = load_records(customer_path, kind="customer")
+    erp_raw = load_records(erp_path, kind="erp")
+
+    # ── ERP çoklu Part Number genişletme ──
+    # ERP hücresinde boşlukla ayrılmış birden fazla alternatif üretici kodu
+    # varsa (ör. "CL21B104KBCNNNC 885012207098 CC0805KRX7R9BB104") her kodu
+    # ayrı PartRecord olarak genişlet.  Aynı hücreden gelen kardeş kodları
+    # izle: eğer birisi müşteri tarafında eşleşirse diğerlerini raporlama.
+    erp: list[PartRecord] = []
+    sibling_groups: list[dict[str, object]] = []   # her grup: primary kod ve grubun tüm normalized kodları
+    for rec in erp_raw:
+        codes = _split_multi_code(rec.part_number)
+        if len(codes) > 1:
+            group: set[str] = set()
+            for code in codes:
+                erp.append(PartRecord(
+                    part_number=code,
+                    description=rec.description,
+                    mounting=rec.mounting,
+                    reference=rec.reference,
+                    material_type=rec.material_type,
+                    qty=rec.qty,
+                    manufacturer=rec.manufacturer,
+                    package=rec.package,
+                ))
+                group.add(_normalize_code(code))
+            sibling_groups.append({
+                "primary": _normalize_code(codes[0]),
+                "all": group,
+            })
+        else:
+            erp.append(rec)
+
+    customer_by_code = _unique_records(customer)
+    erp_by_code = _unique_records(erp)
+
+    # ── Üç Aşamalı Eşleme (Three-Pass Matching) ──
+    # Aşama 1: Normalized Part Number üzerinden birincil eşleme
+    matched_pairs: list[tuple[PartRecord | None, PartRecord | None]] = []
+    unmatched_cust: dict[str, PartRecord] = dict(customer_by_code)
+    unmatched_erp: dict[str, PartRecord] = dict(erp_by_code)
+
+    for code in list(unmatched_cust.keys()):
+        if not code.startswith("__NO_CODE_") and code in unmatched_erp:
+            matched_pairs.append((unmatched_cust.pop(code), unmatched_erp.pop(code)))
+
+    # Aşama 2: RefDes eşleme (Part Number farklı fakat devre pozisyonu aynı olanlar)
+    # Önce tam eşleşenler (exact match crefs == erefs), ardından kısmi örtüşenler
+    for pass_mode in ("exact", "fuzzy"):
+        for ck in list(unmatched_cust.keys()):
+            c_rec = unmatched_cust.get(ck)
+            if not c_rec:
+                continue
+            crefs = _split_refs(c_rec.reference)
+            if not crefs:
+                continue
+            for ek in list(unmatched_erp.keys()):
+                e_rec = unmatched_erp.get(ek)
+                if not e_rec:
+                    continue
+                erefs = _split_refs(e_rec.reference)
+                if not erefs:
+                    continue
+                match = False
+                if pass_mode == "exact" and crefs == erefs:
+                    match = True
+                elif pass_mode == "fuzzy" and _should_pair_refs(crefs, erefs):
+                    match = True
+
+                if match:
+                    matched_pairs.append((c_rec, e_rec))
+                    del unmatched_cust[ck]
+                    del unmatched_erp[ek]
+                    break
+
+    # Aşama 3: Açıklama (Description) ile Eşleme
+    # Eğer ERP'deki bir parça müşteri tarafında kod veya RefDes ile bulunamadıysa,
+    # fakat müşteri listesinde Part Number'ı boş olan bir satırın açıklaması ERP açıklamasıyla
+    # birebir aynıysa (veya normalize edilmiş hali uyuşuyorsa) bunları eşleştir:
+    for ek in list(unmatched_erp.keys()):
+        e_rec = unmatched_erp.get(ek)
+        if not e_rec or not e_rec.description.strip():
+            continue
+        e_desc_norm = _normalize_description(e_rec.description)
+        for ck in list(unmatched_cust.keys()):
+            c_rec = unmatched_cust.get(ck)
+            if not c_rec:
+                continue
+            if not c_rec.part_number.strip() and c_rec.description.strip():
+                c_desc_norm = _normalize_description(c_rec.description)
+                if c_desc_norm == e_desc_norm:
+                    matched_pairs.append((c_rec, e_rec))
+                    del unmatched_cust[ck]
+                    del unmatched_erp[ek]
+                    break
+
+    # ── Kardeş kod filtreleme ──
+    # Çoklu Part Number hücresinden gelen alternatif kodlardan biri müşteri
+    # tarafında eşleşmişse, eşleşmeyen kardeş kodları rapordan çıkar.
+    matched_erp_normalized_codes = {
+        _normalize_code(e.part_number)
+        for c, e in matched_pairs
+        if e is not None
+    }
+    filtered_unmatched_erp: list[PartRecord] = []
+    for ek, e_rec in unmatched_erp.items():
+        code_norm = _normalize_code(e_rec.part_number)
+        skip = False
+        for group in sibling_groups:
+            if code_norm in group["all"]:
+                if group["all"] & matched_erp_normalized_codes:
+                    skip = True
+                elif code_norm != group["primary"]:
+                    skip = True
+                break
+        if not skip:
+            filtered_unmatched_erp.append(e_rec)
+
+    # Eşleşmeyen yalnız-müşteri ve yalnız-ERP kayıtları
+    for c_rec in unmatched_cust.values():
+        matched_pairs.append((c_rec, None))
+    for e_rec in filtered_unmatched_erp:
+        matched_pairs.append((None, e_rec))
+
+    # Sabit ve tutarlı sıralama
+    matched_pairs.sort(key=lambda pair: ((pair[0] or pair[1]).part_number.upper() if (pair[0] or pair[1]) else ""))
+
+    report: list[dict[str, str]] = []
+    for customer_record, erp_record in matched_pairs:
+        c_pn = customer_record.part_number.strip() if customer_record else ""
+        e_pn = erp_record.part_number.strip() if erp_record else ""
+
+        # Part Number gösterimi
+        if customer_record and erp_record:
+            if c_pn and e_pn and _normalize_code(c_pn) != _normalize_code(e_pn):
+                display_code = f"{c_pn} / {e_pn}"
+            else:
+                display_code = c_pn or e_pn
+        elif customer_record:
+            display_code = c_pn or customer_record.reference or "(Part Number Yok)"
+        else:
+            display_code = e_pn
+
+        customer_value = customer_record.description if customer_record else ""
+        erp_description = erp_record.description if erp_record else ""
+        customer_qty = customer_record.qty if customer_record else ""
+        erp_qty = erp_record.qty if erp_record else ""
+        customer_mounting = customer_record.mounting if customer_record else ""
+        erp_mounting = erp_record.mounting if erp_record else ""
+
+        # ERP veya müşteride montaj sütunu boşsa açıklamadan (TH / SMD) otomatik tespit et:
+        if not erp_mounting and erp_description:
+            inferred_erp = normalize_mounting(erp_description)
+            if inferred_erp:
+                erp_mounting = inferred_erp
+
+        if not customer_mounting and customer_value:
+            inferred_cust = normalize_mounting(customer_value)
+            if inferred_cust:
+                customer_mounting = inferred_cust
+        issues: list[str] = []
+
+        if customer_record is None:
+            issues.append("Sistemde Yok: müşteri dosyasında bulunamadı")
+        elif erp_record is None:
+            issues.append("Sistemde Yok: ERP dosyasında bulunamadı")
+            if not c_pn:
+                issues.append("Part Number eksik (Müşteri dosyasında Part Number belirtilmemiş)")
+
+        if customer_record and customer_record.duplicate:
+            issues.append("Müşteri dosyasında yinelenen Part Number")
+        if erp_record and erp_record.duplicate:
+            issues.append("ERP dosyasında yinelenen Part Number")
+
+        # Part Number eksik uyarısı (müşteri ve ERP eşleşti ama müşteri part number boş)
+        if customer_record and erp_record and not c_pn:
+            issues.append("Part Number eksik (Müşteri dosyasında Part Number belirtilmemiş)")
+
+        pn_diff_note = ""
+        if customer_record and erp_record and c_pn and e_pn and _normalize_code(c_pn) != _normalize_code(e_pn):
+            pn_diff_note = f"Part Number farklı (Müşteri: {c_pn}, ERP: {e_pn})"
+
+        if customer_record and erp_record:
+            # 1. Qty (Miktar) Kıyaslaması
+            if customer_qty and erp_qty:
+                try:
+                    c_num = float(customer_qty)
+                    e_num = float(erp_qty)
+                    if c_num != e_num:
+                        issues.append(f"Miktar Uyuşmazlığı (Müşteri: {customer_qty}, ERP: {erp_qty})")
+                except ValueError:
+                    if customer_qty.strip() != erp_qty.strip():
+                        issues.append(f"Miktar Uyuşmazlığı (Müşteri: {customer_qty}, ERP: {erp_qty})")
+
+            # 2. Müşteri Qty vs Referans Adedi
+            if customer_record.reference and customer_qty:
+                ref_tokens = [r.strip() for r in re.split(r"[,;\s]+", customer_record.reference) if r.strip()]
+                valid_refs = [r for r in ref_tokens if re.match(r"^[A-Za-z]+\d+", r)]
+                if valid_refs:
+                    try:
+                        if float(customer_qty) != len(valid_refs):
+                            issues.append(
+                                f"Müşteri Qty ile Referans sayısı uyumsuz (Qty: {customer_qty}, Ref: {len(valid_refs)})"
+                            )
+                    except ValueError:
+                        pass
+
+            # 3. Dizgi/Referans Farkı (Müşteri vs ERP)
+            c_refs = _split_refs(customer_record.reference)
+            e_refs = _split_refs(erp_record.reference)
+            if c_refs and e_refs and c_refs != e_refs:
+                issues.append(f"Dizgi/Referans farkı (Müşteri: {customer_record.reference}, ERP: {erp_record.reference})")
+
+            # 4. Müşteri Montaj vs ERP Montaj
+            if customer_mounting and erp_mounting:
+                c_mount = normalize_mounting(customer_mounting)
+                e_mount = normalize_mounting(erp_mounting)
+                if c_mount and e_mount and c_mount != e_mount:
+                    issues.append(f"Montaj Tipi Çelişkisi (Müşteri: {customer_mounting}, ERP: {erp_mounting})")
+
+            # 5. Semantik Açıklama ve Teknik Değer Kıyaslaması
+            issues.extend(compare_descriptions(customer_value, erp_description))
+
+        if erp_record:
+            if customer_record and customer_record.material_type and erp_record.material_type:
+                if _normalize_label(customer_record.material_type) != _normalize_label(erp_record.material_type):
+                    issues.append("Müşteri ve ERP malzeme tipi çelişkisi")
+            validation_record = PartRecord(
+                part_number=erp_record.part_number,
+                description=erp_record.description,
+                mounting=erp_record.mounting,
+                reference=erp_record.reference or (customer_record.reference if customer_record else ""),
+                material_type=erp_record.material_type or (customer_record.material_type if customer_record else ""),
+                qty=erp_record.qty,
+                package=erp_record.package or (customer_record.package if customer_record else ""),
+                manufacturer=erp_record.manufacturer or (customer_record.manufacturer if customer_record else ""),
+            )
+            issues.extend(validate_erp_rules(validation_record, rules) if rules else [])
+
+        if issues and pn_diff_note:
+            issues.insert(0, pn_diff_note)
+
+        durum = _classify_severity(issues)
+        issue_str = "; ".join(dict.fromkeys(issues))
+
+        report.append({
+            "Durum": durum,
+            "Part Number": display_code,
+            "Müşteri Qty": customer_qty,
+            "ERP Qty": erp_qty,
+            "Müşteri Value": customer_value,
+            "ERP Description": erp_description,
+            "Müşteri TH/SMD": customer_mounting,
+            "ERP TH/SMD": erp_mounting,
+            "Hata/Uyarı Durumu": issue_str,
+        })
+
+    if output_path:
+        write_comparison_report(report, output_path)
+    return ComparisonResult(report, len(matched_pairs))
+
+
+def load_records(path: Path, kind: str) -> list[PartRecord]:
+    """Load customer or ERP rows, finding a header row and common header aliases."""
+    if kind not in {"customer", "erp"}:
+        raise ValueError("kind must be 'customer' or 'erp'.")
+    if kind == "customer":
+        # Müşteri şablonları değişebildiği için mevcut BOM okuyucusunun başlık
+        # eş anlamlılarını ve kod biçimi sezgisini kullan; belirsiz kodu seçme.
+        customer_rows = read_customer_bom(Path(path))
+        records = []
+        for row in customer_rows:
+            code = row.part_number
+            candidates = list(dict.fromkeys(
+                candidate.value.strip()
+                for candidate in row.product_code_candidates
+                if candidate.value.strip()
+            ))
+            if not code and len(candidates) == 1:
+                code = candidates[0]
+            elif not code and len(candidates) > 1:
+                raise ValueError(
+                    f"{Path(path).name}, satır {row.source_row}: birden fazla ürün kodu adayı bulundu. "
+                    "Part Number sütun başlığını netleştirin."
+                )
+            if code:
+                records.append(PartRecord(
+                    part_number=code,
+                    description=row.value,
+                    reference=row.part,
+                    mounting=row.mounting,
+                    qty=_cell_text(row.qty),
+                    manufacturer=row.manufacturer,
+                    package=row.package,
+                ))
+            else:
+                qty_str = _cell_text(row.qty).strip()
+                has_qty = bool(qty_str) and any(c.isdigit() for c in qty_str)
+                ref_str = (row.part or "").strip()
+                circuit_ref_pattern = r"^(?:R|C|L|D|Q|U|IC|J|CN|P|TP|SW|F|FB|T|LED|BT|Y|X|K|VR|ZD|TR|TH|MOV|TS|BRK)\d+"
+                has_ref = bool(ref_str and re.match(circuit_ref_pattern, ref_str, re.IGNORECASE))
+                # Dipnot / revizyon satırlarını ele: yalnızca geçerli miktar veya devre referansı olan satırları parça say
+                if has_qty or (has_ref and bool((row.value or "").strip())):
+                    records.append(PartRecord(
+                        part_number="",
+                        description=row.value,
+                        reference=row.part,
+                        mounting=row.mounting,
+                        qty=qty_str,
+                        manufacturer=row.manufacturer,
+                        package=row.package,
+                    ))
+        if not records:
+            raise ValueError(f"{Path(path).name}: ürün kodu veya malzeme satırı bulunamadı.")
+        return records
+
+    frame, headers = _read_table_with_detected_header(Path(path), sheet_name=None)
+    part_col = _find_column(headers, "part_number")
+    description_col = (
+        _find_column(headers, "value") or _find_column(headers, "description")
+        if kind == "customer"
+        else _find_column(headers, "description") or _find_column(headers, "value")
+    )
+    mounting_col = _find_column(headers, "mounting")
+    reference_col = _find_column(headers, "reference")
+    material_type_col = _find_column(headers, "material_type")
+    qty_col = _find_column(headers, "qty")
+    package_col = _find_column(headers, "package")
+    manufacturer_col = _find_column(headers, "manufacturer")
+    if part_col is None:
+        raise ValueError(f"{Path(path).name}: Part Number / ürün kodu sütunu bulunamadı.")
+    if description_col is None:
+        expected = "Value" if kind == "customer" else "Description"
+        raise ValueError(f"{Path(path).name}: {expected} / açıklama sütunu bulunamadı.")
+
+    records: list[PartRecord] = []
+    for _, row in frame.iterrows():
+        code = _cell_text(row.get(part_col))
+        if not code:
+            continue
+        records.append(PartRecord(
+            part_number=code,
+            description=_cell_text(row.get(description_col)),
+            mounting=_cell_text(row.get(mounting_col)) if mounting_col else "",
+            reference=_cell_text(row.get(reference_col)) if reference_col else "",
+            material_type=_cell_text(row.get(material_type_col)) if material_type_col else "",
+            qty=_cell_text(row.get(qty_col)) if qty_col else "",
+            package=_cell_text(row.get(package_col)) if package_col else "",
+            manufacturer=_cell_text(row.get(manufacturer_col)) if manufacturer_col else "",
+        ))
+    if not records:
+        raise ValueError(f"{Path(path).name}: başlık bulundu ancak ürün kodu içeren satır yok.")
+    return records
+
+
+def load_rulebook(path: Path) -> RuleBook:
+    """Read every populated rule field from the combined materials dictionary."""
+    with pd.ExcelFile(path) as workbook:
+        sheet = _find_rules_sheet(workbook.sheet_names)
+        raw = pd.read_excel(workbook, sheet_name=sheet, header=None, dtype=object)
+    header_index: int | None = None
+    required_columns = {
+        "material_type": {"malzemetipi"},
+        "attribute_code": {"ozellikattribute", "attribute"},
+        "attribute_name": {"ozellikaciklamasi", "attributeaciklamasi"},
+        "value": {"value"},
+        "value_description": {"valueaciklamasi"},
+        "language": {"langu", "language"},
+        "sort_order": {"siralamasortno", "sortno"},
+        "prefix": {"prefix"},
+        "suffix": {"suffix"},
+    }
+    column_indexes: dict[str, int] = {}
+    # Sözlükte başlık satırı sabit satırda olmayabileceği için ilk bölüm taranır.
+    for row_index in range(min(_MAX_SHEET_SCAN_ROWS, len(raw))):
+        row = [_header_key(value) for value in raw.iloc[row_index].tolist()]
+        detected = {
+            field: next((i for i, name in enumerate(row) if name in aliases), None)
+            for field, aliases in required_columns.items()
+        }
+        if all(index is not None for index in detected.values()):
+            header_index = row_index
+            column_indexes = {field: int(index) for field, index in detected.items()}
+            break
+    if header_index is None:
+        raise ValueError(
+            f"Kurallar dosyasının '{sheet}' sayfasında 9 kural sütununun tamamı bulunamadı."
+        )
+
+    parsed: list[RuleEntry] = []
+    for _, row in raw.iloc[header_index + 1:].iterrows():
+        values = {field: _cell_text(row.iloc[index]) for field, index in column_indexes.items()}
+        if not any(values.values()):
+            continue
+        parsed.append(RuleEntry(**values))
+
+    grouped: dict[str, dict[str, list[RuleEntry]]] = defaultdict(lambda: defaultdict(list))
+    by_attribute: dict[str, list[RuleEntry]] = defaultdict(list)
+    for entry in parsed:
+        if entry.material_type and entry.attribute_name:
+            attribute = _normalize_attribute(entry.attribute_name)
+            grouped[_normalize_label(entry.material_type)][attribute].append(entry)
+            by_attribute[attribute].append(entry)
+    indexed = {
+        material_type: {
+            attribute: tuple(entries)
+            for attribute, entries in attributes.items()
+        }
+        for material_type, attributes in grouped.items()
+    }
+    all_attributes = {name: tuple(entries) for name, entries in by_attribute.items()}
+    return RuleBook(tuple(parsed), indexed, all_attributes)
+
+
+def validate_erp_rules(record: PartRecord, rulebook: RuleBook) -> list[str]:
+    """Validate ERP mounting and recognized rule values for the inferred material type."""
+    issues: list[str] = []
+    material_type = _infer_material_type(record, rulebook)
+    if material_type is None:
+        issues.append("Malzeme tipi belirlenemedi; tipe bağlı sözlük kuralları doğrulanamadı")
+        return issues
+
+    rules = rulebook.by_type_attribute[material_type]
+    mounting_entries = rules.get("mounting", ())
+    declared = _resolve_rule_entry(record.mounting, mounting_entries)
+    description_mount = _resolve_rule_entry(record.description, mounting_entries)
+    if record.mounting.strip() and declared is None:
+        issues.append(f"ERP TH/SMD değeri {material_type} sözlüğünde tanınmıyor")
+    if declared and description_mount and _normalize_label(declared) != _normalize_label(description_mount):
+        issues.append("TH/SMD ile Description montaj tipi çelişkisi")
+    issues.extend(_validate_description_values(record.description, rules, rulebook, material_type))
+    return issues
+
+
+def write_comparison_report(rows: list[dict[str, str]], output_path: Path) -> None:
+    """Write comparison report containing all components with severity-based coloring."""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Karşılaştırma Raporu"
+    sheet.append(OUTPUT_HEADERS)
+    for cell in sheet[1]:
+        cell.fill = PatternFill("solid", fgColor="173B32")
+        cell.font = Font(color="FFFFFF", bold=True)
+        cell.alignment = Alignment(vertical="center", wrap_text=True)
+
+    red_fill = PatternFill("solid", fgColor="FCE8E6")     # Yanlış bilgi / hata için açık kırmızı
+    yellow_fill = PatternFill("solid", fgColor="FFF2CC")  # Uyarı için açık sarı
+
+    for row in rows:
+        sheet.append([row.get(header, "") for header in OUTPUT_HEADERS])
+        current_row = sheet[sheet.max_row]
+        durum = row.get("Durum", "UYGUN")
+        row_fill = None
+        if durum == "HATA":
+            row_fill = red_fill
+        elif durum == "UYARI":
+            row_fill = yellow_fill
+
+        for cell in current_row:
+            if row_fill:
+                cell.fill = row_fill
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    widths = (12, 28, 14, 14, 36, 36, 16, 16, 44)
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    sheet.row_dimensions[1].height = 28
+    destination = Path(output_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(destination)
+    workbook.close()
+
+
+def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
+    grouped: dict[str, list[PartRecord]] = defaultdict(list)
+    no_code_count = 0
+    for record in records:
+        if not record.part_number.strip():
+            no_code_count += 1
+            grouped[f"__NO_CODE_{no_code_count}__"].append(record)
+        else:
+            grouped[_normalize_code(record.part_number)].append(record)
+    result: dict[str, PartRecord] = {}
+    for normalized, group in grouped.items():
+        descriptions = list(dict.fromkeys(item.description for item in group if item.description))
+        mountings = list(dict.fromkeys(item.mounting for item in group if item.mounting))
+        references = list(dict.fromkeys(item.reference for item in group if item.reference))
+        material_types = list(dict.fromkeys(item.material_type for item in group if item.material_type))
+        packages = list(dict.fromkeys(item.package for item in group if item.package))
+        manufacturers = list(dict.fromkeys(item.manufacturer for item in group if item.manufacturer))
+
+        total_qty = 0
+        has_qty = False
+        non_numeric_qtys = []
+        for item in group:
+            if item.qty:
+                has_qty = True
+                try:
+                    total_qty += int(float(item.qty))
+                except ValueError:
+                    non_numeric_qtys.append(item.qty)
+        if has_qty:
+            if non_numeric_qtys:
+                qty_str = ", ".join(non_numeric_qtys)
+            else:
+                qty_str = str(total_qty)
+        else:
+            qty_str = ""
+
+        result[normalized] = PartRecord(
+            part_number=group[0].part_number,
+            description=" | ".join(descriptions),
+            mounting=" | ".join(mountings),
+            reference=" | ".join(references),
+            material_type=material_types[0] if len(material_types) == 1 else "",
+            qty=qty_str,
+            manufacturer=" | ".join(manufacturers),
+            package=" | ".join(packages),
+            duplicate=len(group) > 1 if not normalized.startswith("__NO_CODE_") else False,
+        )
+    return result
+
+
+def _read_table_with_detected_header(path: Path, sheet_name: str | None) -> tuple[pd.DataFrame, dict[str, str]]:
+    with pd.ExcelFile(path) as book:
+        selected_sheet = sheet_name or book.sheet_names[0]
+        raw = pd.read_excel(book, sheet_name=selected_sheet, header=None, dtype=object)
+        for row_index in range(min(_MAX_SHEET_SCAN_ROWS, len(raw))):
+            headers = [_cell_text(value) for value in raw.iloc[row_index].tolist()]
+            keys = {_header_key(header) for header in headers}
+            if any(_header_field(header) == "part_number" for header in keys):
+                frame = pd.read_excel(book, sheet_name=selected_sheet, header=row_index, dtype=object)
+                resolved: dict[str, str] = {}
+                for column in frame.columns:
+                    role = _header_field(_cell_text(column))
+                    if role and role not in resolved:
+                        resolved[role] = str(column)
+                return frame, resolved
+    raise ValueError(f"{path.name}: ilk {_MAX_SHEET_SCAN_ROWS} satırda ürün kodu başlığı bulunamadı.")
+
+
+def _find_rules_sheet(sheet_names: list[str]) -> str:
+    for name in sheet_names:
+        if _header_key(name) == "birlestirilmis":
+            return name
+    for name in sheet_names:
+        if "birlestirilmis" in _header_key(name):
+            return name
+    raise ValueError("Kurallar dosyasında 'BİRLEŞTİRİLMİŞ' sayfası bulunamadı.")
+
+
+def _find_column(headers: dict[str, str], role: str) -> str | None:
+    return headers.get(role)
+
+
+def _header_field(header: str) -> str | None:
+    key = _header_key(header)
+    if key in {"partnumber", "manufacturerpartnumber", "mpn", "productcode", "urunkodu", "malzemekodu", "stokkodu"}:
+        return "part_number"
+    if key in {"part", "reference", "ref", "refdes", "designator", "parca", "referans"}:
+        return "reference"
+    if key in {"malzemetipi", "materialtype", "componenttype", "parttype"}:
+        return "material_type"
+    if key in {"value", "customerdescription", "musterivalue", "deger"}:
+        return "value"
+    if key in {"description", "erpdescription", "aciklama", "aciklama1", "urunaciklamasi"}:
+        return "description"
+    if key in {"th/smd", "thsmd", "mounting", "montajtipi", "montaj", "montajsekli"}:
+        return "mounting"
+    if key in {"qty", "quantity", "adet", "miktar", "sayi", "count"}:
+        return "qty"
+    if key in {"package", "footprint", "case", "kilif", "paket", "size"}:
+        return "package"
+    if key in {"manufacturer", "manufacture", "maker", "brand", "uretici", "marka"}:
+        return "manufacturer"
+    return None
+
+
+def _header_key(value: object) -> str:
+    text = unicodedata.normalize("NFKD", _cell_text(value).casefold())
+    return "".join(char for char in text if char.isalnum())
+
+
+def _normalize_code(value: str) -> str:
+    return normalize_code_key(value)
+
+
+def _normalize_description(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
+def _normalize_label(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value.casefold())
+    return "".join(character for character in normalized if character.isalnum())
+
+
+def _normalize_attribute(value: str) -> str:
+    label = _normalize_label(value)
+    if label == "mounting":
+        return "mounting"
+    if label.startswith("package"):
+        return "package"
+    if label.startswith("valu"):
+        return "value"
+    if label.startswith("serial"):
+        return "serial"
+    return label
+
+
+def _cell_text(value: object) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def _resolve_rule_entry(text: str, entries: tuple[RuleEntry, ...]) -> str | None:
+    """Resolve a display value or value code using only the selected type's rules."""
+    normalized = _normalize_description(text).strip(" ,;:/")
+    if not normalized:
+        return None
+    matches: list[RuleEntry] = []
+    for entry in entries:
+        for alias in (entry.value, entry.value_description):
+            candidate = _normalize_description(alias).strip(" ,;:/")
+            if candidate and normalized == candidate:
+                matches.append(entry)
+                break
+    if len(matches) != 1:
+        # Description alanı uzun metin olduğunda yalnız açıkça bulunan sözlük
+        # açıklamasını kabul et; kısa kodları metin içinde arama.
+        matches = [
+            entry for entry in entries
+            if entry.value_description
+            and len(_normalize_description(entry.value_description).strip(" ,;:/")) >= 2
+            and _contains_phrase(text, _entry_text(entry))
+        ]
+    if not matches:
+        return None
+    descriptions = list(dict.fromkeys(entry.value_description for entry in matches if entry.value_description))
+    return descriptions[0] if len(descriptions) == 1 else None
+
+
+def _entry_text(entry: RuleEntry) -> str:
+    description = entry.value_description.strip().strip(" ,;:/")
+    if _normalize_attribute(entry.attribute_name) == "tolerance":
+        try:
+            numeric_value = float(description)
+        except ValueError:
+            numeric_value = None
+        if numeric_value is not None and 0 < numeric_value < 1:
+            description = f"{numeric_value * 100:g}%"
+    return description
+
+
+def _contains_phrase(text: str, phrase: str) -> bool:
+    """Match a normalized phrase without allowing it inside a larger word/value."""
+    normalized_text = _normalize_description(text)
+    normalized_phrase = _normalize_description(phrase).strip(" ,;:/")
+    if not normalized_phrase:
+        return False
+    start = 0
+    while (position := normalized_text.find(normalized_phrase, start)) >= 0:
+        end = position + len(normalized_phrase)
+        left_ok = position == 0 or not (normalized_text[position - 1].isalnum() or normalized_text[position - 1] in "-_")
+        right_ok = end == len(normalized_text) or not (normalized_text[end].isalnum() or normalized_text[end] in "-_")
+        if left_ok and right_ok:
+            return True
+        start = position + 1
+    return False
+
+
+def _infer_material_type(record: PartRecord, rulebook: RuleBook) -> str | None:
+    explicit = _normalize_label(record.material_type)
+    if explicit in rulebook.by_type_attribute:
+        return explicit
+
+    ref_clean = _normalize_label(record.reference)
+    if ref_clean in rulebook.by_type_attribute:
+        return ref_clean
+
+    desc_clean = record.description.casefold()
+    ref_lower = record.reference.casefold()
+
+    if "lehim" in ref_lower or "lehim" in desc_clean:
+        if "sarf" in rulebook.by_type_attribute:
+            return "sarf"
+
+    if "stm32" in desc_clean or "stm32" in record.part_number.casefold():
+        if "mcu" in rulebook.by_type_attribute:
+            return "mcu"
+
+    if "voltage regulator" in desc_clean or "regulator" in desc_clean:
+        if "icr" in rulebook.by_type_attribute:
+            return "icr"
+
+    if "humidity sensor" in desc_clean or "shtc3" in desc_clean:
+        if "isl" in rulebook.by_type_attribute:
+            return "isl"
+
+    if "makaron" in desc_clean or "makaron" in ref_lower:
+        if "sarf" in rulebook.by_type_attribute:
+            return "sarf"
+
+    if "display board" in desc_clean or "displayboard" in desc_clean or "display board" in ref_lower:
+        if "ymml" in rulebook.by_type_attribute:
+            return "ymml"
+        if "pcb" in rulebook.by_type_attribute:
+            return "pcb"
+
+    if "coil:" in desc_clean or "relay" in desc_clean or "röle" in desc_clean or "role" in desc_clean:
+        if "rel" in rulebook.by_type_attribute:
+            return "rel"
+
+    if "opto" in desc_clean or "ltv-" in desc_clean or "isp817" in desc_clean or "pc817" in desc_clean:
+        if "opt" in rulebook.by_type_attribute:
+            return "opt"
+
+    if "konnektör" in desc_clean or "connector" in desc_clean or "terminal block" in desc_clean or "modular jack" in desc_clean:
+        if "con" in rulebook.by_type_attribute:
+            return "con"
+
+    if "ac/dc converter" in desc_clean or "ac/dc" in desc_clean or "tny" in desc_clean or "tny" in record.part_number.casefold():
+        if "icr" in rulebook.by_type_attribute:
+            return "icr"
+
+    if "bridge" in desc_clean or "köprü" in desc_clean or "sdip-4l" in desc_clean:
+        if "dio" in rulebook.by_type_attribute:
+            return "dio"
+
+    # Part/Ref designator prefixes give a deterministic class for common BOM items.
+    reference_map = {
+        "c": "cap", "r": "res", "l": "ind", "d": "dio", "fb": "fer",
+        "f": "fus", "j": "con", "led": "led", "sw": "swt", "x": "cry",
+        "y": "cry", "ls": "spk", "spk": "spk", "bz": "buz", "mic": "mic",
+        "pcb": "pcb", "vr": "var", "rv": "var", "var": "var",
+        "ds": "dsp", "dsp": "dsp", "rt": "res", "ts": "spr",
+        "q": "tra", "ld": "led", "s": "swt",
+        "cbl": "cbl", "cable": "cbl",
+        "rp": "res", "tft": "dsp", "spc": "mknk", "bant": "sarf",
+        "p": "con", "rl": "rel", "k": "rel", "hs": "con", "mk": "sarf",
+        "br": "dio", "csn": "cap", "rsn": "res",
+    }
+    inferred: set[str] = set()
+    for segment in re.split(r"[,;|]", record.reference.upper()):
+        match = re.match(r"\s*([A-Za-z0-9_]+)", segment)
+        if match:
+            raw_token = match.group(1).casefold()
+            # Try exact prefix match first
+            candidate = reference_map.get(raw_token)
+            if not candidate:
+                # Strip trailing digits or underscores
+                alpha_only = re.sub(r"[\d_].*$", "", raw_token)
+                candidate = reference_map.get(alpha_only)
+            if not candidate:
+                if raw_token.startswith("r") and not raw_token.startswith(("rl", "rv", "rp", "rt")):
+                    candidate = "res"
+                elif raw_token.startswith("c") and not raw_token.startswith(("cbl",)):
+                    candidate = "cap"
+                elif raw_token.startswith("d") or raw_token.startswith("br"):
+                    candidate = "dio"
+                elif raw_token.startswith("l"):
+                    candidate = "ind"
+                elif raw_token.startswith("j") or raw_token.startswith("p"):
+                    candidate = "con"
+            if candidate and candidate in rulebook.by_type_attribute:
+                inferred.add(candidate)
+    if len(inferred) == 1:
+        return next(iter(inferred))
+
+    # Ambiguous reference designators (for example Q3) are resolved only by a
+    # unique type-specific Value/Type term present in the ERP description.
+    scores: dict[str, int] = defaultdict(int)
+    for material_type, attributes in rulebook.by_type_attribute.items():
+        for attribute, entries in attributes.items():
+            if attribute not in {"value", "type"}:
+                continue
+            for entry in entries:
+                phrase = _entry_text(entry)
+                if len(phrase) >= 3 and (
+                    _contains_phrase(record.description, phrase)
+                    or _contains_phrase(record.part_number, phrase)
+                ):
+                    scores[material_type] += len(phrase)
+    if not scores:
+        return None
+    best_score = max(scores.values())
+    winners = [material_type for material_type, score in scores.items() if score == best_score]
+    return winners[0] if len(winners) == 1 else None
+
+
+def _validate_description_values(
+    description: str,
+    typed_rules: dict[str, tuple[RuleEntry, ...]],
+    rulebook: RuleBook,
+    material_type: str,
+) -> list[str]:
+    """Flag recognized dictionary terms that are not allowed for this material type."""
+    findings: list[str] = []
+    matched_for_order: list[tuple[int, float, str]] = []
+    valid_type_phrases = {
+        _normalize_description(_entry_text(entry))
+        for entries in typed_rules.values()
+        for entry in entries
+        if _entry_text(entry)
+    }
+
+    # Only validate attributes that this material type defines (excluding mounting and manufacturer Q)
+    for attribute, allowed in typed_rules.items():
+        if attribute in {"mounting", "q"}:
+            continue
+        all_entries = rulebook.by_attribute.get(attribute, ())
+        detected = [
+            entry for entry in all_entries
+            if len(_entry_text(entry)) >= 3 and _contains_phrase(description, _entry_text(entry))
+        ]
+        if not detected:
+            continue
+        allowed_phrases = {_normalize_description(_entry_text(entry)) for entry in allowed}
+        invalid = [
+            entry for entry in detected
+            if _normalize_description(_entry_text(entry)) not in allowed_phrases
+        ]
+        if invalid:
+            invalid = [
+                entry for entry in invalid
+                if _normalize_description(_entry_text(entry)) not in valid_type_phrases
+            ]
+        if invalid:
+            example = invalid[0]
+            sample = list(dict.fromkeys(_entry_text(entry) for entry in invalid))[:3]
+            findings.append(
+                f"Description sözlük uyumsuzluğu ({material_type}/"
+                f"{example.attribute_name}, attribute {example.attribute_code}): "
+                + ", ".join(sample)
+            )
+
+    # Sıralama kontrolü: yalnızca bu malzeme tipinin kendi attribute'ları
+    for attribute, entries in typed_rules.items():
+        if attribute == "mounting":
+            continue
+        for entry in entries:
+            phrase = _entry_text(entry)
+            if len(phrase) < 3 or not _contains_phrase(description, phrase):
+                continue
+            try:
+                sort_order = float(entry.sort_order)
+            except ValueError:
+                continue
+            position = _normalize_description(description).find(_normalize_description(phrase))
+            if position >= 0:
+                matched_for_order.append((position, sort_order, attribute))
+
+    matched_for_order.sort()
+    sort_orders = [item[1] for item in matched_for_order]
+    if any(later < earlier for earlier, later in zip(sort_orders, sort_orders[1:])):
+        findings.append("Description içindeki özellik sırası sözlük SORTNO sırasıyla uyuşmuyor")
+    return findings
