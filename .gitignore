@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Temporary & local scratch files
+scratch/
+reports/test_*
+reports/heater_comparison_temp.xlsx
+*.old.md
+*.jpeg
+*.jpg
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
