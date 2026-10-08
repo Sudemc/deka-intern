@@ -25,6 +25,8 @@ class CustomerBomRow:
     package: str = ""
     product_code_candidates: tuple[PartNumberCandidate, ...] = ()
     source_row: int = 0
+    source_sheet: str = ""
+    source_file: str = ""
 
 
 @dataclass(frozen=True)

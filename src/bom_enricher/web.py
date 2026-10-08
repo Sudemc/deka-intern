@@ -45,21 +45,43 @@ def health() -> dict[str, str]:
 
 @app.post("/api/compare", tags=["BOM"])
 async def compare_uploads(
-    customer_file: UploadFile = File(...),
+    customer_files: list[UploadFile] = File(default=[]),
+    customer_file: UploadFile | None = File(None),
     erp_file: UploadFile = File(...),
     rules_file: UploadFile | None = File(None),
 ) -> dict[str, object]:
-    uploads: dict[str, UploadFile] = {
-        "customer": customer_file,
-        "erp": erp_file,
-    }
-    if rules_file is not None and getattr(rules_file, "filename", None):
-        uploads["rules"] = rules_file
+    all_customer_uploads: list[UploadFile] = []
+    if customer_file is not None and getattr(customer_file, "filename", None):
+        all_customer_uploads.append(customer_file)
+    for u in customer_files:
+        if getattr(u, "filename", None):
+            all_customer_uploads.append(u)
+
+    if not all_customer_uploads:
+        raise HTTPException(status_code=400, detail="customer: en az bir müşteri BOM dosyası yükleyin.")
 
     job_dir = tempfile.TemporaryDirectory(prefix="bom-comparison-")
-    paths: dict[str, Path] = {}
+    customer_paths: list[Path] = []
+    paths: dict[str, Path | None] = {}
     try:
-        for role, upload in uploads.items():
+        for index, upload in enumerate(all_customer_uploads, start=1):
+            filename = Path(upload.filename or "").name
+            if Path(filename).suffix.casefold() != ".xlsx":
+                raise HTTPException(status_code=400, detail="customer: yalnızca .xlsx dosyası yükleyin.")
+            content = await upload.read(_MAX_UPLOAD_BYTES + 1)
+            if not content:
+                raise HTTPException(status_code=400, detail="customer: seçilen dosya boş.")
+            if len(content) > _MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="customer: dosya 20 MB sınırını aşıyor.")
+            c_path = Path(job_dir.name) / f"customer_{index}_{filename}"
+            c_path.write_bytes(content)
+            customer_paths.append(c_path)
+
+        other_uploads: dict[str, UploadFile] = {"erp": erp_file}
+        if rules_file is not None and getattr(rules_file, "filename", None):
+            other_uploads["rules"] = rules_file
+
+        for role, upload in other_uploads.items():
             filename = Path(upload.filename or "").name
             if Path(filename).suffix.casefold() != ".xlsx":
                 raise HTTPException(status_code=400, detail=f"{role}: yalnızca .xlsx dosyası yükleyin.")
@@ -79,7 +101,7 @@ async def compare_uploads(
                 paths["rules"] = None
 
         output_path = Path(job_dir.name) / "Hata_ve_Kiyaslama_Raporu.xlsx"
-        result = compare_workbooks(paths["customer"], paths["erp"], paths.get("rules"), output_path)
+        result = compare_workbooks(customer_paths, paths["erp"], paths.get("rules"), output_path)
     except HTTPException:
         job_dir.cleanup()
         raise
@@ -87,8 +109,11 @@ async def compare_uploads(
         job_dir.cleanup()
         raise HTTPException(status_code=422, detail=str(error)) from error
     finally:
-        for upload in uploads.values():
+        for upload in all_customer_uploads:
             await upload.close()
+        await erp_file.close()
+        if rules_file is not None:
+            await rules_file.close()
 
     result_id = uuid4().hex
     _store_result(result_id, output_path, job_dir)

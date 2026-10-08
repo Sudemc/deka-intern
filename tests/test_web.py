@@ -122,3 +122,37 @@ def test_web_compares_two_files_using_embedded_default_rules(tmp_path):
     payload = response.json()
     assert "download_url" in payload
     assert payload["total_part_count"] >= 1
+
+
+def test_web_compares_multiple_customer_files(tmp_path):
+    bytes_tr1 = _workbook_bytes(
+        tmp_path, "TR1.xlsx", "BOM",
+        ["Part Number", "Value", "Part", "Qty"],
+        [["AC0603KRX7R9BB104", "100nF 50V", "C1, C2, C3, C4", 4]],
+    )
+    bytes_st1 = _workbook_bytes(
+        tmp_path, "ST1.xlsx", "BOM",
+        ["Part Number", "Value", "Part", "Qty"],
+        [["AC0603KRX7R9BB104", "100nF 50V", "C5, C6", 2]],
+    )
+    bytes_erp = _workbook_bytes(
+        tmp_path, "erp.xlsx", "ERP",
+        ["Part Number", "Description", "Part", "Qty", "TH/SMD"],
+        [["AC0603KRX7R9BB104", "100nF 50V", "TR1_C1, TR1_C2, TR1_C3, TR1_C4, ST1_C5, ST1_C6", 6, "SMD"]],
+    )
+
+    mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    multipart = [
+        ("customer_files", ("TR1.xlsx", bytes_tr1, mime)),
+        ("customer_files", ("ST1.xlsx", bytes_st1, mime)),
+        ("erp_file", ("erp.xlsx", bytes_erp, mime)),
+    ]
+
+    response = _request("POST", "/api/compare", files=multipart)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["total_part_count"] == 1
+    assert str(payload["rows"][0]["Müşteri Qty"]) == "6"
+    assert str(payload["rows"][0]["ERP Qty"]) == "6"
+    assert payload["clean_count"] == 1
+

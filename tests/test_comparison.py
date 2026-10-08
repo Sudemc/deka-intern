@@ -355,5 +355,77 @@ def test_compare_workbooks_without_rules(tmp_path):
     assert "Montaj Tipi Çelişkisi" in con_row["Hata/Uyarı Durumu"]
 
 
+def test_multi_customer_files_aggregated_against_single_erp(tmp_path):
+    tr1_file = tmp_path / "TR1.xlsx"
+    st1_file = tmp_path / "ST1.xlsx"
+    erp_file = tmp_path / "erp.xlsx"
+
+    _write_book(tr1_file, "BOM", ["Part Number", "Value", "Part", "Qty"], [
+        ["AC0603KRX7R9BB104", "100nF 50V", "C10, C14, C45, C47", 4],
+        ["CAP-01", "100nF 50V", "C7", 1],
+    ])
+    _write_book(st1_file, "BOM", ["Part Number", "Value", "Part", "Qty"], [
+        ["AC0603KRX7R9BB104", "100nF 50V", "C18, C22", 2],
+        ["CAP-02", "10uF 25V", "C7", 1],
+    ])
+    _write_book(erp_file, "ERP", ["Part Number", "Description", "Part", "Qty", "TH/SMD"], [
+        ["AC0603KRX7R9BB104", "100nF 50V SMD", "TR1_C10, TR1_C14, TR1_C45, TR1_C47, ST1_C18, ST1_C22", 6, "SMD"],
+        ["CAP-01", "100nF 50V SMD", "TR1_C7", 1, "SMD"],
+        ["CAP-02", "10uF 25V SMD", "ST1_C7", 1, "SMD"],
+    ])
+
+    output = tmp_path / "multi_customer_out.xlsx"
+    result = compare_workbooks([tr1_file, st1_file], erp_file, output_path=output)
+
+    assert result.total_part_count == 3
+    ac_row = next(r for r in result.rows if r["Part Number"] == "AC0603KRX7R9BB104")
+    assert str(ac_row["Müşteri Qty"]) == "6"
+    assert str(ac_row["ERP Qty"]) == "6"
+    assert "Miktar Uyuşmazlığı" not in ac_row["Hata/Uyarı Durumu"]
+    assert "yinelenen Part Number" not in ac_row["Hata/Uyarı Durumu"]
+    assert ac_row["Durum"] == "UYGUN"
+
+    cap1 = next(r for r in result.rows if r["Part Number"] == "CAP-01")
+    assert cap1["Durum"] == "UYGUN"
+    assert str(cap1["Müşteri Qty"]) == "1"
+
+    cap2 = next(r for r in result.rows if r["Part Number"] == "CAP-02")
+    assert cap2["Durum"] == "UYGUN"
+    assert str(cap2["Müşteri Qty"]) == "1"
+
+
+def test_multi_sheet_single_customer_workbook_aggregated(tmp_path):
+    wb_file = tmp_path / "panel_customer.xlsx"
+    erp_file = tmp_path / "erp_panel.xlsx"
+
+    wb = Workbook()
+    ws1 = wb.active
+    ws1.title = "TR1"
+    ws1.append(["Part Number", "Value", "Part", "Qty"])
+    ws1.append(["AC0603KRX7R9BB104", "100nF 50V", "C1, C2, C3", 3])
+
+    ws2 = wb.create_sheet("ST1")
+    ws2.append(["Part Number", "Value", "Part", "Qty"])
+    ws2.append(["AC0603KRX7R9BB104", "100nF 50V", "C4, C5, C6, C7, C8", 5])
+
+    wb.save(wb_file)
+    wb.close()
+
+    _write_book(erp_file, "ERP", ["Part Number", "Description", "Part", "Qty", "TH/SMD"], [
+        ["AC0603KRX7R9BB104", "100nF 50V SMD", "TR1_C1, TR1_C2, TR1_C3, ST1_C4, ST1_C5, ST1_C6, ST1_C7, ST1_C8", 8, "SMD"]
+    ])
+
+    output = tmp_path / "multi_sheet_out.xlsx"
+    result = compare_workbooks(wb_file, erp_file, output_path=output)
+
+    assert result.total_part_count == 1
+    row = result.rows[0]
+    assert row["Part Number"] == "AC0603KRX7R9BB104"
+    assert str(row["Müşteri Qty"]) == "8"
+    assert str(row["ERP Qty"]) == "8"
+    assert row["Durum"] == "UYGUN"
+
+
+
 
 

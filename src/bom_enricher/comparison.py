@@ -13,7 +13,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .excel_io import read_customer_bom
+from .excel_io import find_customer_bom_sheets, read_customer_bom
 from .semantic_parser import compare_descriptions, normalize_code_key, normalize_mounting
 
 
@@ -62,6 +62,8 @@ class PartRecord:
     manufacturer: str = ""
     package: str = ""
     duplicate: bool = False
+    source_file: str = ""
+    source_sheet: str = ""
 
 
 @dataclass(frozen=True)
@@ -152,6 +154,18 @@ def _split_refs(s: str) -> set[str]:
     return {t.strip().upper() for t in re.split(r"[,;|\s/]+", s or "") if t.strip()}
 
 
+def _ref_base_component(ref: str) -> tuple[str, str, str]:
+    """Return (board_prefix, base_ref, comp_type) from a designator token."""
+    if "_" in ref:
+        prefix, base = ref.split("_", 1)
+    else:
+        prefix, base = "", ref
+    base = base.strip().upper()
+    match = re.match(r"^([A-Z]+)\d+", base)
+    comp_type = match.group(1) if match else (base[:1] if base else "")
+    return prefix.strip().upper(), base, comp_type
+
+
 def _should_pair_refs(crefs: set[str], erefs: set[str]) -> bool:
     """Determine whether two sets of reference designators should be paired."""
     if not crefs or not erefs:
@@ -159,28 +173,174 @@ def _should_pair_refs(crefs: set[str], erefs: set[str]) -> bool:
     if crefs == erefs:
         return True
     overlap = crefs & erefs
-    if not overlap:
-        return False
-    c_prefixes = {r[:1] for r in crefs if r}
-    e_prefixes = {r[:1] for r in erefs if r}
-    if len(c_prefixes) == 1 and c_prefixes == e_prefixes and list(c_prefixes)[0] in "CRLDQUJSF":
-        if crefs.issubset(erefs) or erefs.issubset(crefs):
+    if overlap:
+        c_types = {_ref_base_component(r)[2] for r in crefs if r}
+        e_types = {_ref_base_component(r)[2] for r in erefs if r}
+        if len(c_types) == 1 and c_types == e_types and list(c_types)[0] in "CRLDQUJSF":
+            if crefs.issubset(erefs) or erefs.issubset(crefs):
+                return True
+            if len(overlap) / min(len(crefs), len(erefs)) >= 0.5:
+                return True
+
+    # Check prefix-stripped base references
+    c_bases = {_ref_base_component(r)[1] for r in crefs if r}
+    e_bases = {_ref_base_component(r)[1] for r in erefs if r}
+    if c_bases and e_bases and c_bases == e_bases:
+        c_types = {_ref_base_component(r)[2] for r in crefs if r}
+        e_types = {_ref_base_component(r)[2] for r in erefs if r}
+        if len(c_types) == 1 and c_types == e_types and list(c_types)[0] in "CRLDQUJSF":
             return True
-        if len(overlap) / min(len(crefs), len(erefs)) >= 0.5:
-            return True
+
     return False
 
 
+def _extract_erp_prefixes(erp_records: list[PartRecord]) -> tuple[set[str], dict[str, set[str]]]:
+    """Extract board prefixes (e.g. TR1, ST1, FM) and their base references from ERP."""
+    prefixes: set[str] = set()
+    refs_by_prefix: dict[str, set[str]] = defaultdict(set)
+    for rec in erp_records:
+        for ref in _split_refs(rec.reference):
+            if "_" in ref:
+                parts = ref.split("_", 1)
+                prefix = parts[0].strip().upper()
+                base = parts[1].strip().upper()
+                if 1 <= len(prefix) <= 10 and re.match(r"^[A-Z]+\d+", base):
+                    prefixes.add(prefix)
+                    refs_by_prefix[prefix].add(base)
+    return prefixes, dict(refs_by_prefix)
+
+
+def _resolve_record_prefix(
+    source_sheet: str,
+    source_file: str,
+    record_refs: set[str],
+    erp_prefixes: set[str],
+    erp_refs_by_prefix: dict[str, set[str]],
+) -> str | None:
+    """Determine the ERP board prefix corresponding to a customer sheet or file."""
+    if not erp_prefixes:
+        return None
+
+    norm_sheet = re.sub(r"[^A-Za-z0-9]", "", source_sheet.upper())
+    norm_file = re.sub(r"[^A-Za-z0-9]", "", Path(source_file).stem.upper())
+
+    # 1. Exact match on normalized sheet name
+    for pfx in erp_prefixes:
+        norm_pfx = re.sub(r"[^A-Za-z0-9]", "", pfx)
+        if norm_sheet == norm_pfx:
+            return pfx
+
+    # 2. Sheet name starts with prefix
+    for pfx in sorted(erp_prefixes, key=len, reverse=True):
+        norm_pfx = re.sub(r"[^A-Za-z0-9]", "", pfx)
+        if norm_sheet.startswith(norm_pfx) and len(norm_pfx) >= 2:
+            return pfx
+
+    # 3. Exact match on filename stem
+    for pfx in erp_prefixes:
+        norm_pfx = re.sub(r"[^A-Za-z0-9]", "", pfx)
+        if norm_file == norm_pfx:
+            return pfx
+
+    # 4. Filename stem starts with prefix
+    for pfx in sorted(erp_prefixes, key=len, reverse=True):
+        norm_pfx = re.sub(r"[^A-Za-z0-9]", "", pfx)
+        if norm_file.startswith(norm_pfx) and len(norm_pfx) >= 2:
+            return pfx
+
+    # 5. Fallback: match by RefDes overlap
+    if record_refs:
+        best_pfx = None
+        best_overlap = 0
+        for pfx, bases in erp_refs_by_prefix.items():
+            overlap = len(record_refs & bases)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_pfx = pfx
+        if best_pfx and best_overlap > 0:
+            return best_pfx
+
+    return None
+
+
+def _qualify_customer_references(
+    customer_records: list[PartRecord],
+    erp_prefixes: set[str],
+    erp_refs_by_prefix: dict[str, set[str]],
+) -> list[PartRecord]:
+    """Qualify customer RefDes with ERP board prefixes (e.g. C10 -> TR1_C10)."""
+    if not erp_prefixes:
+        return customer_records
+
+    sheet_refs: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for rec in customer_records:
+        key = (rec.source_file, rec.source_sheet)
+        for ref in _split_refs(rec.reference):
+            _, base, _ = _ref_base_component(ref)
+            if base:
+                sheet_refs[key].add(base)
+
+    resolved_prefixes: dict[tuple[str, str], str] = {}
+    for key, refs in sheet_refs.items():
+        src_file, src_sheet = key
+        pfx = _resolve_record_prefix(src_sheet, src_file, refs, erp_prefixes, erp_refs_by_prefix)
+        if pfx:
+            resolved_prefixes[key] = pfx
+
+    if not resolved_prefixes:
+        return customer_records
+
+    updated: list[PartRecord] = []
+    for rec in customer_records:
+        key = (rec.source_file, rec.source_sheet)
+        pfx = resolved_prefixes.get(key)
+        if not pfx or not rec.reference.strip():
+            updated.append(rec)
+            continue
+
+        raw_tokens = re.split(r"([,;|\s/]+)", rec.reference)
+        new_tokens: list[str] = []
+        for token in raw_tokens:
+            stripped = token.strip().upper()
+            if stripped and re.match(r"^[A-Z]+\d+", stripped):
+                if not stripped.startswith(f"{pfx}_") and "_" not in stripped:
+                    new_tokens.append(f"{pfx}_{stripped}")
+                else:
+                    new_tokens.append(token)
+            else:
+                new_tokens.append(token)
+
+        new_ref = "".join(new_tokens)
+        updated.append(PartRecord(
+            part_number=rec.part_number,
+            description=rec.description,
+            mounting=rec.mounting,
+            reference=new_ref,
+            material_type=rec.material_type,
+            qty=rec.qty,
+            manufacturer=rec.manufacturer,
+            package=rec.package,
+            duplicate=rec.duplicate,
+            source_file=rec.source_file,
+            source_sheet=rec.source_sheet,
+        ))
+    return updated
+
+
 def compare_workbooks(
-    customer_path: Path,
-    erp_path: Path,
-    rules_path: Path | None = None,
-    output_path: Path | None = None,
+    customer_path: Path | list[Path] | str | list[str],
+    erp_path: Path | str,
+    rules_path: Path | str | None = None,
+    output_path: Path | str | None = None,
 ) -> ComparisonResult:
     """Compare customer/ERP rows by MPN and RefDes, saving only rows requiring review."""
-    rules = load_rulebook(rules_path) if rules_path else None
+    rules = load_rulebook(Path(rules_path)) if rules_path else None
     customer = load_records(customer_path, kind="customer")
     erp_raw = load_records(erp_path, kind="erp")
+
+    erp_prefixes, erp_refs_by_prefix = _extract_erp_prefixes(erp_raw)
+    if erp_prefixes:
+        customer = _qualify_customer_references(customer, erp_prefixes, erp_refs_by_prefix)
 
     # ── ERP çoklu Part Number genişletme ──
     # ERP hücresinde boşlukla ayrılmış birden fazla alternatif üretici kodu
@@ -441,66 +601,71 @@ def compare_workbooks(
     return ComparisonResult(report, len(matched_pairs))
 
 
-def load_records(path: Path, kind: str) -> list[PartRecord]:
+def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[PartRecord]:
     """Load customer or ERP rows, finding a header row and common header aliases."""
     if kind not in {"customer", "erp"}:
         raise ValueError("kind must be 'customer' or 'erp'.")
     if kind == "customer":
-        # Müşteri şablonları değişebildiği için mevcut BOM okuyucusunun başlık
-        # eş anlamlılarını ve kod biçimi sezgisini kullan; belirsiz kodu seçme.
-        customer_rows = read_customer_bom(Path(path))
-        records = []
-        for row in customer_rows:
-            code = row.part_number
-            candidates = list(dict.fromkeys(
-                candidate.value.strip()
-                for candidate in row.product_code_candidates
-                if candidate.value.strip()
-            ))
-            if not code and len(candidates) == 1:
-                code = candidates[0]
-            elif not code and len(candidates) > 1:
-                raise ValueError(
-                    f"{Path(path).name}, satır {row.source_row}: birden fazla ürün kodu adayı bulundu. "
-                    "Part Number sütun başlığını netleştirin."
-                )
-            if code:
-                records.append(PartRecord(
-                    part_number=code,
-                    description=row.value,
-                    reference=row.part,
-                    mounting=row.mounting,
-                    qty=_cell_text(row.qty),
-                    manufacturer=row.manufacturer,
-                    package=row.package,
-                ))
-            else:
-                qty_str = _cell_text(row.qty).strip()
-                has_qty = bool(qty_str) and any(c.isdigit() for c in qty_str)
-                ref_str = (row.part or "").strip()
-                circuit_ref_pattern = r"^(?:R|C|L|D|Q|U|IC|J|CN|P|TP|SW|F|FB|T|LED|BT|Y|X|K|VR|ZD|TR|TH|MOV|TS|BRK)\d+"
-                has_ref = bool(ref_str and re.match(circuit_ref_pattern, ref_str, re.IGNORECASE))
-                # Dipnot / revizyon satırlarını ele: yalnızca geçerli miktar veya devre referansı olan satırları parça say
-                if has_qty or (has_ref and bool((row.value or "").strip())):
-                    records.append(PartRecord(
-                        part_number="",
-                        description=row.value,
-                        reference=row.part,
-                        mounting=row.mounting,
-                        qty=qty_str,
-                        manufacturer=row.manufacturer,
-                        package=row.package,
+        paths = [Path(p) for p in path] if isinstance(path, (list, tuple)) else [Path(path)]
+        all_records: list[PartRecord] = []
+        for file_path in paths:
+            bom_sheets = find_customer_bom_sheets(file_path)
+            for sheet in bom_sheets:
+                customer_rows = read_customer_bom(file_path, sheet_name=sheet)
+                for row in customer_rows:
+                    code = row.part_number
+                    candidates = list(dict.fromkeys(
+                        candidate.value.strip()
+                        for candidate in row.product_code_candidates
+                        if candidate.value.strip()
                     ))
-        if not records:
-            raise ValueError(f"{Path(path).name}: ürün kodu veya malzeme satırı bulunamadı.")
-        return records
+                    if not code and len(candidates) == 1:
+                        code = candidates[0]
+                    elif not code and len(candidates) > 1:
+                        raise ValueError(
+                            f"{file_path.name} ({sheet}), satır {row.source_row}: birden fazla ürün kodu adayı bulundu. "
+                            "Part Number sütun başlığını netleştirin."
+                        )
+                    if code:
+                        all_records.append(PartRecord(
+                            part_number=code,
+                            description=row.value,
+                            reference=row.part,
+                            mounting=row.mounting,
+                            qty=_cell_text(row.qty),
+                            manufacturer=row.manufacturer,
+                            package=row.package,
+                            source_file=file_path.name,
+                            source_sheet=sheet,
+                        ))
+                    else:
+                        qty_str = _cell_text(row.qty).strip()
+                        has_qty = bool(qty_str) and any(c.isdigit() for c in qty_str)
+                        ref_str = (row.part or "").strip()
+                        circuit_ref_pattern = r"^(?:R|C|L|D|Q|U|IC|J|CN|P|TP|SW|F|FB|T|LED|BT|Y|X|K|VR|ZD|TR|TH|MOV|TS|BRK)\d+"
+                        has_ref = bool(ref_str and re.match(circuit_ref_pattern, ref_str, re.IGNORECASE))
+                        if has_qty or (has_ref and bool((row.value or "").strip())):
+                            all_records.append(PartRecord(
+                                part_number="",
+                                description=row.value,
+                                reference=row.part,
+                                mounting=row.mounting,
+                                qty=qty_str,
+                                manufacturer=row.manufacturer,
+                                package=row.package,
+                                source_file=file_path.name,
+                                source_sheet=sheet,
+                            ))
+        if not all_records:
+            first_name = paths[0].name if paths else "Müşteri dosyası"
+            raise ValueError(f"{first_name}: ürün kodu veya malzeme satırı bulunamadı.")
+        return all_records
 
-    frame, headers = _read_table_with_detected_header(Path(path), sheet_name=None)
+    erp_path = Path(path[0]) if isinstance(path, (list, tuple)) else Path(path)
+    frame, headers = _read_table_with_detected_header(erp_path, sheet_name=None)
     part_col = _find_column(headers, "part_number")
     description_col = (
-        _find_column(headers, "value") or _find_column(headers, "description")
-        if kind == "customer"
-        else _find_column(headers, "description") or _find_column(headers, "value")
+        _find_column(headers, "description") or _find_column(headers, "value")
     )
     mounting_col = _find_column(headers, "mounting")
     reference_col = _find_column(headers, "reference")
@@ -509,10 +674,9 @@ def load_records(path: Path, kind: str) -> list[PartRecord]:
     package_col = _find_column(headers, "package")
     manufacturer_col = _find_column(headers, "manufacturer")
     if part_col is None:
-        raise ValueError(f"{Path(path).name}: Part Number / ürün kodu sütunu bulunamadı.")
+        raise ValueError(f"{erp_path.name}: Part Number / ürün kodu sütunu bulunamadı.")
     if description_col is None:
-        expected = "Value" if kind == "customer" else "Description"
-        raise ValueError(f"{Path(path).name}: {expected} / açıklama sütunu bulunamadı.")
+        raise ValueError(f"{erp_path.name}: Description / açıklama sütunu bulunamadı.")
 
     records: list[PartRecord] = []
     for _, row in frame.iterrows():
@@ -528,9 +692,11 @@ def load_records(path: Path, kind: str) -> list[PartRecord]:
             qty=_cell_text(row.get(qty_col)) if qty_col else "",
             package=_cell_text(row.get(package_col)) if package_col else "",
             manufacturer=_cell_text(row.get(manufacturer_col)) if manufacturer_col else "",
+            source_file=erp_path.name,
+            source_sheet="",
         ))
     if not records:
-        raise ValueError(f"{Path(path).name}: başlık bulundu ancak ürün kodu içeren satır yok.")
+        raise ValueError(f"{erp_path.name}: başlık bulundu ancak ürün kodu içeren satır yok.")
     return records
 
 
@@ -690,6 +856,9 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
         else:
             qty_str = ""
 
+        sources = {(item.source_file, item.source_sheet) for item in group}
+        is_duplicate = (len(sources) < len(group)) if not normalized.startswith("__NO_CODE_") else False
+
         result[normalized] = PartRecord(
             part_number=group[0].part_number,
             description=" | ".join(descriptions),
@@ -699,7 +868,9 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
             qty=qty_str,
             manufacturer=" | ".join(manufacturers),
             package=" | ".join(packages),
-            duplicate=len(group) > 1 if not normalized.startswith("__NO_CODE_") else False,
+            duplicate=is_duplicate,
+            source_file=", ".join(dict.fromkeys(item.source_file for item in group if item.source_file)),
+            source_sheet=", ".join(dict.fromkeys(item.source_sheet for item in group if item.source_sheet)),
         )
     return result
 

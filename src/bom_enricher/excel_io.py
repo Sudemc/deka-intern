@@ -366,9 +366,43 @@ def read_customer_bom(
                 package=_string_value(package),
                 product_code_candidates=tuple(candidates),
                 source_row=header_row + dataframe_index + 2,
+                source_sheet=str(resolved_sheet),
+                source_file=workbook_path.name,
             )
         )
     return rows
+
+
+def find_customer_bom_sheets(path: Path) -> list[str]:
+    """Find all worksheets in a workbook that appear to contain a BOM table."""
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        bom_sheets: list[str] = []
+        for worksheet in workbook.worksheets:
+            sample_rows = list(
+                worksheet.iter_rows(min_row=1, max_row=30, values_only=True)
+            )
+            sheet_score = 0
+            for values in sample_rows:
+                fields = {
+                    field
+                    for value in values
+                    if (field := _header_field(value)) is not None
+                }
+                if not fields:
+                    continue
+                score = len(fields)
+                score += 8 if "part_number" in fields else 0
+                score += 2 if {"part", "qty", "value"}.issubset(fields) else 0
+                if score > sheet_score:
+                    sheet_score = score
+            if sheet_score >= 3:
+                bom_sheets.append(worksheet.title)
+        if not bom_sheets:
+            return [_select_customer_sheet(path)]
+        return bom_sheets
+    finally:
+        workbook.close()
 
 
 def _select_customer_sheet(path: Path) -> str:
