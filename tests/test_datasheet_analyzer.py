@@ -301,3 +301,58 @@ def test_extract_part_numbers_from_text():
     assert "0805W8F1001T5E" in mpns
 
 
+def test_decode_ttaf_connector_200g1_04r(rulebook):
+    specs = decode_manufacturer_pn("200G1-04R")
+    assert specs["manufacturer"] == "Ttaf"
+    assert specs["pitch"] == "2mm"
+    assert specs["pin_number"] == "4 pin"
+    assert specs["type_connector"] == "Wire to Board Konnektör"
+    assert specs["pin_type"] == "Erkek"
+    assert specs["mounting"] == "TH"
+    assert specs["angle"] == "90°(Yatık)"
+
+    mappings, desc, code = map_specs_to_erp(rulebook, "CON", specs)
+    assert desc == "TH Wire to Board Konnektör, Erkek, 2mm, 4 pin, 90°(Yatık), Ttaf"
+    assert code == "CONTADAB41-TT"
+    assert len(mappings) == 7
+    assert all(m.status == "TAM EŞLEŞTİ" for m in mappings)
+
+
+def test_decode_royal_ohm_resistor_with_parentheses(rulebook):
+    specs = decode_manufacturer_pn("0603(S/W)AJ0221T5E")
+    assert specs["package"] == "0603"
+    assert specs["resistance_str"] == "220R"
+    assert specs["tolerance"] == "5%"
+    assert specs["wattage"] == "1/10W"
+    assert specs["manufacturer"] == "Royal Ohm"
+
+    mappings, desc, code = map_specs_to_erp(rulebook, "RES", specs)
+    assert "0603" in desc
+    assert "220R" in desc
+    assert "Thick Film" in desc
+    assert "General" in desc
+    assert "Royal Ohm" in desc
+    assert code == "RESSS22200JC8GN-RO"
+    assert len(mappings) == 8
+
+
+def test_exact_pitch_and_pin_number_matching(rulebook):
+    specs = {
+        "mounting": "TH",
+        "type_connector": "Wire to Board Konnektör",
+        "pin_type": "Erkek",
+        "pitch": "2mm",
+        "pin_number": "4 pin",
+        "angle": "90°(Yatık)",
+        "manufacturer": "Ttaf",
+    }
+    mappings, desc, code = map_specs_to_erp(rulebook, "CON", specs)
+    pitch_m = next(m for m in mappings if m.attribute_name == "Pitch Connector")
+    assert pitch_m.matched_erp_value == "2mm,"
+    assert pitch_m.erp_code == "B"
+    pin_m = next(m for m in mappings if m.attribute_name == "Pin Number")
+    assert pin_m.matched_erp_value == "4 pin,"
+    assert pin_m.erp_code == "4"
+
+
+

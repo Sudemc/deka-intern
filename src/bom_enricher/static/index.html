@@ -1806,6 +1806,16 @@
         return;
       }
 
+      // Re-sync pnMap and matMap directly from DOM elements to ensure latest user edits are captured
+      dsPdfList.querySelectorAll('.pn-input').forEach(input => {
+        const fn = input.dataset.filename;
+        if (fn) dsSelected.pnMap[fn] = input.value.trim();
+      });
+      dsPdfList.querySelectorAll('.mat-select').forEach(sel => {
+        const fn = sel.dataset.filename;
+        if (fn) dsSelected.matMap[fn] = sel.value;
+      });
+
       const body = new FormData();
       for (const pdf of dsSelected.pdfs) {
         body.append('datasheet_files', pdf);

@@ -151,6 +151,16 @@ KNOWN_MANUFACTURERS = [
     ("kls", "Kls", "KL"),
     ("molex", "Molex", "MO"),
     ("phoenix contact", "Phoenix", "PH"),
+    ("ttaf", "Ttaf", "TT"),
+    ("jst", "JST", "JST"),
+    ("amphenol", "Amphenol", "AM"),
+    ("te connectivity", "TE", "TE"),
+    ("te", "TE", "TE"),
+    ("amtek", "Amtek", "AMT"),
+    ("wago", "Wago", "WAG"),
+    ("harting", "Harting", "HAR"),
+    ("hirose", "Hirose", "HIR"),
+    ("samtec", "Samtec", "SAM"),
 ]
 
 
@@ -332,7 +342,7 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
         return "OPT", 0.98, "Part Number optokuplör kodlamasına uyuyor."
     if re.match(r"^(?:HF\d|G5Q|SRD|G2R)", pn):
         return "REL", 0.95, "Part Number röle kodlamasına uyuyor."
-    if re.match(r"^(?:22-01|0022|2695|5557|JST-|PH-|XH-|VH-|MOLEX)", pn):
+    if re.match(r"^(?:22-01|0022|2695|5557|JST-|PH-|XH-|VH-|MOLEX|200G|254G|200W|254W|200H|254H|200D|254D|\d{3}[A-Z]\d?-\d{2})", pn):
         return "CON", 0.98, "Part Number standart konnektör/klemens serisine uyuyor."
 
     # 2. Text Keyword Scoring
@@ -616,8 +626,9 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
         specs["special_def"] = "General"
         return specs
 
-    # 5. Royal Ohm Chip Resistor: e.g. 0805W8F1001T5E, 0603WAF1002T5E, 1206W4F1001T5E, 0402WGJ0102TCE
-    royal_match = re.match(r"^(\d{4})([A-Z0-9]{2})([A-Z])([0-9A-Z]{4})([A-Z0-9]+)?$", pn)
+    # 5. Royal Ohm Chip Resistor: e.g. 0805W8F1001T5E, 0603WAF1002T5E, 0603(S/W)AJ0221T5E, 1206W4F1001T5E
+    clean_royal_pn = re.sub(r"\(S/W\)", "W", pn)
+    royal_match = re.match(r"^(\d{4})([A-Z0-9]{2})([A-Z])([0-9A-Z]{4})([A-Z0-9]+)?$", clean_royal_pn)
     if royal_match and any(pkg in royal_match.group(1) for pkg in ("0201", "0402", "0603", "0805", "1206", "1210", "1812", "2010", "2512")):
         pkg, watt_code, tol_code, val_code, _ = royal_match.groups()
         watt_map = {
@@ -650,6 +661,94 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
             specs["resistance_str"] = val_code
         return specs
 
+    # 6. TTAF Connectors: e.g. 200G1-04R, 254G1-04R, 200W-04, 254H-04, 200D1-04
+    ttaf_m = re.match(r"^(?:TTAF[-_])?(\d{3})([A-Z0-9]+)-(\d{2})([A-Z0-9]*)$", pn)
+    if ttaf_m:
+        p_code, s_code, pin_code, ang_code = ttaf_m.groups()
+        pitch_map = {
+            "100": "1mm", "125": "1.25mm", "127": "1.27mm", "150": "1.5mm",
+            "200": "2mm", "250": "2.5mm", "254": "2.54mm", "300": "3mm",
+            "381": "3.81mm", "396": "3.96mm", "420": "4.2mm", "500": "5mm", "508": "5.08mm"
+        }
+        specs["manufacturer"] = "Ttaf"
+        if p_code in pitch_map:
+            specs["pitch"] = pitch_map[p_code]
+        try:
+            specs["pin_number"] = f"{int(pin_code)} pin"
+        except ValueError:
+            pass
+
+        if any(c in s_code for c in ("G", "W", "D", "P")):
+            specs["type_connector"] = "Wire to Board Konnektör"
+            specs["pin_type"] = "Erkek"
+            specs["mounting"] = "TH"
+        elif "H" in s_code:
+            specs["type_connector"] = "Wire to Board Konnektör"
+            specs["pin_type"] = "Dişi"
+            specs["mounting"] = "Cable"
+        else:
+            specs["type_connector"] = "Wire to Board Konnektör"
+            specs["pin_type"] = "Erkek"
+            specs["mounting"] = "TH"
+
+        if "R" in ang_code:
+            specs["angle"] = "90°(Yatık)"
+        else:
+            specs["angle"] = "180°(Dik)"
+        return specs
+
+    # 7. Molex Connectors: e.g. 22-01-2045, 22-23-2041, 22-05-2041
+    molex_m = re.match(r"^(?:00)?(22)-(\d{2})-(2\d{2}\d)$", pn)
+    if molex_m:
+        prefix_code, series_code, item_code = molex_m.groups()
+        specs["manufacturer"] = "Molex"
+        specs["pitch"] = "2.54mm"
+        if len(item_code) == 4 and item_code[1:3].isdigit():
+            specs["pin_number"] = f"{int(item_code[1:3])} pin"
+        if series_code == "01":
+            specs["type_connector"] = "Wire to Board Konnektör"
+            specs["pin_type"] = "Dişi"
+            specs["mounting"] = "Cable"
+        elif series_code == "23":
+            specs["type_connector"] = "Wire to Board Konnektör"
+            specs["pin_type"] = "Erkek"
+            specs["mounting"] = "TH"
+            specs["angle"] = "180°(Dik)"
+        elif series_code == "05":
+            specs["type_connector"] = "Wire to Board Konnektör"
+            specs["pin_type"] = "Erkek"
+            specs["mounting"] = "TH"
+            specs["angle"] = "90°(Yatık)"
+        return specs
+
+    # 8. JST Connectors: e.g. B4B-XH-A, S4B-XH-A, XHP-4, B4B-PH-K-S, S4B-PH-K-S, PHR-4
+    jst_hdr = re.match(r"^([BS])(\d+)B-(XH|PH|VH|EH)", pn)
+    if jst_hdr:
+        ang_char, pin_count, fam = jst_hdr.groups()
+        specs["manufacturer"] = "JST"
+        specs["type_connector"] = "Wire to Board Konnektör"
+        specs["pin_type"] = "Erkek"
+        specs["mounting"] = "TH"
+        specs["pin_number"] = f"{int(pin_count)} pin"
+        specs["angle"] = "90°(Yatık)" if ang_char == "S" else "180°(Dik)"
+        jst_pitches = {"PH": "2mm", "XH": "2.5mm", "EH": "2.5mm", "VH": "3.96mm"}
+        if fam in jst_pitches:
+            specs["pitch"] = jst_pitches[fam]
+        return specs
+
+    jst_hsg = re.match(r"^(XH|PH|VH|EH)P?R?-(\d+)$", pn)
+    if jst_hsg:
+        fam, pin_count = jst_hsg.groups()
+        specs["manufacturer"] = "JST"
+        specs["type_connector"] = "Wire to Board Konnektör"
+        specs["pin_type"] = "Dişi"
+        specs["mounting"] = "Cable"
+        specs["pin_number"] = f"{int(pin_count)} pin"
+        jst_pitches = {"PH": "2mm", "XH": "2.5mm", "EH": "2.5mm", "VH": "3.96mm"}
+        if fam in jst_pitches:
+            specs["pitch"] = jst_pitches[fam]
+        return specs
+
     return specs
 
 
@@ -661,7 +760,12 @@ def extract_component_specs(material_type: str, text: str, part_number: str = ""
 
     # Mounting
     if "mounting" not in specs:
-        if "smd" in text_lower or "smt" in text_lower or "surface mount" in text_lower or "chip" in text_lower:
+        if material_type == "CON":
+            if any(k in text_lower for k in ("smd", "smt", "surface mount")):
+                specs["mounting"] = "SMD"
+            else:
+                specs["mounting"] = "TH"
+        elif "smd" in text_lower or "smt" in text_lower or "surface mount" in text_lower or "chip" in text_lower:
             specs["mounting"] = "SMD"
         elif "through hole" in text_lower or "tht" in text_lower or "dip" in text_lower or "radial" in text_lower:
             specs["mounting"] = "TH"
@@ -830,43 +934,55 @@ def extract_component_specs(material_type: str, text: str, part_number: str = ""
 
     elif material_type == "CON":
         # Connector Type
-        if any(k in text_lower for k in ("wire to board", "wire-to-board", "crimp housing", "housing")):
-            specs["type_connector"] = "Wire to Board Konnektör"
-        elif any(k in text_lower for k in ("pin header", "header")):
-            specs["type_connector"] = "Pin Header"
-        elif "terminal block" in text_lower or "klemens" in text_lower:
-            specs["type_connector"] = "PCB Klemens"
+        if "type_connector" not in specs:
+            if any(k in text_lower for k in ("wire to board", "wire-to-board", "crimp housing", "housing")):
+                specs["type_connector"] = "Wire to Board Konnektör"
+            elif any(k in text_lower for k in ("pin header", "header")):
+                specs["type_connector"] = "Pin Header"
+            elif "terminal block" in text_lower or "klemens" in text_lower:
+                specs["type_connector"] = "PCB Klemens"
 
         # Pin Type
-        if any(k in text_lower for k in ("receptacle", "housing", "female", "dişi")):
-            specs["pin_type"] = "Dişi"
-        elif any(k in text_lower for k in ("header", "plug", "male", "erkek")):
-            specs["pin_type"] = "Erkek"
+        if "pin_type" not in specs:
+            if any(k in text_lower for k in ("receptacle", "housing", "female", "dişi")):
+                specs["pin_type"] = "Dişi"
+            elif any(k in text_lower for k in ("header", "plug", "male", "erkek", "wafer", "pin")):
+                specs["pin_type"] = "Erkek"
 
         # Pitch
-        pitch_m = re.search(r"(\d+(?:\.\d+)?)\s*mm\b", text_lower)
-        if pitch_m:
-            specs["pitch"] = f"{pitch_m.group(1)}mm"
+        if "pitch" not in specs:
+            pitch_m = re.search(r"(?:pitch|adım|spacing|grid)[:\s=]+(\d+(?:\.\d+)?)\s*mm\b", text_lower)
+            if not pitch_m:
+                pitch_m = re.search(r"\b(1\.00?|1\.25|1\.27|1\.50?|2\.00?|2\.50?|2\.54|3\.00?|3\.81|3\.96|4\.20?|5\.00?|5\.08)\s*mm\b", text_lower)
+            if not pitch_m:
+                pitch_m = re.search(r"(\d+(?:\.\d+)?)\s*mm\b", text_lower)
+            if pitch_m:
+                val = float(pitch_m.group(1))
+                specs["pitch"] = f"{int(val) if val == int(val) else val}mm"
 
         # Pin Number
-        pins_m = re.search(r"(\d+)\s*(?:circuits|circ|pin|pos|poles|ways)\b", text_lower)
-        if pins_m:
-            specs["pin_number"] = f"{pins_m.group(1)} pin"
+        if "pin_number" not in specs:
+            pins_m = re.search(r"(?:circuits?|pins?|positions?|poles?|kutup|pin sayısı)[:\s=]+(\d+)\b", text_lower)
+            if not pins_m:
+                pins_m = re.search(r"\b(\d+)\s*(?:circuits?|pins?|pos|poles?|ways?|kutup)\b", text_lower)
+            if pins_m:
+                specs["pin_number"] = f"{pins_m.group(1)} pin"
 
         # Angle
-        if any(k in text_lower for k in ("right angle", "90 deg", "90°", "horizontal")):
-            specs["angle"] = "90°(Yatık)"
-        elif any(k in text_lower for k in ("vertical", "straight", "180 deg", "180°")):
-            specs["angle"] = "180°(Dik)"
+        if "angle" not in specs:
+            if any(k in text_lower for k in ("right angle", "90 deg", "90°", "horizontal", "yatık")):
+                specs["angle"] = "90°(Yatık)"
+            elif any(k in text_lower for k in ("vertical", "straight", "180 deg", "180°", "dik")):
+                specs["angle"] = "180°(Dik)"
 
     return specs
 
 
 CORE_ATTRIBUTES_BY_TYPE: dict[str, set[str]] = {
-    "RES": {"mounting", "package", "value", "tolerance", "wattage", "q"},
-    "CAP": {"mounting", "package", "value", "voltage", "tolerance", "q"},
+    "RES": {"mounting", "package", "value", "tolerance", "wattage", "compositionresistors", "specialdefinitionresistors", "q"},
+    "CAP": {"mounting", "package", "value", "voltage", "tolerance", "temperature", "specialdefinitioncapacitors", "q"},
     "DIO": {"mounting", "package", "typediode", "value", "q"},
-    "CON": {"mounting", "typeconnector", "pitchconnector", "pitch", "pinnumber", "q"},
+    "CON": {"mounting", "typeconnector", "pintypeofconnector", "pitchconnector", "pitch", "pinnumber", "angle", "q"},
     "IND": {"mounting", "package", "value", "q"},
     "FET": {"mounting", "package", "value", "fetchanneltype", "q"},
     "TRA": {"mounting", "package", "value", "typetransistor", "q"},
@@ -934,7 +1050,7 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
         if is_electrolytic and "specialdefinition" in attr_norm:
             continue
 
-        if material_type == "CON" and "serialconnector" in attr_norm:
+        if material_type == "CON" and "serial" in attr_norm:
             continue
 
         # 1. MOUNTING
@@ -1137,8 +1253,16 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             p_val = specs.get("pitch", "")
             extracted_val_str = p_val
             if p_val:
+                target_pitch_m = re.search(r"(\d+(?:\.\d+)?)", p_val)
+                target_pitch_num = float(target_pitch_m.group(1)) if target_pitch_m else None
                 for e in entries:
-                    if p_val.casefold() in e.value_description.casefold():
+                    em = re.search(r"(\d+(?:\.\d+)?)\s*mm", e.value_description.casefold())
+                    if em and target_pitch_num is not None:
+                        if abs(float(em.group(1)) - target_pitch_num) < 0.001:
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
+                    elif p_val.casefold() == e.value_description.strip().rstrip(",").casefold():
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
@@ -1146,17 +1270,31 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             pn_val = specs.get("pin_number", "")
             extracted_val_str = pn_val
             if pn_val:
+                t_m = re.search(r"(\d+)", pn_val)
+                target_pin_count = int(t_m.group(1)) if t_m else None
                 for e in entries:
-                    if pn_val.casefold() in e.value_description.casefold():
+                    desc_clean = e.value_description.strip().rstrip(",").casefold()
+                    if desc_clean == f"{target_pin_count} pin" or desc_clean == pn_val.strip().casefold():
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
+                if not matched_entry and target_pin_count is not None:
+                    for e in entries:
+                        em = re.search(r"^(\d+)\s*pin", e.value_description.strip().casefold())
+                        if em and int(em.group(1)) == target_pin_count:
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
         elif "angle" in attr_norm:
             ang = specs.get("angle", "")
             extracted_val_str = ang
             if ang:
                 for e in entries:
-                    if ang.casefold() in e.value_description.casefold():
+                    if ang.casefold() in e.value_description.casefold() or (
+                        "90" in ang and "90" in e.value_description
+                    ) or (
+                        "180" in ang and "180" in e.value_description
+                    ):
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
@@ -1205,7 +1343,12 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
     suggested_desc = " ".join(description_tokens).strip()
     if specs.get("is_catalog"):
         suggested_desc = f"{suggested_desc} [Katalog Dokümanı - Tam MPN Belirtiniz]".strip()
-    suggested_code = (material_type + "".join(code_tokens)).strip() if code_tokens else ""
+
+    first_token = code_tokens[0] if code_tokens else ""
+    if first_token.startswith(material_type):
+        suggested_code = "".join(code_tokens).strip()
+    else:
+        suggested_code = (material_type + "".join(code_tokens)).strip() if code_tokens else ""
 
     return mappings, suggested_desc, suggested_code
 
