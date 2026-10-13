@@ -14,8 +14,11 @@ from bom_enricher.datasheet_analyzer import (
     classify_material_type,
     decode_manufacturer_pn,
     extract_component_specs,
+    extract_part_numbers_from_text,
     extract_pdf_data,
     generate_datasheet_excel_report,
+    is_automotive_qualified,
+    is_catalog_document_name,
     map_specs_to_erp,
 )
 
@@ -177,4 +180,124 @@ def test_ceramic_capacitor_marks_electrolytic_attributes_as_not_applicable(ruleb
     # Description should be clean
     assert "0805 Package" in desc
     assert "100nF" in desc
+
+
+def test_is_catalog_document_name():
+    # True for catalog/document codes
+    assert is_catalog_document_name("PYU-RC_51_ROHS_P") is True
+    assert is_catalog_document_name("PYU-RC_GROUP_51_ROHS_L.pdf") is True
+    assert is_catalog_document_name("RC_SERIES") is True
+    assert is_catalog_document_name("RC0805") is True
+    assert is_catalog_document_name("1234567") is True
+    assert is_catalog_document_name("DOC-987654") is True
+
+    # False for specific genuine MPNs
+    assert is_catalog_document_name("RC0805JR-07300RL") is False
+    assert is_catalog_document_name("RC0805FR-0710KL") is False
+    assert is_catalog_document_name("CL21B104KBCNNNC") is False
+    assert is_catalog_document_name("0805W8F1001T5E") is False
+    assert is_catalog_document_name("BAT54S") is False
+
+
+def test_is_automotive_qualified_prevents_false_positive_on_rc_series():
+    # Yageo RC series is strictly General Purpose even if text mentions AEC-Q200 testing or AC series
+    text_with_footnote = (
+        "Yageo General Purpose Chip Resistors RC series.\n"
+        "Note: Tested using AEC-Q200 test methods. For automotive grade, please see AC series."
+    )
+    assert is_automotive_qualified("RC0805JR-07300RL", text_with_footnote) is False
+    assert is_automotive_qualified("PYU-RC_51_ROHS_P", text_with_footnote) is False
+
+    # Automotive AC series should be recognized as automotive
+    assert is_automotive_qualified("AC0805JR-07300RL", text_with_footnote) is True
+
+    # Murata GRM is general purpose even if AEC-Q200 appears in notes
+    assert is_automotive_qualified("GRM188R71H104KA93D", text_with_footnote) is False
+
+
+def test_yageo_rc0805_exact_decoding_and_mapping(rulebook):
+    specs = decode_manufacturer_pn("RC0805JR-07300RL")
+    assert specs["manufacturer"] == "Yageo"
+    assert specs["mounting"] == "SMD"
+    assert specs["package"] == "0805"
+    assert specs["tolerance"] == "5%"
+    assert specs["resistance_str"] == "300R"
+    assert specs["wattage"] == "1/8W"
+    assert specs["composition"] == "Thick Film"
+    assert specs["special_def"] == "General"
+
+    mappings, desc, code = map_specs_to_erp(rulebook, "RES", specs)
+    # Check all 8 key attributes matched
+    matched_names = {p.attribute_name: p.matched_erp_value for p in mappings if p.status == "TAM EŞLEŞTİ"}
+    assert "Mounting" in matched_names
+    assert "Package" in matched_names and "0805" in matched_names["Package"]
+    assert "Value Resistors" in matched_names and "300R" in matched_names["Value Resistors"]
+    assert "Tolerance" in matched_names
+    assert "Wattage" in matched_names and "1/8W" in matched_names["Wattage"]
+    assert "Composition - Resistors" in matched_names and "Thick Film" in matched_names["Composition - Resistors"]
+    assert "Special Definition - Resistors" in matched_names and "General" in matched_names["Special Definition - Resistors"]
+    assert "Q" in matched_names and "Yageo" in matched_names["Q"]
+
+    # Verify suggested description structure
+    assert "SMD" in desc
+    assert "0805 Package" in desc
+    assert "300R" in desc
+    assert "1/8W" in desc
+    assert "Thick Film" in desc
+    assert "General" in desc
+    assert "Yageo" in desc
+    assert "Automotive AEC-Q200" not in desc
+
+
+def test_yageo_ac_automotive_decoding():
+    specs = decode_manufacturer_pn("AC0805JR-07300RL")
+    assert specs["special_def"] == "Automotive AEC-Q200"
+    assert specs["package"] == "0805"
+    assert specs["wattage"] == "1/8W"
+
+
+def test_catalog_datasheet_avoids_greedy_property_fabrication(rulebook):
+    pdf_bytes = _create_sample_pdf(
+        "Yageo RC Series General Purpose Chip Resistors (0075 to 2512)",
+        "PYU-RC_51_ROHS_P",
+        [
+            "Table 1: Dimensions 0075, 0100, 0201, 0402, 0603, 0805, 1206, 2512",
+            "Rated power: 0201: 1/20W, 0402: 1/16W, 0603: 1/10W, 0805: 1/8W",
+            "Jumper tolerance: 0% +30%",
+            "Standard tolerance: 1%, 5%",
+            "Tested in compliance with AEC-Q200 test specifications",
+            "For automotive qualified parts refer to AC series",
+        ],
+    )
+
+    result = analyze_single_datasheet(
+        filename="PYU-RC_51_ROHS_P.pdf",
+        file_bytes=pdf_bytes,
+        rulebook=rulebook,
+    )
+
+    assert result.is_catalog is True
+    # Crucial: Must NOT greedily pick 0201 as the package
+    assert result.raw_specs.get("package") != "0201"
+    # Crucial: Must NOT pick 1/20W as the wattage
+    assert result.raw_specs.get("wattage") != "1/20W"
+    # Crucial: Must NOT pick 0% +30% as tolerance
+    assert result.raw_specs.get("tolerance") != "0% +30%"
+    # Crucial: Must NOT be Automotive AEC-Q200
+    assert result.raw_specs.get("special_def") != "Automotive AEC-Q200"
+    assert result.raw_specs.get("special_def") == "General"
+    assert "Katalog/Seri Dokümanı Tespit Edildi" in result.summary_text
+
+
+def test_extract_part_numbers_from_text():
+    text = (
+        "Ordering Information:\n"
+        "Example part number: RC0805JR-07300RL taped on 7-inch reel.\n"
+        "Also available: CL21B104KBCNNNC and 0805W8F1001T5E.\n"
+    )
+    mpns = extract_part_numbers_from_text(text)
+    assert "RC0805JR-07300RL" in mpns
+    assert "CL21B104KBCNNNC" in mpns
+    assert "0805W8F1001T5E" in mpns
+
 

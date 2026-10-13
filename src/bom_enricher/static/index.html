@@ -440,6 +440,35 @@
       color: var(--deka-red);
       background: var(--deka-red-light);
     }
+    .pdf-item.is-catalog {
+      border-color: #fcd34d;
+      background: #fffdf5;
+    }
+    .catalog-hint {
+      margin-top: 6px;
+      font-size: 11px;
+      color: #b45309;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-basis: 100%;
+    }
+    .btn-mpn-chip {
+      background: #ffffff;
+      border: 1px solid #f59e0b;
+      color: #b45309;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn-mpn-chip:hover {
+      background: #fef3c7;
+      border-color: #d97706;
+      color: #92400e;
+    }
 
     .options {
       margin-top: 18px;
@@ -1626,6 +1655,19 @@
       renderPdfList();
     }
 
+    function isCatalogName(name) {
+      if (!name) return false;
+      const clean = name.replace(/\.pdf$/i, '').trim().toUpperCase();
+      if (/^(PYU|DOC|DS|CATALOG|DATASHEET|SPEC|MANUAL)[-_]/.test(clean)) return true;
+      if (/^\d{6,8}$/.test(clean)) return true;
+      const keywords = ['GROUP', 'ROHS', 'SERIES', 'FAMILY', 'CATALOG', 'OVERVIEW', 'GENERAL', 'SELECTION', 'GUIDE'];
+      const tokens = clean.split(/[-_\s.]+/);
+      if (tokens.some(t => keywords.includes(t))) return true;
+      if (/^(RC|CC|AC|CL|GRM|CGA)?\d{4}$/.test(clean)) return true;
+      if (['RC', 'CC', 'AC', 'CL', 'GRM', 'CGA', 'RESISTOR', 'CAPACITOR'].includes(clean)) return true;
+      return false;
+    }
+
     function renderPdfList() {
       if (!dsSelected.pdfs.length) {
         dsPdfList.style.display = 'none';
@@ -1640,15 +1682,16 @@
         const pnVal = dsSelected.pnMap[f.name] || '';
         const matVal = dsSelected.matMap[f.name] || 'AUTO';
         const sizeMb = (f.size / (1024 * 1024)).toFixed(2);
+        const isCat = isCatalogName(f.name) || isCatalogName(pnVal);
         return `
-          <div class="pdf-item">
+          <div class="pdf-item ${isCat ? 'is-catalog' : ''}" style="flex-wrap: wrap;">
             <div class="pdf-item-info">
               <span class="pdf-badge">PDF</span>
               <span class="pdf-filename" title="${escapeHtml(f.name)}">${escapeHtml(f.name)} (${sizeMb} MB)</span>
             </div>
             <div class="pn-input-wrap">
               <span class="pn-label">Part Number:</span>
-              <input type="text" class="pn-input" data-filename="${escapeHtml(f.name)}" value="${escapeHtml(pnVal)}" placeholder="Örn: CL21B104KBCNNNC">
+              <input type="text" class="pn-input" data-filename="${escapeHtml(f.name)}" value="${escapeHtml(pnVal)}" placeholder="Örn: RC0805JR-07300RL">
             </div>
             <div class="mat-input-wrap">
               <span class="pn-label">Tip:</span>
@@ -1664,6 +1707,12 @@
               </select>
             </div>
             <button type="button" class="btn-remove-pdf" onclick="removePdf('${escapeHtml(f.name)}')" title="Kaldır">✕</button>
+            ${isCat ? `
+              <div class="catalog-hint">
+                <span class="pill pill-uyari" style="font-size:10px; padding:2px 8px;">⚠️ Katalog / Seri Dokümanı</span>
+                <span>Bu dosya genel ürün serisidir. Kesin kılıf, direnç ve tolerans eşlemesi için tam parça kodunu (örn: <code>RC0805JR-07300RL</code>) giriniz.</span>
+              </div>
+            ` : ''}
           </div>
         `;
       }).join('');
@@ -1672,7 +1721,18 @@
       dsPdfList.querySelectorAll('.pn-input').forEach(input => {
         input.addEventListener('input', e => {
           const fn = e.target.dataset.filename;
-          dsSelected.pnMap[fn] = e.target.value.trim();
+          const val = e.target.value.trim();
+          dsSelected.pnMap[fn] = val;
+          const itemDiv = input.closest('.pdf-item');
+          const hint = itemDiv.querySelector('.catalog-hint');
+          const isCat = isCatalogName(fn) && isCatalogName(val);
+          if (isCat) {
+            itemDiv.classList.add('is-catalog');
+            if (hint) hint.style.display = 'flex';
+          } else {
+            itemDiv.classList.remove('is-catalog');
+            if (hint) hint.style.display = 'none';
+          }
         });
       });
 
@@ -1820,8 +1880,27 @@
             </div>
 
             <div class="component-body">
+              ${item.is_catalog ? `
+                <div class="catalog-warning-box" style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:12px 14px; margin-bottom:12px; font-size:12px; color:#92400e;">
+                  <div style="font-weight:700; display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                    <span>⚠️ Genel Seri / Katalog Dokümanı Tespit Edildi</span>
+                  </div>
+                  <div style="line-height:1.5;">
+                    ${escapeHtml(item.summary_text)}
+                  </div>
+                  ${item.detected_part_numbers && item.detected_part_numbers.length ? `
+                    <div style="margin-top:8px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                      <span style="font-weight:600; color:#78350f;">Dokümanda Tespit Edilen Kodlar:</span>
+                      ${item.detected_part_numbers.slice(0, 6).map(mpn => `
+                        <button type="button" class="btn-mpn-chip" onclick="applyDetectedMpn('${escapeHtml(item.filename)}', '${escapeHtml(mpn)}')">${escapeHtml(mpn)} ↗</button>
+                      `).join('')}
+                    </div>
+                  ` : ''}
+                </div>
+              ` : ''}
+
               <!-- ERP Output Highlights -->
-              <div class="erp-box" style="margin-bottom: 4px;">
+              <div class="erp-box" style="margin-bottom: 8px;">
                 <div class="erp-box-label">
                   <span>Önerilen ERP Açıklaması (Malzeme Tipleri Sözlüğündeki VALUE AÇIKLAMASI & SORTNO Sıralı)</span>
                   <button type="button" class="btn-copy" id="${copyIdDesc}" onclick="copyText('${escapeHtml(item.suggested_description)}', '${copyIdDesc}')">📋 Açıklamayı Kopyala</button>
@@ -1830,6 +1909,18 @@
                   <span class="erp-box-val" style="font-size: 14px; color: var(--deka-red); font-weight: 700;">${escapeHtml(item.suggested_description || 'Açıklama üretilemedi')}</span>
                 </div>
               </div>
+
+              ${item.suggested_erp_code ? `
+              <div class="erp-box" style="margin-bottom: 12px;">
+                <div class="erp-box-label">
+                  <span>Önerilen ERP Kodu (Sözlük Kural Kodları Birleşimi)</span>
+                  <button type="button" class="btn-copy" id="${copyIdCode}" onclick="copyText('${escapeHtml(item.suggested_erp_code)}', '${copyIdCode}')">📋 Kodu Kopyala</button>
+                </div>
+                <div class="erp-box-content" style="margin-top: 4px;">
+                  <code style="font-size: 14px; color: #1e40af; font-weight: 700;">${escapeHtml(item.suggested_erp_code)}</code>
+                </div>
+              </div>
+              ` : ''}
 
               <!-- Properties Breakdown Table -->
               <div>
@@ -1861,6 +1952,13 @@
       resultsSection.classList.add('show');
       resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+
+    window.applyDetectedMpn = function(filename, mpn) {
+      dsSelected.pnMap[filename] = mpn;
+      renderPdfList();
+      showToast(`'${filename}' için '${mpn}' kodu seçildi. Yeniden analiz edebilirsiniz.`);
+      document.querySelector('#view-datasheet').scrollIntoView({ behavior: 'smooth' });
+    };
 
     window.copyText = function(text, btnId) {
       if (!text) return;

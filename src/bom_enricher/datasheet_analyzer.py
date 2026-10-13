@@ -58,6 +58,8 @@ class DatasheetAnalysisResult:
     analyzed_pages: list[int] = field(default_factory=list)
     summary_text: str = ""
     error: str | None = None
+    is_catalog: bool = False
+    detected_part_numbers: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +75,8 @@ class DatasheetAnalysisResult:
             "analyzed_pages": self.analyzed_pages,
             "summary_text": self.summary_text,
             "error": self.error,
+            "is_catalog": self.is_catalog,
+            "detected_part_numbers": self.detected_part_numbers,
             "properties": [
                 {
                     "attribute_name": p.attribute_name,
@@ -205,6 +209,103 @@ def extract_pdf_data(stream_or_path: BinaryIO | bytes | Path, part_number: str |
     return "\n\n".join(extracted_parts), total_pages, analyzed_pages
 
 
+def is_catalog_document_name(name: str) -> bool:
+    """Return True if the name/code indicates a general catalog or document rather than a specific MPN."""
+    if not name:
+        return False
+    clean = re.sub(r"\.pdf$", "", name, flags=re.I).strip().upper()
+
+    # 1. Distributor document prefixes/patterns
+    # e.g. PYU-RC_51_ROHS_P, PYU-RC_GROUP_51_ROHS_L, DOC-1234, DS-001, DATASHEET_V1
+    if re.match(r"^(?:PYU|DOC|DS|CATALOG|DATASHEET|SPEC|MANUAL)[-_]", clean):
+        return True
+
+    # 2. Distributor numeric document IDs (e.g. 6-8 digit PDF codes from DigiKey/Mouser)
+    if re.fullmatch(r"\d{6,8}", clean):
+        return True
+
+    # 3. Contains series/catalog indicator keywords
+    catalog_keywords = {
+        "GROUP", "ROHS", "SERIES", "FAMILY", "CATALOG", "OVERVIEW",
+        "GENERAL", "SELECTION", "GUIDE", "DATASHEET", "SPECIFICATION",
+        "SUMMARY", "BROCHURE",
+    }
+    tokens = {t for t in re.split(r"[-_\s.]+", clean) if t}
+    if tokens & catalog_keywords:
+        return True
+
+    # 4. Standalone series or package prefix without ordering code
+    # e.g. "RC", "RC0805", "CC0805", "CL21", "GRM18", "0805", "0603"
+    if re.fullmatch(r"(?:RC|CC|AC|CL|GRM|CGA)?\d{4}", clean):
+        return True
+    if clean in ("RC", "CC", "AC", "CL", "GRM", "CGA", "RESISTOR", "CAPACITOR"):
+        return True
+
+    return False
+
+
+def is_automotive_qualified(part_number: str, text: str) -> bool:
+    """Determine if a component is truly Automotive AEC-Q200 qualified.
+
+    Avoids false positives from footnotes, testing standards, or cross-references
+    (e.g., Yageo RC series mentioning AC series or AEC-Q200 test methods).
+    """
+    pn_clean = part_number.strip().upper()
+
+    # Explicit General Purpose series prefixes -> NEVER automotive
+    if pn_clean.startswith("RC") or pn_clean.startswith("PYU-RC") or pn_clean.startswith("GRM"):
+        return False
+
+    # Explicit Automotive series prefixes
+    if re.match(r"^(?:AC|GCM|CGA|AT|AF)\d", pn_clean):
+        return True
+
+    text_lower = text.casefold()
+
+    # Check title / first 1500 chars for explicit automotive grade declaration
+    header_snippet = text_lower[:1500]
+    auto_title_patterns = (
+        "automotive grade", "automotive chip resistor", "automotive mlcc",
+        "aec-q200 qualified chip", "for automotive applications"
+    )
+    if any(p in header_snippet for p in auto_title_patterns):
+        if "not for automotive" in header_snippet or "refer to ac series" in header_snippet:
+            return False
+        return True
+
+    return False
+
+
+def extract_part_numbers_from_text(text: str) -> list[str]:
+    """Scan text for genuine manufacturer part numbers (MPNs)."""
+    if not text:
+        return []
+    found: list[str] = []
+    seen = set()
+
+    patterns = [
+        # Yageo Resistors: RC0805JR-07300RL, RC0402FR-0710KL, AC0805JR-07300RL, etc.
+        r"\b(?:RC|AC)\d{4}[A-Z][A-Z]-[0-9A-Z]{2}[0-9A-Z]+L?\b",
+        # Yageo Capacitors: CC0805KRX7R9BB104, AC0603KRX7R9BB104
+        r"\b(?:CC|AC)\d{4}[A-Z]{2}[A-Z0-9]+BB\d{3}\b",
+        # Samsung MLCC: CL21B104KBCNNNC, CL10B103KB8NNNC, etc.
+        r"\bCL\d{2}[A-Z]\d{3}[A-Z]{2}[A-Z0-9]{4,6}\b",
+        # Murata MLCC: GRM188R71H104KA93D, GRM21BR71E105KA99L
+        r"\bGRM\d{2}[A-Z0-9]{6,14}\b",
+        # Royal Ohm Chip Resistors: 0805W8F1001T5E, 0603WAF1002T5E
+        r"\b\d{4}(?:WG|WA|W8|W4|W2|1W|2W|S4|S8|SA)[A-Z][0-9A-Z]{4}[A-Z0-9]*\b",
+    ]
+
+    for pat in patterns:
+        for m in re.finditer(pat, text, flags=re.IGNORECASE):
+            code = m.group(0).upper()
+            if code not in seen:
+                seen.add(code)
+                found.append(code)
+
+    return found
+
+
 def classify_material_type(text: str, part_number: str = "") -> tuple[str, float, str]:
     """Determine component material type (CAP, RES, DIO, etc.) from PN and datasheet content."""
     pn = part_number.strip().upper()
@@ -213,7 +314,7 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
     # 1. High confidence Part Number prefixes
     if re.match(r"^CL\d{2}[A-Z]\d{3}", pn) or re.match(r"^GRM\d{2}", pn) or re.match(r"^CC\d{4}", pn) or re.match(r"^AC\d{4}[A-Z]", pn):
         return "CAP", 0.98, "Part Number standart seramik kapasitör kodlamasına uyuyor."
-    if re.match(r"^RC\d{4}", pn) or re.match(r"^CRCW\d{4}", pn) or re.match(r"^ERJ\d", pn) or re.match(r"^WR\d{2}", pn):
+    if re.match(r"^(?:RC\d{4}|CRCW\d{4}|ERJ\d|WR\d{2}|PYU-RC)", pn):
         return "RES", 0.98, "Part Number standart çip direnç kodlamasına uyuyor."
     if re.match(r"^(?:BAT|BZX|1N4148|1N400|1N58|SS\d{2}|MBR|SM712|SMAJ|SMBJ)", pn):
         return "DIO", 0.98, "Part Number standart diyot serisine uyuyor."
@@ -446,24 +547,73 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
             pass
         return specs
 
-    # 4. Yageo Chip Resistor: e.g. RC0805FR-0710KL or RC0603JR-07100RL
-    yageo_res = re.match(r"^RC(\d{4})([A-Z])R-07([0-9A-Z]+)", pn)
+    # 4. Yageo Chip Resistor: e.g. RC0805JR-07300RL, RC0805FR-0710KL, AC0805JR-07300RL, RC0603JR-074K7L
+    yageo_res = re.match(r"^(RC|AC)(\d{4})([A-Z])([A-Z])-([0-9A-Z]{2})([0-9A-Z]+)$", pn)
     if yageo_res:
-        pkg, tol_code, val_code = yageo_res.groups()
-        tol_map = {"F": "1%", "J": "5%", "D": "0.5%"}
+        series, pkg, tol_code, pack_code, reel_code, val_code = yageo_res.groups()
+        tol_map = {
+            "B": "0.1%",
+            "C": "0.25%",
+            "D": "0.5%",
+            "F": "1%",
+            "G": "2%",
+            "J": "5%",
+            "Z": "Jumper",
+        }
         specs["manufacturer"] = "Yageo"
         specs["mounting"] = "SMD"
         specs["package"] = pkg
         if tol_code in tol_map:
             specs["tolerance"] = tol_map[tol_code]
-        specs["special_def"] = "General"
+
+        # Series awareness: RC = strictly General; AC = Automotive AEC-Q200
+        if series == "AC":
+            specs["special_def"] = "Automotive AEC-Q200"
+        else:
+            specs["special_def"] = "General"
+
         specs["composition"] = "Thick Film"
 
-        # 10KL -> 10k, 100RL -> 100R, 0RL -> 0R
+        # Standard wattage by package size
+        yageo_wattage_by_pkg = {
+            "0075": "1/50W",
+            "0100": "1/32W",
+            "0201": "1/20W",
+            "0402": "1/16W",
+            "0603": "1/10W",
+            "0805": "1/8W",
+            "1206": "1/4W",
+            "1210": "1/2W",
+            "2010": "3/4W",
+            "2512": "1W",
+        }
+        if pkg in yageo_wattage_by_pkg:
+            specs["wattage"] = yageo_wattage_by_pkg[pkg]
+
+        # Decode resistance value: e.g. 300RL -> 300R, 10KL -> 10k, 4K7L -> 4.7k, 0RL -> 0R
         clean_val = val_code.rstrip("L")
-        if clean_val.endswith("K"):
+        if re.fullmatch(r"\d+K", clean_val):
             clean_val = clean_val[:-1] + "k"
+        elif m := re.fullmatch(r"(\d+)K(\d+)", clean_val):
+            clean_val = f"{m.group(1)}.{m.group(2)}k"
+        elif m := re.fullmatch(r"(\d+)M(\d+)", clean_val):
+            clean_val = f"{m.group(1)}.{m.group(2)}M"
+        elif m := re.fullmatch(r"(\d+)R(\d+)", clean_val):
+            clean_val = f"{m.group(1)}.{m.group(2)}R"
+        elif re.fullmatch(r"\d+R", clean_val):
+            clean_val = clean_val
+        elif re.fullmatch(r"\d+", clean_val):
+            clean_val = f"{clean_val}R"
+
         specs["resistance_str"] = clean_val
+        return specs
+
+    # Yageo catalog / document code e.g. PYU-RC_51_ROHS_P, PYU-RC_GROUP_51_ROHS_L
+    if pn.startswith("PYU-RC"):
+        specs["manufacturer"] = "Yageo"
+        specs["mounting"] = "SMD"
+        specs["composition"] = "Thick Film"
+        specs["special_def"] = "General"
         return specs
 
     # 5. Royal Ohm Chip Resistor: e.g. 0805W8F1001T5E, 0603WAF1002T5E, 1206W4F1001T5E, 0402WGJ0102TCE
@@ -503,10 +653,11 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
     return specs
 
 
-def extract_component_specs(material_type: str, text: str, part_number: str = "") -> dict[str, Any]:
+def extract_component_specs(material_type: str, text: str, part_number: str = "", is_catalog: bool = False) -> dict[str, Any]:
     """Extract physical and electrical specifications from decoded PN + full text."""
     specs = decode_manufacturer_pn(part_number)
     text_lower = text.casefold()
+    is_cat = is_catalog or is_catalog_document_name(part_number)
 
     # Mounting
     if "mounting" not in specs:
@@ -517,8 +668,8 @@ def extract_component_specs(material_type: str, text: str, part_number: str = ""
         else:
             specs["mounting"] = "SMD"  # standard default for modern electronic parts
 
-    # Package
-    if "package" not in specs:
+    # Package (Avoid greedy first match from table if catalog series)
+    if "package" not in specs and not is_cat:
         pkg = _extract_package(text)
         if pkg:
             specs["package"] = pkg
@@ -554,19 +705,19 @@ def extract_component_specs(material_type: str, text: str, part_number: str = ""
     # Material-specific attributes
     if material_type == "CAP":
         # Capacitance
-        if "capacitance_str" not in specs:
+        if "capacitance_str" not in specs and not is_cat:
             cap_dec = _extract_capacitance(text_lower)
             if cap_dec is not None:
                 specs["capacitance_str"] = _format_cap(cap_dec)
 
         # Voltage
-        if "voltage" not in specs:
+        if "voltage" not in specs and not is_cat:
             volt_dec = _extract_voltage(text_lower)
             if volt_dec is not None:
                 specs["voltage"] = f"{int(volt_dec) if volt_dec == int(volt_dec) else volt_dec}V"
 
         # Tolerance
-        if "tolerance" not in specs:
+        if "tolerance" not in specs and not is_cat:
             tol_dec = _extract_tolerance(text_lower)
             if tol_dec is not None:
                 specs["tolerance"] = f"%{int(tol_dec)}"
@@ -587,20 +738,20 @@ def extract_component_specs(material_type: str, text: str, part_number: str = ""
             specs["temperature"] = "-40°C~+85°C"
 
     elif material_type == "RES":
-        # Resistance
-        if "resistance_str" not in specs:
+        # Resistance (do not guess for catalog)
+        if "resistance_str" not in specs and not is_cat:
             res_dec = _extract_resistance(text_lower)
             if res_dec is not None:
                 specs["resistance_str"] = _format_res(res_dec)
 
-        # Tolerance
-        if "tolerance" not in specs:
+        # Tolerance (do not guess for catalog)
+        if "tolerance" not in specs and not is_cat:
             tol_dec = _extract_tolerance(text_lower)
             if tol_dec is not None:
                 specs["tolerance"] = f"%{int(tol_dec)}"
 
-        # Wattage
-        if "wattage" not in specs:
+        # Wattage (do not guess for catalog)
+        if "wattage" not in specs and not is_cat:
             for w in ["1/20W", "1/16W", "1/10W", "1/8W", "1/4W", "1/2W", "1W", "2W", "3W", "5W"]:
                 if w.casefold() in text_lower:
                     specs["wattage"] = w
@@ -624,8 +775,9 @@ def extract_component_specs(material_type: str, text: str, part_number: str = ""
                 specs["composition"] = "Thick Film" if specs.get("mounting") == "SMD" else "General"
 
         # Special Definition - Resistors (SORTNO 70) [Automotive AEC-Q200 vs General]
+        # Uses series-aware detection to prevent false positives from footnotes/reference tables
         if "special_def" not in specs:
-            if any(k in text_lower for k in ("aec-q200", "aec q200", "automotive", "otomotiv")):
+            if is_automotive_qualified(part_number, text):
                 specs["special_def"] = "Automotive AEC-Q200"
             elif "anti surge" in text_lower or "anti-surge" in text_lower:
                 specs["special_def"] = "Anti Surge"
@@ -1022,6 +1174,9 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             desc_val = matched_entry.value_description.strip()
             if desc_val:
                 description_tokens.append(desc_val)
+            code_val = (matched_entry.prefix or "") + (matched_entry.value or "")
+            if code_val:
+                code_tokens.append(code_val)
         elif extracted_val_str:
             mappings.append(PropertyMapping(
                 attribute_name=attr_display_name,
@@ -1048,7 +1203,9 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                 ))
 
     suggested_desc = " ".join(description_tokens).strip()
-    suggested_code = "".join(code_tokens).strip()
+    if specs.get("is_catalog"):
+        suggested_desc = f"{suggested_desc} [Katalog Dokümanı - Tam MPN Belirtiniz]".strip()
+    suggested_code = (material_type + "".join(code_tokens)).strip() if code_tokens else ""
 
     return mappings, suggested_desc, suggested_code
 
@@ -1061,8 +1218,9 @@ def analyze_single_datasheet(
     material_type_override: str | None = None,
 ) -> DatasheetAnalysisResult:
     """Analyze a single datasheet PDF and map its properties to DEKA ERP format."""
-    pn = (part_number_override or Path(filename).stem).strip()
-    pn = re.sub(r"\.pdf$", "", pn, flags=re.I).strip()
+    raw_pn = (part_number_override or Path(filename).stem).strip()
+    raw_pn = re.sub(r"\.pdf$", "", raw_pn, flags=re.I).strip()
+    pn = raw_pn
 
     try:
         text, page_count, analyzed_pages = extract_pdf_data(file_bytes, part_number=pn)
@@ -1080,6 +1238,15 @@ def analyze_single_datasheet(
             error=f"PDF okunamadı: {str(exc)}",
         )
 
+    # 1. Check whether input is a catalog/document code
+    is_catalog = is_catalog_document_name(pn)
+    detected_mpns = extract_part_numbers_from_text(text)
+
+    # If user didn't enter a manual override, and text has a single unique genuine MPN
+    if is_catalog and not part_number_override and len(detected_mpns) == 1:
+        pn = detected_mpns[0]
+        is_catalog = False
+
     if material_type_override and material_type_override.upper() != "AUTO":
         mat_type = material_type_override.upper()
         conf = 1.0
@@ -1089,12 +1256,22 @@ def analyze_single_datasheet(
 
     mat_type_name = MATERIAL_TYPE_NAMES.get(mat_type, mat_type)
 
-    specs = extract_component_specs(mat_type, text, pn)
+    specs = extract_component_specs(mat_type, text, pn, is_catalog=is_catalog)
+    specs["is_catalog"] = is_catalog
     mounting = specs.get("mounting", "SMD")
 
     mappings, suggested_desc, suggested_code = map_specs_to_erp(rulebook, mat_type, specs)
 
-    summary = f"{mat_type_name} olarak tespit edildi ({int(conf * 100)}% güven). {reason}"
+    if is_catalog:
+        conf = min(conf, 0.65)
+        mfr = specs.get("manufacturer", "Üretici")
+        summary = (
+            f"⚠️ Katalog/Seri Dokümanı Tespit Edildi ({raw_pn}). "
+            f"Bu doküman {mfr} genel ürün serisi kataloğudur (birden fazla kılıf ve değer içerir). "
+            f"Kesin kılıf, direnç, tolerans ve güç eşleşmesi için lütfen tam parça kodunu (örn: RC0805JR-07300RL) giriniz."
+        )
+    else:
+        summary = f"{mat_type_name} olarak tespit edildi ({int(conf * 100)}% güven). {reason}"
 
     return DatasheetAnalysisResult(
         filename=filename,
@@ -1110,6 +1287,8 @@ def analyze_single_datasheet(
         page_count=page_count,
         analyzed_pages=analyzed_pages,
         summary_text=summary,
+        is_catalog=is_catalog,
+        detected_part_numbers=detected_mpns,
     )
 
 
