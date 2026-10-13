@@ -83,7 +83,7 @@ def test_comparison_reports_missing_conflicting_blank_and_mounting_mismatch(tmp_
     try:
         sheet = workbook.active
         assert [cell.value for cell in sheet[1]] == [
-            "Durum", "Part Number", "Müşteri Qty", "ERP Qty", "Müşteri Value", "ERP Description", "Müşteri TH/SMD", "ERP TH/SMD", "Hata/Uyarı Durumu"
+            "Durum", "Müşteri Part Number", "ERP Part Number", "Müşteri Qty", "ERP Qty", "Müşteri Value", "ERP Description", "Müşteri TH/SMD", "ERP TH/SMD", "Hata/Uyarı Durumu"
         ]
         assert sheet.max_row == 6
     finally:

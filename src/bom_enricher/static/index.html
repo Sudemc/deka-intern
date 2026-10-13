@@ -3,69 +3,1047 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#173b32">
-  <title>DEKA | BOM Karşılaştırma</title>
+  <meta name="theme-color" content="#ca130d">
+  <title>DEKA Elektronik | BOM Karşılaştırma</title>
   <style>
-    :root{font-family:Inter,"Segoe UI",Arial,sans-serif;color:#202a27;background:#f4f6f4;font-synthesis:none;text-rendering:optimizeLegibility;--green:#216a51;--dark:#173b32;--line:#e3e8e4;--muted:#748079;--amber:#9a6814;--amber-bg:#fbf2df;--red:#a6403b;--red-bg:#f9e9e7}
-    *{box-sizing:border-box}body{margin:0;min-width:320px}button,input{font:inherit}.shell{min-height:100vh;display:grid;grid-template-columns:224px minmax(0,1fr)}.sidebar{background:var(--dark);color:#eaf2ed;padding:25px 17px;display:flex;flex-direction:column;gap:34px}.brand{display:flex;align-items:center;gap:11px;padding:0 8px}.brand-mark{width:35px;height:35px;border-radius:9px;background:#d7e7de;color:var(--dark);display:grid;place-items:center;font-weight:800;font-size:18px}.brand-name{font-size:17px;font-weight:700;letter-spacing:.4px}.brand-sub{font-size:10px;letter-spacing:1.5px;color:#a9c0b4;margin-top:3px}.nav-label{font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:#a9c0b4;padding:0 11px;margin-bottom:9px}.nav-item{height:41px;padding:0 11px;display:flex;align-items:center;gap:10px;color:#d6e2db;text-decoration:none;border-radius:7px;font-size:13px}.nav-item.active{background:#2c5749;color:#fff;font-weight:600}.nav-icon{width:18px;text-align:center}.sidebar-note{margin-top:auto;border-top:1px solid #385b4f;padding:16px 10px 0;color:#a9c0b4;font-size:11px;line-height:1.55}.main{padding:0 42px 48px;max-width:1480px;width:100%;margin:auto}.topbar{height:69px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;margin-bottom:30px}.crumb{font-size:12px;color:var(--muted)}.crumb b{color:#34423c}.account{font-size:12px;color:#536059}.heading{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;margin-bottom:23px}.eyebrow{color:var(--green);text-transform:uppercase;font-size:10px;letter-spacing:1.4px;font-weight:700;margin-bottom:8px}.heading h1{font-size:27px;line-height:1.2;letter-spacing:-.5px;margin:0;font-weight:650}.heading p{font-size:13px;color:var(--muted);margin:8px 0 0}.ready{font-size:11px;color:#4c6858;background:#e8f1ec;border:1px solid #d9e8df;padding:7px 10px;border-radius:5px;white-space:nowrap}.layout{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(270px,.72fr);gap:18px;align-items:start}.card{background:#fff;border:1px solid var(--line);border-radius:9px;box-shadow:0 2px 7px #1c34200a}.card-head{padding:18px 20px 14px;border-bottom:1px solid #edf0ed;display:flex;justify-content:space-between}.card-title{font-size:14px;font-weight:650}.card-subtitle{font-size:11px;color:var(--muted);margin-top:5px}.step{font-size:10px;color:#6c7972;background:#f2f5f2;border-radius:4px;padding:5px 7px}.card-body{padding:18px 20px 20px}.uploads{display:grid;grid-template-columns:1fr;gap:11px}.upload{border:1px dashed #bdc9c1;border-radius:7px;background:#fbfcfb;padding:12px 14px;display:flex;align-items:center;gap:12px;min-height:74px;transition:.15s}.upload.over{background:#eef6f1;border-color:var(--green)}.file-icon{width:34px;height:34px;border-radius:7px;background:#eaf2ed;color:var(--green);display:grid;place-items:center;font-weight:700;font-size:10px;flex:none}.upload-copy{min-width:0;flex:1}.upload-title{font-size:12px;font-weight:650}.upload-desc{font-size:10px;color:var(--muted);margin-top:4px}.pick{border:1px solid #dce5df;background:white;color:var(--green);font-weight:600;border-radius:5px;padding:7px 10px;font-size:10px;white-space:nowrap}.file-selected{font-size:10px;color:#3b604b;margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-selected:empty{display:none}.options{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:15px;padding:11px 12px;background:#f8faf8;border-radius:6px}.check-label{display:flex;align-items:flex-start;gap:8px;color:#5e6a63;font-size:10px;line-height:1.5}.check-label input{accent-color:var(--green);margin:1px 0 0}.hint{color:#86918a;font-size:10px}.actions{display:flex;align-items:center;gap:12px;margin-top:17px}.primary{border:0;border-radius:5px;background:var(--green);color:#fff;height:39px;padding:0 15px;font-size:11px;font-weight:650;display:flex;align-items:center;gap:8px}.primary:hover{background:#195841}.primary:disabled{opacity:.55;cursor:wait}.secure{font-size:10px;color:#87928b;line-height:1.45}.how{display:flex;flex-direction:column}.how-row{display:flex;gap:11px;padding:11px 0;border-bottom:1px solid #eff2ef}.how-row:last-child{border:0;padding-bottom:0}.num{width:22px;height:22px;background:#edf4ef;color:var(--green);border-radius:50%;display:grid;place-items:center;font-size:10px;font-weight:700;flex:none}.how-title{font-size:11px;font-weight:600}.how-desc{font-size:10px;color:var(--muted);line-height:1.45;margin-top:3px}.notice{margin-top:14px;background:#f8f7f2;border:1px solid #eeece1;border-radius:6px;padding:10px;color:#787257;font-size:10px;line-height:1.5}.results{margin-top:19px;display:none}.results.show{display:block}.result-head{display:flex;justify-content:space-between;align-items:center;padding:17px 19px}.result-head h2{font-size:14px;margin:0}.buttons{display:flex;gap:8px}.secondary{height:33px;padding:0 11px;border:1px solid #dfe5e1;background:#fff;border-radius:5px;color:#46544c;font-size:10px;font-weight:600;text-decoration:none;display:flex;align-items:center}.secondary.green{color:var(--green);border-color:#c9dbd0}.metrics{display:grid;grid-template-columns:repeat(3,1fr);border-block:1px solid #edf0ed}.metric{padding:14px 17px;border-right:1px solid #edf0ed}.metric:last-child{border:0}.metric-num{font-size:21px;font-weight:650}.metric-label{font-size:10px;color:var(--muted);margin-top:4px}.metric.warn .metric-num{color:var(--amber)}.tabs{display:flex;gap:18px;padding:0 19px;border-bottom:1px solid #edf0ed}.tab{border:0;background:none;padding:12px 1px 10px;color:#7a857f;font-size:10px;border-bottom:2px solid transparent}.tab.active{color:var(--green);font-weight:650;border-color:var(--green)}.table-wrap{overflow:auto;max-height:400px}.data-table{width:100%;border-collapse:collapse;font-size:10px;min-width:760px}.data-table th{text-align:left;color:#758079;font-weight:600;background:#fafbfa;position:sticky;top:0}.data-table th,.data-table td{padding:10px 12px;border-bottom:1px solid #eff2ef;vertical-align:top}.data-table td{color:#3f4a44;white-space:normal;max-width:300px}.pill{display:inline-block;padding:4px 6px;border-radius:4px;background:var(--amber-bg);color:var(--amber);font-size:9px;line-height:1.45;white-space:normal}.empty{text-align:center;padding:27px;color:var(--muted);font-size:11px}.foot{border-top:1px solid #edf0ed;padding:10px 19px;color:#8b958e;font-size:10px}.toast{position:fixed;right:22px;bottom:20px;max-width:min(420px,calc(100vw - 32px));padding:12px 15px;border-radius:6px;background:#273b32;color:#fff;font-size:11px;line-height:1.45;box-shadow:0 7px 22px #0d21174a;display:none;z-index:5}.toast.show{display:block}.toast.error{background:#8f3430}.spinner{width:13px;height:13px;border:2px solid #ffffff70;border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
-    @media(max-width:970px){.shell{grid-template-columns:66px minmax(0,1fr)}.sidebar{padding:22px 9px;align-items:center}.brand{padding:0}.brand-copy,.nav-label,.nav-text,.sidebar-note{display:none}.nav-item{width:44px;justify-content:center;padding:0}.layout{grid-template-columns:1fr}.side-card{display:none}.main{padding:0 24px 32px}}
-    @media(max-width:600px){.shell{display:block}.sidebar{height:54px;display:flex;flex-direction:row;padding:9px 14px;justify-content:space-between}.brand-mark{width:32px;height:32px}.nav-item{height:36px;width:38px}.main{padding:0 13px 27px}.topbar{height:54px;margin-bottom:22px}.heading{align-items:flex-start;flex-direction:column;margin-bottom:16px}.heading h1{font-size:23px}.account{display:none}.card-head,.card-body{padding-left:14px;padding-right:14px}.upload{padding:10px;gap:9px}.pick{padding:7px}.options{align-items:flex-start;flex-direction:column}.metrics{grid-template-columns:repeat(3,1fr)}.metric{padding:12px 9px}.metric-num{font-size:18px}.result-head{align-items:flex-start;gap:12px;flex-direction:column}.buttons{width:100%}.tabs{gap:12px;overflow:auto;white-space:nowrap}}
+    :root {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #1f2937;
+      background: #f4f6f8;
+      --deka-red: #ca130d;
+      --deka-red-hover: #b0100a;
+      --deka-red-light: #fef2f2;
+      --deka-red-border: #fecaca;
+      --gray-50: #f9fafb;
+      --gray-100: #f3f4f6;
+      --gray-200: #e5e7eb;
+      --gray-300: #d1d5db;
+      --gray-400: #9ca3af;
+      --gray-500: #6b7280;
+      --gray-600: #4b5563;
+      --gray-700: #374151;
+      --gray-800: #1f2937;
+      --green: #16a34a;
+      --green-light: #f0fdf4;
+      --green-border: #bbf7d0;
+      --amber: #d97706;
+      --amber-light: #fffbeb;
+      --amber-border: #fde68a;
+      --radius: 12px;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: #f4f6f8;
+      color: var(--gray-800);
+      line-height: 1.5;
+    }
+    button, input { font: inherit; }
+
+    /* Top Red Corporate Header */
+    .portal-topbar {
+      background: var(--deka-red);
+      color: #ffffff;
+      height: 60px;
+      padding: 0 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 6px rgba(202, 19, 13, 0.2);
+    }
+    .portal-brand {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      text-decoration: none;
+      color: #ffffff;
+    }
+    .portal-logo-img {
+      height: 32px;
+      width: auto;
+      object-fit: contain;
+      filter: brightness(0) invert(1);
+    }
+    .brand-divider {
+      width: 1px;
+      height: 24px;
+      background: rgba(255, 255, 255, 0.3);
+    }
+    .app-title {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      color: #ffffff;
+    }
+    .portal-top-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--deka-red);
+      background: #ffffff;
+      padding: 6px 14px;
+      border-radius: 20px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    }
+    .badge-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #16a34a;
+    }
+
+    /* Main Container */
+    .portal-container {
+      max-width: 1380px;
+      margin: 28px auto 48px;
+      padding: 0 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Page Heading Strip */
+    .page-heading {
+      background: #ffffff;
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      padding: 22px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+    .eyebrow {
+      color: var(--deka-red);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      margin-bottom: 4px;
+    }
+    .page-heading h1 {
+      font-size: 22px;
+      font-weight: 700;
+      margin: 0;
+      color: var(--gray-800);
+      letter-spacing: -0.3px;
+    }
+    .page-heading p {
+      font-size: 13px;
+      color: var(--gray-500);
+      margin: 4px 0 0;
+    }
+    .heading-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--gray-500);
+      background: var(--gray-50);
+      border: 1px solid var(--gray-200);
+      padding: 8px 14px;
+      border-radius: 8px;
+      white-space: nowrap;
+    }
+
+    /* Workspace 2-Column Grid */
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.95fr);
+      gap: 24px;
+      align-items: start;
+    }
+
+    /* Card styling */
+    .card {
+      background: #ffffff;
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+    .card-head {
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--gray-200);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #ffffff;
+    }
+    .card-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--gray-800);
+    }
+    .card-subtitle {
+      font-size: 12px;
+      color: var(--gray-500);
+      margin-top: 3px;
+    }
+    .step-pill {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--deka-red);
+      background: var(--deka-red-light);
+      border: 1px solid var(--deka-red-border);
+      border-radius: 6px;
+      padding: 4px 10px;
+      letter-spacing: 0.5px;
+    }
+    .card-body {
+      padding: 24px;
+    }
+
+    /* Uploads */
+    .uploads {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .upload {
+      border: 2px dashed var(--gray-300);
+      border-radius: 10px;
+      background: var(--gray-50);
+      padding: 16px 18px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      min-height: 84px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .upload:hover {
+      background: #ffffff;
+      border-color: var(--deka-red);
+    }
+    .upload.over {
+      background: var(--deka-red-light);
+      border-color: var(--deka-red);
+    }
+    .file-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      background: var(--deka-red-light);
+      color: var(--deka-red);
+      border: 1px solid var(--deka-red-border);
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      font-size: 11px;
+      flex: none;
+    }
+    .upload-copy {
+      min-width: 0;
+      flex: 1;
+    }
+    .upload-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--gray-800);
+    }
+    .upload-desc {
+      font-size: 11px;
+      color: var(--gray-500);
+      margin-top: 3px;
+    }
+    .file-selected {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--deka-red);
+      margin-top: 5px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      word-break: break-all;
+    }
+    .file-selected:empty {
+      display: none;
+    }
+    .pick {
+      border: 1px solid var(--deka-red);
+      background: #ffffff;
+      color: var(--deka-red);
+      font-weight: 600;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+    .pick:hover {
+      background: var(--deka-red);
+      color: #ffffff;
+    }
+
+    /* Options strip */
+    .options {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 18px;
+      padding: 12px 16px;
+      background: var(--gray-50);
+      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+    }
+    .check-label {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--gray-700);
+      font-size: 11px;
+    }
+    .hint {
+      color: var(--gray-400);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    /* Actions */
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: 20px;
+    }
+    .primary {
+      border: none;
+      border-radius: 8px;
+      background: var(--deka-red);
+      color: #ffffff;
+      height: 44px;
+      padding: 0 22px;
+      font-size: 13px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(202, 19, 13, 0.25);
+      transition: all 0.15s ease;
+    }
+    .primary:hover {
+      background: var(--deka-red-hover);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 10px rgba(202, 19, 13, 0.3);
+    }
+    .primary:disabled {
+      opacity: 0.6;
+      cursor: wait;
+      transform: none;
+    }
+    .secure {
+      font-size: 11px;
+      color: var(--gray-500);
+    }
+
+    /* Process steps */
+    .how {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .how-row {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+    }
+    .num {
+      width: 26px;
+      height: 26px;
+      background: var(--deka-red-light);
+      color: var(--deka-red);
+      border: 1px solid var(--deka-red-border);
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-size: 11px;
+      font-weight: 700;
+      flex: none;
+    }
+    .how-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--gray-800);
+    }
+    .how-desc {
+      font-size: 11px;
+      color: var(--gray-500);
+      line-height: 1.45;
+      margin-top: 3px;
+    }
+    .notice {
+      margin-top: 18px;
+      background: var(--amber-light);
+      border: 1px solid var(--amber-border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      color: #92400e;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    /* Results */
+    .results {
+      display: none;
+      margin-top: 8px;
+    }
+    .results.show {
+      display: block;
+    }
+    .result-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--gray-200);
+      background: #ffffff;
+    }
+    .result-head h2 {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 0;
+      color: var(--gray-800);
+    }
+    .buttons {
+      display: flex;
+      gap: 10px;
+    }
+    .secondary {
+      height: 38px;
+      padding: 0 16px;
+      border: 1px solid var(--gray-300);
+      background: #ffffff;
+      border-radius: 6px;
+      color: var(--gray-700);
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .secondary:hover {
+      background: var(--gray-50);
+      color: var(--gray-800);
+    }
+    .secondary.green {
+      color: #ffffff;
+      background: var(--deka-red);
+      border-color: var(--deka-red);
+      box-shadow: 0 2px 6px rgba(202, 19, 13, 0.2);
+    }
+    .secondary.green:hover {
+      background: var(--deka-red-hover);
+      border-color: var(--deka-red-hover);
+    }
+
+    /* Metrics Strip */
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      border-bottom: 1px solid var(--gray-200);
+      background: var(--gray-50);
+    }
+    .metric {
+      padding: 18px 24px;
+      border-right: 1px solid var(--gray-200);
+      background: #ffffff;
+    }
+    .metric:last-child {
+      border-right: none;
+    }
+    .metric-num {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--gray-800);
+      line-height: 1;
+    }
+    .metric-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--gray-500);
+      margin-top: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Data Table */
+    .table-wrap {
+      overflow-x: auto;
+      max-height: 480px;
+    }
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      min-width: 820px;
+    }
+    .data-table th {
+      text-align: left;
+      color: var(--gray-600);
+      font-weight: 600;
+      background: var(--gray-50);
+      border-bottom: 1px solid var(--gray-200);
+      padding: 12px 16px;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 0.5px;
+    }
+    .data-table td {
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--gray-200);
+      vertical-align: top;
+      color: var(--gray-700);
+      white-space: normal;
+      max-width: 320px;
+    }
+    .pill {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      line-height: 1.4;
+      white-space: normal;
+    }
+    .pill-hata {
+      background: var(--deka-red-light);
+      color: var(--deka-red);
+      border: 1px solid var(--deka-red-border);
+    }
+    .pill-uyari {
+      background: var(--amber-light);
+      color: var(--amber);
+      border: 1px solid var(--amber-border);
+    }
+    .pill-uygun {
+      background: var(--green-light);
+      color: var(--green);
+      border: 1px solid var(--green-border);
+    }
+    .empty {
+      text-align: center;
+      padding: 36px;
+      color: var(--gray-500);
+      font-size: 12px;
+    }
+    .foot {
+      border-top: 1px solid var(--gray-200);
+      padding: 14px 24px;
+      color: var(--gray-500);
+      font-size: 11px;
+      background: var(--gray-50);
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      max-width: min(420px, calc(100vw - 32px));
+      padding: 14px 18px;
+      border-radius: 8px;
+      background: var(--gray-800);
+      color: #ffffff;
+      font-size: 12px;
+      line-height: 1.45;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+      display: none;
+      z-index: 100;
+    }
+    .toast.show { display: block; }
+    .toast.error { background: #b91c1c; }
+
+    /* Spinner */
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.4);
+      border-top-color: #ffffff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Responsive */
+    @media (max-width: 960px) {
+      .workspace-grid {
+        grid-template-columns: 1fr;
+      }
+      .portal-topbar {
+        padding: 0 20px;
+      }
+      .portal-container {
+        padding: 0 20px;
+      }
+    }
+    @media (max-width: 640px) {
+      .page-heading {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .metrics {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .metric:nth-child(2) {
+        border-right: none;
+      }
+      .result-head {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+      }
+      .buttons {
+        width: 100%;
+      }
+    }
   </style>
 </head>
 <body>
-  <div class="shell">
-    <aside class="sidebar">
-      <div class="brand"><div class="brand-mark" style="background:#fff;padding:2px;display:flex;align-items:center;justify-content:center"><img src="/static/deka-bird.png" alt="Deka Kuşu" style="width:26px;height:auto;object-fit:contain"></div><div class="brand-copy"><div class="brand-name">DEKA</div><div class="brand-sub">ELEKTRONİK</div></div></div>
-      <div><div class="nav-label">ÇALIŞMA ALANI</div><a class="nav-item active" href="#workspace"><span class="nav-icon">▦</span><span class="nav-text">BOM Karşılaştırma</span></a><a class="nav-item" href="#results"><span class="nav-icon">≡</span><span class="nav-text">Rapor</span></a></div>
-      <div class="sidebar-note">BOM veri karşılaştırma<br>Yerel çalışma alanı · v0.2</div>
-    </aside>
-    <main class="main" id="workspace">
-      <header class="topbar"><div class="crumb">Malzeme yönetimi <span> / </span> <b>BOM Karşılaştırma</b></div><div class="account" style="display:flex;align-items:center;gap:8px"><img src="/static/deka-bird.png" alt="Deka Kuşu" style="height:22px;width:auto"><span>DEKA Elektronik</span></div></header>
-      <section class="heading"><div><div class="eyebrow">Veri kontrolü</div><h1>BOM karşılaştırma merkezi</h1><p>Müşteri BOM listesini ERP kayıtlarıyla üç aşamalı akıllı algoritmayla karşılaştırın.</p></div><div class="ready">● Çevrimdışı kontrol</div></section>
-      <section class="layout">
-        <article class="card">
-          <div class="card-head"><div><div class="card-title">Dosyaları karşılaştır</div><div class="card-subtitle">Müşteri BOM ve ERP dosyalarını seçin. Tüm satırlar incelenip renkli durum raporu üretilir.</div></div><div class="step">01 / GİRDİ</div></div>
-          <div class="card-body">
-            <form id="compare-form">
-              <div class="uploads">
-                <div class="upload" data-role="customer"><div class="file-icon">XLSX</div><div class="upload-copy"><div class="upload-title">Müşteri BOM dosyası (veya dosyaları)</div><div class="upload-desc">Tek veya birden fazla dosya / panel alt kart listeleri</div><div class="file-selected" id="customer-name"></div></div><button class="pick" type="button">Dosya seçin</button><input type="file" accept=".xlsx" multiple hidden></div>
-                <div class="upload" data-role="erp"><div class="file-icon">XLSX</div><div class="upload-copy"><div class="upload-title">ERP malzeme dosyası</div><div class="upload-desc">Part Number, Description ve TH/SMD sütunları</div><div class="file-selected" id="erp-name"></div></div><button class="pick" type="button">Dosya seçin</button><input type="file" accept=".xlsx" hidden></div>
-              </div>
-              <div class="options"><span class="check-label" style="display:flex;align-items:center;gap:7px"><img src="/static/deka-bird.png" alt="Deka" style="height:16px;width:auto"><span>Doğrudan BOM ↔ ERP karşılaştırması (MPN, RefDes ve Açıklama analizi)</span></span><span class="hint">En fazla 20 MB / dosya</span></div>
-              <div class="actions"><button class="primary" id="submit-button" type="submit"><span>Karşılaştırmayı başlat</span><span aria-hidden="true">→</span></button><span class="secure">Dosyalar herhangi bir harici servise gönderilmez.</span></div>
-            </form>
+
+  <!-- Clean Corporate Header (Only DEKA Logo & BOM Tool Title, No Dummy Menus) -->
+  <header class="portal-topbar">
+    <div class="portal-brand">
+      <img src="/static/deka-logo.png" alt="DEKA Elektronik" class="logo-img portal-logo-img">
+      <div class="brand-divider"></div>
+      <span class="app-title">BOM Karşılaştırma</span>
+    </div>
+
+    <div class="portal-top-badge">
+      <span class="badge-dot"></span>
+      <span>Çevrimdışı Sistem</span>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <div class="portal-container" id="workspace">
+
+    <!-- Page Heading -->
+    <section class="page-heading">
+      <div>
+        <div class="eyebrow">Veri Kontrol Merkezi</div>
+        <h1>BOM Karşılaştırma</h1>
+        <p>Müşteri BOM listesini ERP kayıtlarıyla üç aşamalı akıllı algoritmayla karşılaştırın.</p>
+      </div>
+      <div class="heading-meta">
+        <img src="/static/deka-bird.png" alt="DEKA" style="height:18px;width:auto">
+        <span>DEKA Elektronik · Ar-Ge</span>
+      </div>
+    </section>
+
+    <!-- Workspace Grid -->
+    <section class="workspace-grid">
+
+      <!-- Upload Card -->
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">Dosyaları Karşılaştır</div>
+            <div class="card-subtitle">Müşteri BOM ve ERP dosyalarını seçin. Tüm satırlar incelenip renkli durum raporu üretilir.</div>
           </div>
-        </article>
-        <article class="card side-card"><div class="card-head"><div style="display:flex;align-items:center;gap:9px"><img src="/static/deka-bird.png" alt="DEKA" style="height:22px;width:auto"><div><div class="card-title">Kontrol adımları</div><div class="card-subtitle">Sistem dosyaları şu sırayla inceler.</div></div></div></div><div class="card-body"><div class="how">
-          <div class="how-row"><div class="num">1</div><div><div class="how-title">Ürün kodlarını eşleştirir (1. Aşama)</div><div class="how-desc">Part Number (MPN) değerlerini boşluk, parantezli alternatif kodlar ve büyük/küçük harf duyarsız olarak eşleştirir.</div></div></div>
-          <div class="how-row"><div class="num">2</div><div><div class="how-title">Dizgi ve RefDes eşlemesi (2. Aşama)</div><div class="how-desc">Part Number farklı olsa bile devre pozisyonu (C1, R1 vb.) aynı olan parçaları tespit eder; alternatifiyle eşleşenleri bağlar.</div></div></div>
-          <div class="how-row"><div class="num">3</div><div><div class="how-title">Miktar, montaj ve değer kontrolü (3. Aşama)</div><div class="how-desc">Kodu boş olan parçaları birebir açıklamayla eşler. Miktar (Qty), TH/SMD montaj tipi ve kılıf/voltaj farklarını denetler.</div></div></div>
-          <div class="how-row"><div class="num">4</div><div><div class="how-title">Master renkli rapor oluşturur</div><div class="how-desc">Yalnızca hataları değil, tüm doğru satırları da içerir: Hatalar kırmızı, uyarılar sarı, sorunsuzlar normal olarak listelenir.</div></div></div>
-        </div><div class="notice">Rapor tüm kalemleri eksiksiz kapsar. Miktar ve kılıf çelişkileri <b>Kırmızı (Hata)</b>, alternatif parça veya küçük uyarılar <b>Sarı (Uyarı)</b>, sorunsuz eşleşen satırlar <b>Normal (Uygun)</b> olarak işaretlenir.</div></div></article>
-      </section>
-      <section class="card results" id="results">
-        <div class="result-head"><div><h2>Karşılaştırma sonucu</h2><div class="card-subtitle" id="result-summary"></div></div><div class="buttons"><button class="secondary" id="new-run" type="button">Yeni karşılaştırma</button><a class="secondary green" id="download-link" href="#">Excel raporunu indir ↓</a></div></div>
-        <div class="metrics" style="grid-template-columns:repeat(4,1fr)">
-          <div class="metric"><div class="metric-num" id="metric-total">0</div><div class="metric-label">Toplam Parça</div></div>
-          <div class="metric"><div class="metric-num" style="color:var(--red)" id="metric-error">0</div><div class="metric-label">Hata (Kırmızı)</div></div>
-          <div class="metric"><div class="metric-num" style="color:var(--amber)" id="metric-warn">0</div><div class="metric-label">Uyarı (Sarı)</div></div>
-          <div class="metric"><div class="metric-num" style="color:var(--green)" id="metric-clean">0</div><div class="metric-label">Sorunsuz (Uygun)</div></div>
+          <div class="step-pill">01 / GİRDİ</div>
         </div>
-        <div class="table-wrap"><table class="data-table"><thead id="table-head"></thead><tbody id="table-body"></tbody></table></div><div class="foot" id="result-foot">Rapordaki her satır için durum ve varsa hata/uyarı nedenleri gösterilir.</div>
-      </section>
-    </main>
+        <div class="card-body">
+          <form id="compare-form">
+            <div class="uploads">
+              <!-- Customer Files Dropzone -->
+              <div class="upload" data-role="customer">
+                <div class="file-icon">XLSX</div>
+                <div class="upload-copy">
+                  <div class="upload-title">Müşteri BOM dosyası (veya dosyaları)</div>
+                  <div class="upload-desc">Tek veya birden fazla dosya / panel alt kart listeleri (klasör veya çoklu seçim)</div>
+                  <div class="file-selected" id="customer-name"></div>
+                </div>
+                <button class="pick" type="button">Dosya seçin</button>
+                <input type="file" accept=".xlsx" multiple hidden>
+              </div>
+
+              <!-- ERP File Dropzone -->
+              <div class="upload" data-role="erp">
+                <div class="file-icon">XLSX</div>
+                <div class="upload-copy">
+                  <div class="upload-title">ERP malzeme dosyası</div>
+                  <div class="upload-desc">Part Number, Description ve TH/SMD sütunları</div>
+                  <div class="file-selected" id="erp-name"></div>
+                </div>
+                <button class="pick" type="button">Dosya seçin</button>
+                <input type="file" accept=".xlsx" hidden>
+              </div>
+            </div>
+
+            <div class="options">
+              <span class="check-label">
+                <img src="/static/deka-bird.png" alt="DEKA" style="height:16px;width:auto">
+                <span>Doğrudan BOM ↔ ERP karşılaştırması (MPN, RefDes ve Açıklama analizi)</span>
+              </span>
+              <span class="hint">En fazla 20 MB / dosya</span>
+            </div>
+
+            <div class="actions">
+              <button class="primary" id="submit-button" type="submit">
+                <span>Karşılaştırmayı başlat</span>
+                <span aria-hidden="true">→</span>
+              </button>
+              <span class="secure">Dosyalar herhangi bir harici servise gönderilmez.</span>
+            </div>
+          </form>
+        </div>
+      </article>
+
+      <!-- Steps Card -->
+      <article class="card">
+        <div class="card-head">
+          <div style="display:flex;align-items:center;gap:9px">
+            <img src="/static/deka-bird.png" alt="DEKA" style="height:20px;width:auto">
+            <div>
+              <div class="card-title">Kontrol Adımları</div>
+              <div class="card-subtitle">Sistem dosyaları şu sırayla inceler</div>
+            </div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="how">
+            <div class="how-row">
+              <div class="num">1</div>
+              <div>
+                <div class="how-title">Ürün kodlarını eşleştirir (1. Aşama)</div>
+                <div class="how-desc">Part Number (MPN) değerlerini boşluk, parantezli alternatif kodlar ve büyük/küçük harf duyarsız olarak eşleştirir.</div>
+              </div>
+            </div>
+            <div class="how-row">
+              <div class="num">2</div>
+              <div>
+                <div class="how-title">Dizgi ve RefDes eşlemesi (2. Aşama)</div>
+                <div class="how-desc">Part Number farklı olsa bile devre pozisyonu (C1, R1 vb.) aynı olan parçaları tespit eder; alternatifiyle eşleşenleri bağlar.</div>
+              </div>
+            </div>
+            <div class="how-row">
+              <div class="num">3</div>
+              <div>
+                <div class="how-title">Miktar, montaj ve değer kontrolü (3. Aşama)</div>
+                <div class="how-desc">Kodu boş olan parçaları birebir açıklamayla eşler. Miktar (Qty), TH/SMD montaj tipi ve kılıf/voltaj farklarını denetler.</div>
+              </div>
+            </div>
+            <div class="how-row">
+              <div class="num">4</div>
+              <div>
+                <div class="how-title">Master renkli rapor oluşturur</div>
+                <div class="how-desc">Hatalar kırmızı, uyarılar sarı, sorunsuzlar normal olarak listelenir.</div>
+              </div>
+            </div>
+          </div>
+          <div class="notice">
+            Rapor tüm kalemleri eksiksiz kapsar. Miktar ve kılıf çelişkileri <b>Kırmızı (Hata)</b>, alternatif parça veya küçük uyarılar <b>Sarı (Uyarı)</b>, sorunsuz eşleşen satırlar <b>Normal (Uygun)</b> olarak işaretlenir.
+          </div>
+        </div>
+      </article>
+
+    </section>
+
+    <!-- Results Card -->
+    <section class="card results" id="results">
+      <div class="result-head">
+        <div>
+          <h2>Karşılaştırma Sonucu</h2>
+          <div class="card-subtitle" id="result-summary"></div>
+        </div>
+        <div class="buttons">
+          <button class="secondary" id="new-run" type="button">Yeni Karşılaştırma</button>
+          <a class="secondary green" id="download-link" href="#">Excel Raporunu İndir ↓</a>
+        </div>
+      </div>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-num" id="metric-total">0</div>
+          <div class="metric-label">Toplam Parça</div>
+        </div>
+        <div class="metric">
+          <div class="metric-num" style="color:var(--deka-red)" id="metric-error">0</div>
+          <div class="metric-label">Hata (Kırmızı)</div>
+        </div>
+        <div class="metric">
+          <div class="metric-num" style="color:var(--amber)" id="metric-warn">0</div>
+          <div class="metric-label">Uyarı (Sarı)</div>
+        </div>
+        <div class="metric">
+          <div class="metric-num" style="color:var(--green)" id="metric-clean">0</div>
+          <div class="metric-label">Sorunsuz (Uygun)</div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead id="table-head"></thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+
+      <div class="foot" id="result-foot">
+        Rapordaki her satır için durum ve varsa hata/uyarı nedenleri gösterilir.
+      </div>
+    </section>
+
   </div>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
   <script>
-    const form=document.querySelector('#compare-form'),submit=document.querySelector('#submit-button'),toast=document.querySelector('#toast');let selected={customer:[],erp:null},lastResult=null,toastTimer;
-    function showToast(message,error=false){toast.textContent=message;toast.classList.toggle('error',error);toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('show'),6500)}
-    function setFiles(role,files){if(!files||!files.length)return;const list=Array.from(files);for(const f of list){if(!f.name.toLowerCase().endsWith('.xlsx')){showToast('Yalnızca .xlsx uzantılı Excel dosyaları yüklenebilir.',true);return}if(f.size>20*1024*1024){showToast('Her dosya en fazla 20 MB olabilir.',true);return}}if(role==='customer'){selected.customer=list;const label=document.querySelector('#customer-name');if(list.length===1){label.textContent=`${list[0].name} · ${(list[0].size/1024/1024).toFixed(2)} MB`}else{label.textContent=`${list.length} dosya seçildi (${list.map(f=>f.name).join(', ')})`}}else{selected.erp=list[0];document.querySelector('#erp-name').textContent=`${list[0].name} · ${(list[0].size/1024/1024).toFixed(2)} MB`}}
-    document.querySelectorAll('.upload').forEach(zone=>{const role=zone.dataset.role,input=zone.querySelector('input'),pick=zone.querySelector('.pick');pick.addEventListener('click',()=>input.click());input.addEventListener('change',()=>setFiles(role,input.files));for(const name of ['dragenter','dragover'])zone.addEventListener(name,event=>{event.preventDefault();zone.classList.add('over')});for(const name of ['dragleave','drop'])zone.addEventListener(name,event=>{event.preventDefault();zone.classList.remove('over')});zone.addEventListener('drop',event=>setFiles(role,event.dataTransfer.files))});
-    form.addEventListener('submit',async event=>{event.preventDefault();if(!selected.customer||!selected.customer.length||!selected.erp){showToast('Devam etmek için Müşteri BOM ve ERP dosyalarını seçin.',true);return}const body=new FormData();for(const file of selected.customer){body.append('customer_files',file)}body.append('erp_file',selected.erp);submit.disabled=true;submit.innerHTML='<span class="spinner"></span><span>Dosyalar karşılaştırılıyor</span>';try{const response=await fetch('/api/compare',{method:'POST',body});const data=await response.json();if(!response.ok)throw new Error(data.detail||'Karşılaştırma sırasında bir hata oluştu.');lastResult=data;render(data);showToast(`${data.row_count} parça karşılaştırıldı.`)}catch(error){showToast(error.message||'Sunucuya ulaşılamadı. Uygulamanın çalıştığını kontrol edin.',true)}finally{submit.disabled=false;submit.innerHTML='<span>Karşılaştırmayı başlat</span><span aria-hidden="true">→</span>'}});
-    function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}
-    function render(data){document.querySelector('#result-summary').textContent='Tüm satırlar karşılaştırıldı · dış API kullanılmadı';document.querySelector('#metric-total').textContent=data.row_count;document.querySelector('#metric-error').textContent=data.error_count;document.querySelector('#metric-warn').textContent=data.warning_count;document.querySelector('#metric-clean').textContent=data.clean_count;document.querySelector('#download-link').href=data.download_url;document.querySelector('#results').classList.add('show');renderTable();document.querySelector('#results').scrollIntoView({behavior:'smooth',block:'start'})}
-    function renderTable(){const head=document.querySelector('#table-head'),body=document.querySelector('#table-body');head.innerHTML='<tr><th>Durum</th><th>Part Number</th><th>Müşteri Qty</th><th>ERP Qty</th><th>Müşteri Value</th><th>ERP Description</th><th>Müşteri Montaj</th><th>ERP Montaj</th><th>Hata / Uyarı Açıklaması</th></tr>';const rows=lastResult.rows;if(!rows.length){body.innerHTML='<tr><td class="empty" colspan="9">Eşleştirilecek satır bulunamadı.</td></tr>';return}body.innerHTML=rows.map(row=>{const durum=row['Durum']||'UYGUN';let badgeStyle='background:#e8f4ed;color:#216a51;border:1px solid #cce5d5',rowBg='#ffffff';if(durum==='HATA'){badgeStyle='background:#f9e9e7;color:#a6403b;border:1px solid #f5cfcc';rowBg='#fff9f9'}else if(durum==='UYARI'){badgeStyle='background:#fbf2df;color:#9a6814;border:1px solid #f4e3c3';rowBg='#fffdf8'}return `<tr style="background:${rowBg}"><td><span class="pill" style="${badgeStyle}">${escapeHtml(durum)}</span></td><td><b>${escapeHtml(row['Part Number'])}</b></td><td>${escapeHtml(row['Müşteri Qty']||'—')}</td><td>${escapeHtml(row['ERP Qty']||'—')}</td><td>${escapeHtml(row['Müşteri Value']||'—')}</td><td>${escapeHtml(row['ERP Description']||'—')}</td><td>${escapeHtml(row['Müşteri TH/SMD']||'—')}</td><td>${escapeHtml(row['ERP TH/SMD']||'—')}</td><td>${row['Hata/Uyarı Durumu']?`<span class="pill" style="${badgeStyle}">${escapeHtml(row['Hata/Uyarı Durumu'])}</span>`:'<span style="color:#748079">Sorunsuz</span>'}</td></tr>`}).join('');document.querySelector('#result-foot').textContent=lastResult.preview_limited?'Ekrandaki önizleme sınırlıdır; indirilebilir Excel raporu tüm satırları içerir.':'Önizlemede gösterilen kayıtlar indirilebilir raporla aynıdır.'}
-    document.querySelector('#new-run').addEventListener('click',()=>{document.querySelector('#results').classList.remove('show');document.querySelector('#workspace').scrollIntoView({behavior:'smooth'});selected={customer:[],erp:null};document.querySelectorAll('.upload input').forEach(input=>input.value='');document.querySelectorAll('.file-selected').forEach(label=>label.textContent='')});
+    const form = document.querySelector('#compare-form');
+    const submit = document.querySelector('#submit-button');
+    const toast = document.querySelector('#toast');
+    let selected = { customer: [], erp: null };
+    let lastResult = null;
+    let toastTimer;
+
+    function showToast(message, error = false) {
+      toast.textContent = message;
+      toast.classList.toggle('error', error);
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 6500);
+    }
+
+    function setFiles(role, files) {
+      if (!files || !files.length) return;
+      const list = Array.from(files);
+      for (const f of list) {
+        if (!f.name.toLowerCase().endsWith('.xlsx')) {
+          showToast('Yalnızca .xlsx uzantılı Excel dosyaları yüklenebilir.', true);
+          return;
+        }
+        if (f.size > 20 * 1024 * 1024) {
+          showToast('Her dosya en fazla 20 MB olabilir.', true);
+          return;
+        }
+      }
+      if (role === 'customer') {
+        selected.customer = list;
+        const label = document.querySelector('#customer-name');
+        const totalMb = (list.reduce((acc, f) => acc + f.size, 0) / (1024 * 1024)).toFixed(2);
+        if (list.length === 1) {
+          label.textContent = `${list[0].name} · ${(list[0].size / 1024 / 1024).toFixed(2)} MB`;
+        } else {
+          label.textContent = `${list.length} dosya seçildi (${totalMb} MB)`;
+        }
+        label.title = list.map(f => f.name).join('\n');
+      } else {
+        selected.erp = list[0];
+        const label = document.querySelector('#erp-name');
+        label.textContent = `${list[0].name} · ${(list[0].size / 1024 / 1024).toFixed(2)} MB`;
+        label.title = list[0].name;
+      }
+    }
+
+    async function extractFilesFromDrop(dataTransfer) {
+      const files = [];
+      const items = dataTransfer.items;
+      if (!items || !items.length) {
+        return Array.from(dataTransfer.files || []);
+      }
+      async function traverseEntry(entry) {
+        if (entry.isFile) {
+          try {
+            const f = await new Promise((res, rej) => entry.file(res, rej));
+            if (f.name.toLowerCase().endsWith('.xlsx') && !f.name.startsWith('~$')) {
+              files.push(f);
+            }
+          } catch (e) {}
+        } else if (entry.isDirectory) {
+          const dirReader = entry.createReader();
+          const entries = await new Promise(resolve => {
+            const all = [];
+            function readNext() {
+              dirReader.readEntries(batch => {
+                if (!batch || !batch.length) {
+                  resolve(all);
+                } else {
+                  all.push(...batch);
+                  readNext();
+                }
+              }, () => resolve(all));
+            }
+            readNext();
+          });
+          for (const child of entries) {
+            await traverseEntry(child);
+          }
+        }
+      }
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.webkitGetAsEntry) {
+          const entry = item.webkitGetAsEntry();
+          if (entry) {
+            await traverseEntry(entry);
+            continue;
+          }
+        }
+        const f = item.getAsFile ? item.getAsFile() : null;
+        if (f && f.name.toLowerCase().endsWith('.xlsx') && !f.name.startsWith('~$')) {
+          files.push(f);
+        }
+      }
+      return files;
+    }
+
+    document.querySelectorAll('.upload').forEach(zone => {
+      const role = zone.dataset.role;
+      const input = zone.querySelector('input');
+      const pick = zone.querySelector('.pick');
+
+      pick.addEventListener('click', (e) => {
+        e.stopPropagation();
+        input.click();
+      });
+
+      zone.addEventListener('click', () => {
+        input.click();
+      });
+
+      input.addEventListener('change', () => setFiles(role, input.files));
+
+      for (const name of ['dragenter', 'dragover']) {
+        zone.addEventListener(name, event => {
+          event.preventDefault();
+          zone.classList.add('over');
+        });
+      }
+
+      for (const name of ['dragleave', 'drop']) {
+        zone.addEventListener(name, event => {
+          event.preventDefault();
+          zone.classList.remove('over');
+        });
+      }
+
+      zone.addEventListener('drop', async event => {
+        event.preventDefault();
+        zone.classList.remove('over');
+        const files = await extractFilesFromDrop(event.dataTransfer);
+        if (!files.length) {
+          showToast('Sürüklenen klasör veya seçim içinde .xlsx uzantılı Excel dosyası bulunamadı.', true);
+          return;
+        }
+        setFiles(role, files);
+      });
+    });
+
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (!selected.customer || !selected.customer.length || !selected.erp) {
+        showToast('Devam etmek için Müşteri BOM ve ERP dosyalarını seçin.', true);
+        return;
+      }
+      const body = new FormData();
+      for (const file of selected.customer) {
+        body.append('customer_files', file);
+      }
+      body.append('erp_file', selected.erp);
+
+      submit.disabled = true;
+      submit.innerHTML = '<span class="spinner"></span><span>Dosyalar karşılaştırılıyor</span>';
+
+      try {
+        const response = await fetch('/api/compare', { method: 'POST', body });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || 'Karşılaştırma sırasında bir hata oluştu.');
+        }
+        lastResult = data;
+        render(data);
+        showToast(`${data.row_count} parça karşılaştırıldı.`);
+      } catch (error) {
+        showToast(error.message || 'Sunucuya ulaşılamadı. Uygulamanın çalıştığını kontrol edin.', true);
+      } finally {
+        submit.disabled = false;
+        submit.innerHTML = '<span>Karşılaştırmayı başlat</span><span aria-hidden="true">→</span>';
+      }
+    });
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[char]));
+    }
+
+    function render(data) {
+      document.querySelector('#result-summary').textContent = 'Tüm satırlar karşılaştırıldı · dış API kullanılmadı';
+      document.querySelector('#metric-total').textContent = data.row_count;
+      document.querySelector('#metric-error').textContent = data.error_count;
+      document.querySelector('#metric-warn').textContent = data.warning_count;
+      document.querySelector('#metric-clean').textContent = data.clean_count;
+      document.querySelector('#download-link').href = data.download_url;
+      document.querySelector('#results').classList.add('show');
+      renderTable();
+      document.querySelector('#results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function renderTable() {
+      const head = document.querySelector('#table-head');
+      const body = document.querySelector('#table-body');
+      head.innerHTML = '<tr><th>Durum</th><th>Müşteri Part Number</th><th>ERP Part Number</th><th>Müşteri Qty</th><th>ERP Qty</th><th>Müşteri Value</th><th>ERP Description</th><th>Müşteri Montaj</th><th>ERP Montaj</th><th>Hata / Uyarı Açıklaması</th></tr>';
+      const rows = lastResult.rows;
+      if (!rows.length) {
+        body.innerHTML = '<tr><td class="empty" colspan="10">Eşleştirilecek satır bulunamadı.</td></tr>';
+        return;
+      }
+      body.innerHTML = rows.map(row => {
+        const durum = row['Durum'] || 'UYGUN';
+        let badgeClass = 'pill-uygun';
+        let rowBg = '#ffffff';
+
+        if (durum === 'HATA') {
+          badgeClass = 'pill-hata';
+          rowBg = '#fffbfb';
+        } else if (durum === 'UYARI') {
+          badgeClass = 'pill-uyari';
+          rowBg = '#fffdf7';
+        }
+
+        return `<tr style="background:${rowBg}">
+          <td><span class="pill ${badgeClass}">${escapeHtml(durum)}</span></td>
+          <td><b>${escapeHtml(row['Müşteri Part Number'] || '—')}</b></td>
+          <td><b>${escapeHtml(row['ERP Part Number'] || '—')}</b></td>
+          <td>${escapeHtml(row['Müşteri Qty'] || '—')}</td>
+          <td>${escapeHtml(row['ERP Qty'] || '—')}</td>
+          <td>${escapeHtml(row['Müşteri Value'] || '—')}</td>
+          <td>${escapeHtml(row['ERP Description'] || '—')}</td>
+          <td>${escapeHtml(row['Müşteri TH/SMD'] || '—')}</td>
+          <td>${escapeHtml(row['ERP TH/SMD'] || '—')}</td>
+          <td>${row['Hata/Uyarı Durumu'] ? `<span class="pill ${badgeClass}">${escapeHtml(row['Hata/Uyarı Durumu'])}</span>` : '<span style="color:#6b7280">Sorunsuz</span>'}</td>
+        </tr>`;
+      }).join('');
+      document.querySelector('#result-foot').textContent = lastResult.preview_limited
+        ? 'Ekrandaki önizleme sınırlıdır; indirilebilir Excel raporu tüm satırları içerir.'
+        : 'Önizlemede gösterilen kayıtlar indirilebilir raporla aynıdır.';
+    }
+
+    document.querySelector('#new-run').addEventListener('click', () => {
+      document.querySelector('#results').classList.remove('show');
+      document.querySelector('#workspace').scrollIntoView({ behavior: 'smooth' });
+      selected = { customer: [], erp: null };
+      document.querySelectorAll('.upload input').forEach(input => input.value = '');
+      document.querySelectorAll('.file-selected').forEach(label => label.textContent = '');
+    });
   </script>
 </body>
 </html>

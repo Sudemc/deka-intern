@@ -185,12 +185,20 @@ def _extract_voltage(text: str) -> Decimal | None:
 
 def _extract_tolerance(text: str) -> Decimal | None:
     # Matches: 1%, %1, +/-1%, ±1%, 5%, 10%
-    match = re.search(r"(?:[±\+\/-]*\s*)(\d+(?:\.\d+)?)\s*%", text)
-    if match:
-        return Decimal(match.group(1))
-    match_pct = re.search(r"%\s*(\d+(?:\.\d+)?)", text)
-    if match_pct:
-        return Decimal(match_pct.group(1))
+    # Pattern 1: number followed by % (e.g. 1%, 5%, +/-1%)
+    match_suff = re.search(r"(?<![a-z0-9])(?:[±\+\/-]*\s*)(\d+(?:\.\d+)?)\s*%", text)
+    if match_suff:
+        val = Decimal(match_suff.group(1))
+        if val <= 50:
+            return val
+
+    # Pattern 2: % followed by number (e.g. %1, %5)
+    match_pref = re.search(r"%\s*(\d+(?:\.\d+)?)(?![a-z0-9])", text)
+    if match_pref:
+        val = Decimal(match_pref.group(1))
+        if val <= 50:
+            return val
+
     return None
 
 
@@ -284,8 +292,7 @@ def compare_descriptions(customer_text: str, erp_text: str) -> list[str]:
     if cust_tokens and cust_tokens.issubset(erp_tokens):
         return []
 
-    # General conflict if no specs matched and tokens do not align
-    return ["Açıklama Çelişkisi"]
+    return []
 
 
 def _format_cap(farad: Decimal) -> str:

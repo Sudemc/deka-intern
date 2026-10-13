@@ -73,7 +73,10 @@ async def compare_uploads(
                 raise HTTPException(status_code=400, detail="customer: seçilen dosya boş.")
             if len(content) > _MAX_UPLOAD_BYTES:
                 raise HTTPException(status_code=413, detail="customer: dosya 20 MB sınırını aşıyor.")
-            c_path = Path(job_dir.name) / f"customer_{index}_{filename}"
+            clean_name = Path(filename).name
+            c_path = Path(job_dir.name) / clean_name
+            if c_path.exists():
+                c_path = Path(job_dir.name) / f"{index}_{clean_name}"
             c_path.write_bytes(content)
             customer_paths.append(c_path)
 
@@ -95,10 +98,7 @@ async def compare_uploads(
             paths[role] = path
 
         if "rules" not in paths:
-            if DEFAULT_RULES_PATH.exists():
-                paths["rules"] = DEFAULT_RULES_PATH
-            else:
-                paths["rules"] = None
+            paths["rules"] = None
 
         output_path = Path(job_dir.name) / "Hata_ve_Kiyaslama_Raporu.xlsx"
         result = compare_workbooks(customer_paths, paths["erp"], paths.get("rules"), output_path)

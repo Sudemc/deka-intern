@@ -118,12 +118,31 @@ def _code_like(value: Any) -> bool:
     return not _REFERENCE_PATTERN.fullmatch(candidate)
 
 
+def clean_part_number(s: str) -> str:
+    """Clean auxiliary notes from part numbers (e.g. bin codes or mounting orientation notes)."""
+    if not s:
+        return ""
+    # Strip parenthetical notes that do NOT contain '/' (e.g. '(AA-BB bin)')
+    cleaned = re.sub(r"\s*\([^)/]*\)", "", s)
+    cleaned = re.sub(r"\s+-\s+(?:Right-Angle|Vertical|Horizontal|Dik|Yatık|SMD|TH).*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+\d+-\d+\s+color\)?.*$", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
+
+
+_NOTE_PREFIX_PATTERN = re.compile(
+    r"(?i)^(?:SEE\b|LOOK\b|REFER\b|BAK\b|BAKINIZ\b|PLEASE\b|NOTE\b|NOT\b|TBD\b|N/?A\b|NONE\b)"
+)
+
+
 def _explicit_code_like(value: Any) -> bool:
     """Reject prose/footer text even when it lands under a named code column."""
-    candidate = _string_value(value).strip()
-    if not candidate or len(candidate) > 64:
+    raw_candidate = _string_value(value).strip()
+    if not raw_candidate or len(raw_candidate) > 128:
         return False
-    if _REFERENCE_PATTERN.fullmatch(candidate):
+    if _REFERENCE_PATTERN.fullmatch(raw_candidate):
+        return False
+    candidate = clean_part_number(raw_candidate)
+    if not candidate or _NOTE_PREFIX_PATTERN.search(candidate):
         return False
     tokens = candidate.split()
     if len(tokens) > 4:
@@ -136,6 +155,7 @@ def _explicit_code_like(value: Any) -> bool:
     if not any(character.isdigit() for character in candidate) and len(candidate) > 20:
         return False
     return True
+
 
 
 def _auto_layout(
@@ -317,8 +337,11 @@ def read_customer_bom(
                 and _header_field(raw_headers[part_number_column]) == "part_number"
             )
         )
-        if explicit_code_header and part_number and not _explicit_code_like(part_number):
-            part_number = ""
+        if explicit_code_header and part_number:
+            if not _explicit_code_like(part_number):
+                part_number = ""
+            else:
+                part_number = clean_part_number(part_number)
         candidates: list[PartNumberCandidate] = []
         for column_index in code_columns:
             if column_index >= len(values):
@@ -373,12 +396,18 @@ def read_customer_bom(
     return rows
 
 
+_IGNORED_SHEET_KEYWORDS = {"bin", "revision", "revizyon", "history", "cover", "kapak", "tarihce", "doc"}
+
+
 def find_customer_bom_sheets(path: Path) -> list[str]:
     """Find all worksheets in a workbook that appear to contain a BOM table."""
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
         bom_sheets: list[str] = []
         for worksheet in workbook.worksheets:
+            title_lower = worksheet.title.casefold()
+            if any(kw in title_lower for kw in _IGNORED_SHEET_KEYWORDS):
+                continue
             sample_rows = list(
                 worksheet.iter_rows(min_row=1, max_row=30, values_only=True)
             )
@@ -412,6 +441,9 @@ def _select_customer_sheet(path: Path) -> str:
         best_sheet = workbook.sheetnames[0]
         best_score = -1
         for worksheet in workbook.worksheets:
+            title_lower = worksheet.title.casefold()
+            if any(kw in title_lower for kw in _IGNORED_SHEET_KEYWORDS):
+                continue
             sample_rows = list(
                 worksheet.iter_rows(min_row=1, max_row=30, values_only=True)
             )
@@ -433,3 +465,4 @@ def _select_customer_sheet(path: Path) -> str:
         return best_sheet
     finally:
         workbook.close()
+

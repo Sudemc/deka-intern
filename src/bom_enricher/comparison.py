@@ -13,13 +13,14 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .excel_io import find_customer_bom_sheets, read_customer_bom
+from .excel_io import clean_part_number, find_customer_bom_sheets, read_customer_bom
 from .semantic_parser import compare_descriptions, normalize_code_key, normalize_mounting
 
 
 OUTPUT_HEADERS = (
     "Durum",
-    "Part Number",
+    "Müşteri Part Number",
+    "ERP Part Number",
     "Müşteri Qty",
     "ERP Qty",
     "Müşteri Value",
@@ -196,18 +197,30 @@ def _should_pair_refs(crefs: set[str], erefs: set[str]) -> bool:
 
 def _extract_erp_prefixes(erp_records: list[PartRecord]) -> tuple[set[str], dict[str, set[str]]]:
     """Extract board prefixes (e.g. TR1, ST1, FM) and their base references from ERP."""
-    prefixes: set[str] = set()
     refs_by_prefix: dict[str, set[str]] = defaultdict(set)
+    pfx_record_count: dict[str, int] = defaultdict(int)
     for rec in erp_records:
+        seen_in_rec: set[str] = set()
         for ref in _split_refs(rec.reference):
             if "_" in ref:
                 parts = ref.split("_", 1)
                 prefix = parts[0].strip().upper()
                 base = parts[1].strip().upper()
-                if 1 <= len(prefix) <= 10 and re.match(r"^[A-Z]+\d+", base):
-                    prefixes.add(prefix)
+                # A PCB board/sub-panel prefix must be at least 2 characters (single letters like J, C, R, D
+                # are schematic component class identifiers, e.g. J_LCD1, D_LED1, not board prefixes).
+                if 2 <= len(prefix) <= 10 and re.match(r"^[A-Z]+\d+", base):
                     refs_by_prefix[prefix].add(base)
-    return prefixes, dict(refs_by_prefix)
+                    seen_in_rec.add(prefix)
+        for pfx in seen_in_rec:
+            pfx_record_count[pfx] += 1
+
+    # Genuine board prefixes must appear across multiple component designators or records (at least 2)
+    valid_prefixes = {
+        pfx
+        for pfx, bases in refs_by_prefix.items()
+        if len(bases) >= 2 or pfx_record_count[pfx] >= 2
+    }
+    return valid_prefixes, {pfx: refs_by_prefix[pfx] for pfx in valid_prefixes}
 
 
 def _resolve_record_prefix(
@@ -226,29 +239,45 @@ def _resolve_record_prefix(
 
     # 1. Exact match on normalized sheet name
     for pfx in erp_prefixes:
-        norm_pfx = re.sub(r"[^A-Za-z0-9]", "", pfx)
+        norm_pfx = re.sub(r"[^A-Za-z0-9]", "", pfx.upper())
         if norm_sheet == norm_pfx:
             return pfx
 
     # 2. Sheet name starts with prefix
     for pfx in sorted(erp_prefixes, key=len, reverse=True):
-        norm_pfx = re.sub(r"[^A-Za-z0-9]", "", pfx)
+        norm_pfx = re.sub(r"[^A-Za-z0-9]", "", pfx.upper())
         if norm_sheet.startswith(norm_pfx) and len(norm_pfx) >= 2:
             return pfx
 
     # 3. Exact match on filename stem
     for pfx in erp_prefixes:
-        norm_pfx = re.sub(r"[^A-Za-z0-9]", "", pfx)
+        norm_pfx = re.sub(r"[^A-Za-z0-9]", "", pfx.upper())
         if norm_file == norm_pfx:
             return pfx
 
-    # 4. Filename stem starts with prefix
+    # 4. Token & Acronym matching from filename stem (e.g. StopTail1 -> ST1, FogMain -> FM, TurnRev1 -> TR1)
+    tokens = re.split(r"[_ \-]+", Path(source_file).stem)
+    for tok in reversed(tokens):
+        tok_clean = tok.strip()
+        if not tok_clean:
+            continue
+        tok_upper = tok_clean.upper()
+        if tok_upper in erp_prefixes:
+            return tok_upper
+        acronym = "".join(c for c in tok_clean if c.isupper() or c.isdigit()).upper()
+        if acronym in erp_prefixes:
+            return acronym
+        for pfx in erp_prefixes:
+            if tok_upper.startswith(pfx.upper()) and (len(tok_upper) == len(pfx) or not tok_upper[len(pfx)].isalpha()):
+                return pfx
+
+    # 5. Filename stem starts with prefix
     for pfx in sorted(erp_prefixes, key=len, reverse=True):
-        norm_pfx = re.sub(r"[^A-Za-z0-9]", "", pfx)
+        norm_pfx = re.sub(r"[^A-Za-z0-9]", "", pfx.upper())
         if norm_file.startswith(norm_pfx) and len(norm_pfx) >= 2:
             return pfx
 
-    # 5. Fallback: match by RefDes overlap
+    # 6. Fallback: match by RefDes overlap
     if record_refs:
         best_pfx = None
         best_overlap = 0
@@ -257,7 +286,9 @@ def _resolve_record_prefix(
             if overlap > best_overlap:
                 best_overlap = overlap
                 best_pfx = pfx
-        if best_pfx and best_overlap > 0:
+        if best_pfx and best_overlap >= 3 and (
+            best_overlap / len(record_refs) >= 0.25 or best_overlap / len(erp_refs_by_prefix[best_pfx]) >= 0.4
+        ):
             return best_pfx
 
     return None
@@ -300,11 +331,15 @@ def _qualify_customer_references(
 
         raw_tokens = re.split(r"([,;|\s/]+)", rec.reference)
         new_tokens: list[str] = []
+        erp_bases = erp_refs_by_prefix.get(pfx, set())
         for token in raw_tokens:
             stripped = token.strip().upper()
             if stripped and re.match(r"^[A-Z]+\d+", stripped):
                 if not stripped.startswith(f"{pfx}_") and "_" not in stripped:
-                    new_tokens.append(f"{pfx}_{stripped}")
+                    if stripped in erp_bases:
+                        new_tokens.append(f"{pfx}_{stripped}")
+                    else:
+                        new_tokens.append(token)
                 else:
                     new_tokens.append(token)
             else:
@@ -351,6 +386,9 @@ def compare_workbooks(
     sibling_groups: list[dict[str, object]] = []   # her grup: primary kod ve grubun tüm normalized kodları
     for rec in erp_raw:
         codes = _split_multi_code(rec.part_number)
+        cleaned_first = clean_part_number(rec.part_number)
+        if cleaned_first and cleaned_first not in codes:
+            codes.append(cleaned_first)
         if len(codes) > 1:
             group: set[str] = set()
             for code in codes:
@@ -535,11 +573,15 @@ def compare_workbooks(
 
             # 2. Müşteri Qty vs Referans Adedi
             if customer_record.reference and customer_qty:
-                ref_tokens = [r.strip() for r in re.split(r"[,;\s]+", customer_record.reference) if r.strip()]
-                valid_refs = [r for r in ref_tokens if re.match(r"^[A-Za-z]+\d+", r)]
+                ref_tokens = [r.strip() for r in re.split(r"[,;|\s/]+", customer_record.reference) if r.strip()]
+                valid_refs = [
+                    r for r in ref_tokens
+                    if re.match(r"^(?:[A-Za-z0-9]+_)?[A-Za-z][A-Za-z0-9_]*$", r)
+                ]
                 if valid_refs:
                     try:
-                        if float(customer_qty) != len(valid_refs):
+                        c_qty_val = float(customer_qty)
+                        if c_qty_val != len(valid_refs) and c_qty_val != len(ref_tokens):
                             issues.append(
                                 f"Müşteri Qty ile Referans sayısı uyumsuz (Qty: {customer_qty}, Ref: {len(valid_refs)})"
                             )
@@ -584,8 +626,13 @@ def compare_workbooks(
         durum = _classify_severity(issues)
         issue_str = "; ".join(dict.fromkeys(issues))
 
+        customer_pn = c_pn or (customer_record.reference if customer_record else "")
+        erp_pn = e_pn
+
         report.append({
             "Durum": durum,
+            "Müşteri Part Number": customer_pn,
+            "ERP Part Number": erp_pn,
             "Part Number": display_code,
             "Müşteri Qty": customer_qty,
             "ERP Qty": erp_qty,
@@ -627,12 +674,16 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
                             "Part Number sütun başlığını netleştirin."
                         )
                     if code:
+                        code = clean_part_number(code)
+                        qty_val = _cell_text(row.qty).strip()
+                        if qty_val.lower() == "nan":
+                            qty_val = ""
                         all_records.append(PartRecord(
                             part_number=code,
                             description=row.value,
                             reference=row.part,
                             mounting=row.mounting,
-                            qty=_cell_text(row.qty),
+                            qty=qty_val,
                             manufacturer=row.manufacturer,
                             package=row.package,
                             source_file=file_path.name,
@@ -808,7 +859,7 @@ def write_comparison_report(rows: list[dict[str, str]], output_path: Path) -> No
                 cell.fill = row_fill
             cell.alignment = Alignment(vertical="top", wrap_text=True)
 
-    widths = (12, 28, 14, 14, 36, 36, 16, 16, 44)
+    widths = (12, 28, 28, 14, 14, 36, 36, 16, 16, 44)
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[get_column_letter(index)].width = width
     sheet.freeze_panes = "A2"
@@ -856,8 +907,21 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
         else:
             qty_str = ""
 
-        sources = {(item.source_file, item.source_sheet) for item in group}
-        is_duplicate = (len(sources) < len(group)) if not normalized.startswith("__NO_CODE_") else False
+        is_duplicate = False
+        if not normalized.startswith("__NO_CODE_") and len(group) > 1:
+            has_any_ref = any(bool(item.reference.strip()) for item in group)
+            if not has_any_ref:
+                sources = {(item.source_file, item.source_sheet) for item in group}
+                is_duplicate = len(sources) < len(group)
+            else:
+                all_refs = [_split_refs(item.reference) for item in group if item.reference]
+                for i, ra in enumerate(all_refs):
+                    for rb in all_refs[i + 1 :]:
+                        if ra and rb and (ra & rb):
+                            is_duplicate = True
+                            break
+                    if is_duplicate:
+                        break
 
         result[normalized] = PartRecord(
             part_number=group[0].part_number,
