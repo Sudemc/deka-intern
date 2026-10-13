@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#ca130d">
-  <title>DEKA Elektronik | BOM Karşılaştırma</title>
+  <title>DEKA Elektronik | BOM Karşılaştırma & Datasheet Analizörü</title>
   <style>
     :root {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -29,6 +29,9 @@
       --amber: #d97706;
       --amber-light: #fffbeb;
       --amber-border: #fde68a;
+      --blue: #2563eb;
+      --blue-light: #eff6ff;
+      --blue-border: #bfdbfe;
       --radius: 12px;
       --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
     }
@@ -77,6 +80,39 @@
       letter-spacing: 0.3px;
       color: #ffffff;
     }
+
+    /* Portal Tabs */
+    .portal-tabs {
+      display: flex;
+      gap: 6px;
+      background: rgba(0, 0, 0, 0.18);
+      padding: 4px;
+      border-radius: 8px;
+    }
+    .nav-tab {
+      background: transparent;
+      border: none;
+      color: rgba(255, 255, 255, 0.85);
+      padding: 7px 18px;
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .nav-tab:hover {
+      background: rgba(255, 255, 255, 0.15);
+      color: #ffffff;
+    }
+    .nav-tab.active {
+      background: #ffffff;
+      color: var(--deka-red);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+    }
+
     .portal-top-badge {
       display: inline-flex;
       align-items: center;
@@ -104,6 +140,15 @@
       display: flex;
       flex-direction: column;
       gap: 24px;
+    }
+
+    .tab-view {
+      display: none;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .tab-view.active {
+      display: flex;
     }
 
     /* Page Heading Strip */
@@ -238,6 +283,11 @@
       font-size: 11px;
       flex: none;
     }
+    .file-icon.pdf {
+      background: #fee2e2;
+      color: #dc2626;
+      border-color: #fca5a5;
+    }
     .upload-copy {
       min-width: 0;
       flex: 1;
@@ -260,92 +310,195 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      word-break: break-all;
-    }
-    .file-selected:empty {
-      display: none;
     }
     .pick {
-      border: 1px solid var(--deka-red);
       background: #ffffff;
-      color: var(--deka-red);
-      font-weight: 600;
+      color: var(--gray-700);
+      border: 1px solid var(--gray-300);
+      padding: 7px 14px;
       border-radius: 6px;
-      padding: 8px 14px;
       font-size: 12px;
+      font-weight: 500;
       cursor: pointer;
-      white-space: nowrap;
-      transition: all 0.15s;
+      flex: none;
+      transition: all 0.15s ease;
     }
     .pick:hover {
-      background: var(--deka-red);
-      color: #ffffff;
+      background: var(--gray-50);
+      border-color: var(--gray-400);
+      color: var(--gray-800);
     }
 
-    /* Options strip */
-    .options {
+    /* PDF list items */
+    .pdf-items-list {
+      margin-top: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 280px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .pdf-item {
+      background: #ffffff;
+      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+      padding: 10px 14px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      margin-top: 18px;
-      padding: 12px 16px;
-      background: var(--gray-50);
-      border: 1px solid var(--gray-200);
-      border-radius: 8px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
     }
-    .check-label {
+    .pdf-item-info {
       display: flex;
       align-items: center;
-      gap: 9px;
-      color: var(--gray-700);
+      gap: 10px;
+      min-width: 0;
+      flex: 1;
+    }
+    .pdf-badge {
+      background: #fee2e2;
+      color: #b91c1c;
+      font-weight: 700;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid #fca5a5;
+    }
+    .pdf-filename {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--gray-800);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 220px;
+    }
+    .pn-input-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 1;
+    }
+    .pn-label {
       font-size: 11px;
+      font-weight: 600;
+      color: var(--gray-500);
+      white-space: nowrap;
+    }
+    .pn-input {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--gray-800);
+      background: var(--gray-50);
+      border: 1px solid var(--gray-300);
+      border-radius: 6px;
+      padding: 6px 10px;
+      width: 100%;
+      max-width: 220px;
+      outline: none;
+      transition: border 0.15s;
+    }
+    .pn-input:focus {
+      border-color: var(--deka-red);
+      background: #ffffff;
+    }
+    .mat-input-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 0 0 170px;
+    }
+    .mat-select {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--gray-800);
+      background: var(--gray-50);
+      border: 1px solid var(--gray-300);
+      border-radius: 6px;
+      padding: 6px 8px;
+      width: 100%;
+      outline: none;
+      cursor: pointer;
+      transition: border 0.15s;
+    }
+    .mat-select:focus {
+      border-color: var(--deka-red);
+      background: #ffffff;
+    }
+    .btn-remove-pdf {
+      background: transparent;
+      border: none;
+      color: var(--gray-400);
+      font-size: 16px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+    .btn-remove-pdf:hover {
+      color: var(--deka-red);
+      background: var(--deka-red-light);
+    }
+
+    .options {
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid var(--gray-200);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--gray-600);
+    }
+    .check-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: default;
     }
     .hint {
       color: var(--gray-400);
       font-size: 11px;
-      white-space: nowrap;
     }
 
-    /* Actions */
     .actions {
+      margin-top: 20px;
       display: flex;
       align-items: center;
       gap: 16px;
-      margin-top: 20px;
     }
     .primary {
-      border: none;
-      border-radius: 8px;
       background: var(--deka-red);
       color: #ffffff;
-      height: 44px;
-      padding: 0 22px;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 24px;
       font-size: 13px;
       font-weight: 600;
+      cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 10px;
-      cursor: pointer;
-      box-shadow: 0 2px 6px rgba(202, 19, 13, 0.25);
-      transition: all 0.15s ease;
+      gap: 8px;
+      box-shadow: 0 1px 3px rgba(202, 19, 13, 0.25);
+      transition: background 0.15s ease;
     }
     .primary:hover {
       background: var(--deka-red-hover);
-      transform: translateY(-1px);
-      box-shadow: 0 4px 10px rgba(202, 19, 13, 0.3);
     }
     .primary:disabled {
-      opacity: 0.6;
-      cursor: wait;
-      transform: none;
+      background: var(--gray-300);
+      color: var(--gray-500);
+      cursor: not-allowed;
+      box-shadow: none;
     }
     .secure {
       font-size: 11px;
       color: var(--gray-500);
     }
 
-    /* Process steps */
+    /* Steps list */
     .how {
       display: flex;
       flex-direction: column;
@@ -357,16 +510,15 @@
       align-items: flex-start;
     }
     .num {
-      width: 26px;
-      height: 26px;
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
       background: var(--deka-red-light);
       color: var(--deka-red);
-      border: 1px solid var(--deka-red-border);
-      border-radius: 50%;
+      font-weight: 700;
+      font-size: 12px;
       display: grid;
       place-items: center;
-      font-size: 11px;
-      font-weight: 700;
       flex: none;
     }
     .how-title {
@@ -377,35 +529,34 @@
     .how-desc {
       font-size: 11px;
       color: var(--gray-500);
+      margin-top: 2px;
       line-height: 1.45;
-      margin-top: 3px;
     }
     .notice {
       margin-top: 18px;
-      background: var(--amber-light);
-      border: 1px solid var(--amber-border);
-      border-radius: 8px;
       padding: 12px 14px;
-      color: #92400e;
+      border-radius: 8px;
+      background: var(--gray-50);
+      border: 1px solid var(--gray-200);
       font-size: 11px;
+      color: var(--gray-600);
       line-height: 1.5;
     }
 
-    /* Results */
+    /* Results Card */
     .results {
       display: none;
-      margin-top: 8px;
     }
     .results.show {
       display: block;
     }
     .result-head {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--gray-200);
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 20px 24px;
-      border-bottom: 1px solid var(--gray-200);
-      background: #ffffff;
+      gap: 16px;
     }
     .result-head h2 {
       font-size: 16px;
@@ -418,33 +569,32 @@
       gap: 10px;
     }
     .secondary {
-      height: 38px;
-      padding: 0 16px;
-      border: 1px solid var(--gray-300);
       background: #ffffff;
-      border-radius: 6px;
       color: var(--gray-700);
+      border: 1px solid var(--gray-300);
+      padding: 8px 16px;
+      border-radius: 6px;
       font-size: 12px;
       font-weight: 600;
+      cursor: pointer;
       text-decoration: none;
       display: inline-flex;
       align-items: center;
-      cursor: pointer;
-      transition: all 0.15s;
+      gap: 6px;
+      transition: all 0.15s ease;
     }
     .secondary:hover {
       background: var(--gray-50);
-      color: var(--gray-800);
+      border-color: var(--gray-400);
     }
     .secondary.green {
+      background: var(--green);
+      border-color: var(--green);
       color: #ffffff;
-      background: var(--deka-red);
-      border-color: var(--deka-red);
-      box-shadow: 0 2px 6px rgba(202, 19, 13, 0.2);
     }
     .secondary.green:hover {
-      background: var(--deka-red-hover);
-      border-color: var(--deka-red-hover);
+      background: #15803d;
+      border-color: #15803d;
     }
 
     /* Metrics Strip */
@@ -455,9 +605,9 @@
       background: var(--gray-50);
     }
     .metric {
-      padding: 18px 24px;
+      padding: 18px 20px;
+      text-align: center;
       border-right: 1px solid var(--gray-200);
-      background: #ffffff;
     }
     .metric:last-child {
       border-right: none;
@@ -470,31 +620,28 @@
     }
     .metric-label {
       font-size: 11px;
-      font-weight: 600;
       color: var(--gray-500);
       margin-top: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
+      font-weight: 500;
     }
 
-    /* Data Table */
+    /* Table */
     .table-wrap {
       overflow-x: auto;
-      max-height: 480px;
+      max-height: 600px;
     }
     .data-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 11px;
-      min-width: 820px;
+      font-size: 12px;
     }
     .data-table th {
-      text-align: left;
+      background: var(--gray-50);
       color: var(--gray-600);
       font-weight: 600;
-      background: var(--gray-50);
-      border-bottom: 1px solid var(--gray-200);
+      text-align: left;
       padding: 12px 16px;
+      border-bottom: 1px solid var(--gray-200);
       position: sticky;
       top: 0;
       z-index: 1;
@@ -534,6 +681,164 @@
       color: var(--green);
       border: 1px solid var(--green-border);
     }
+    .pill-gray {
+      background: var(--gray-100);
+      color: var(--gray-600);
+      border: 1px solid var(--gray-200);
+    }
+    .pill-blue {
+      background: var(--blue-light);
+      color: var(--blue);
+      border: 1px solid var(--blue-border);
+    }
+
+    /* Datasheet Cards Styling */
+    .datasheet-cards {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .component-card {
+      background: #ffffff;
+      border: 1px solid var(--gray-200);
+      border-radius: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+      overflow: hidden;
+      transition: border 0.15s;
+    }
+    .component-card:hover {
+      border-color: var(--gray-300);
+    }
+    .component-header {
+      background: #fcfcfd;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--gray-200);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .component-title-box {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .component-pn {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--gray-800);
+      letter-spacing: -0.2px;
+    }
+    .component-badges {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .badge-tag {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+    .component-body {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    /* ERP Output Box */
+    .erp-output-grid {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr;
+      gap: 16px;
+    }
+    .erp-box {
+      background: var(--gray-50);
+      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .erp-box-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--gray-500);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .erp-box-content {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .erp-box-val {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--gray-800);
+      word-break: break-all;
+    }
+    .btn-copy {
+      background: #ffffff;
+      border: 1px solid var(--gray-300);
+      color: var(--gray-700);
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+    .btn-copy:hover {
+      background: var(--deka-red-light);
+      border-color: var(--deka-red-border);
+      color: var(--deka-red);
+    }
+    .btn-copy.copied {
+      background: var(--green-light);
+      border-color: var(--green-border);
+      color: var(--green);
+    }
+
+    /* Properties Table in Component Card */
+    .card-props-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-top: 6px;
+      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .card-props-table th {
+      background: var(--gray-100);
+      color: var(--gray-600);
+      font-weight: 600;
+      text-align: left;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--gray-200);
+      font-size: 11px;
+    }
+    .card-props-table td {
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--gray-200);
+      color: var(--gray-700);
+    }
+    .card-props-table tr:last-child td {
+      border-bottom: none;
+    }
+
     .empty {
       text-align: center;
       padding: 36px;
@@ -586,9 +891,16 @@
       }
       .portal-topbar {
         padding: 0 20px;
+        height: auto;
+        padding: 12px 20px;
+        flex-wrap: wrap;
+        gap: 12px;
       }
       .portal-container {
         padding: 0 20px;
+      }
+      .erp-output-grid {
+        grid-template-columns: 1fr;
       }
     }
     @media (max-width: 640px) {
@@ -609,18 +921,29 @@
       }
       .buttons {
         width: 100%;
+        flex-direction: column;
       }
     }
   </style>
 </head>
 <body>
 
-  <!-- Clean Corporate Header (Only DEKA Logo & BOM Tool Title, No Dummy Menus) -->
+  <!-- Clean Corporate Header with Navigation Tabs -->
   <header class="portal-topbar">
     <div class="portal-brand">
       <img src="/static/deka-logo.png" alt="DEKA Elektronik" class="logo-img portal-logo-img">
       <div class="brand-divider"></div>
-      <span class="app-title">BOM Karşılaştırma</span>
+      <span class="app-title">Elektronik Veri Portalı</span>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="portal-tabs">
+      <button class="nav-tab active" id="tab-btn-bom" type="button" onclick="switchTab('bom')">
+        <span>📊 BOM Karşılaştırma</span>
+      </button>
+      <button class="nav-tab" id="tab-btn-datasheet" type="button" onclick="switchTab('datasheet')">
+        <span>📑 Datasheet & ERP Eşleme</span>
+      </button>
     </div>
 
     <div class="portal-top-badge">
@@ -632,182 +955,360 @@
   <!-- Main Container -->
   <div class="portal-container" id="workspace">
 
-    <!-- Page Heading -->
-    <section class="page-heading">
-      <div>
-        <div class="eyebrow">Veri Kontrol Merkezi</div>
-        <h1>BOM Karşılaştırma</h1>
-        <p>Müşteri BOM listesini ERP kayıtlarıyla üç aşamalı akıllı algoritmayla karşılaştırın.</p>
-      </div>
-      <div class="heading-meta">
-        <img src="/static/deka-bird.png" alt="DEKA" style="height:18px;width:auto">
-        <span>DEKA Elektronik · Ar-Ge</span>
-      </div>
-    </section>
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!-- TAB 1: BOM KARŞILAŞTIRMA (MEVCUT ÇALIŞAN MODÜL)             -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <div class="tab-view active" id="view-bom">
 
-    <!-- Workspace Grid -->
-    <section class="workspace-grid">
-
-      <!-- Upload Card -->
-      <article class="card">
-        <div class="card-head">
-          <div>
-            <div class="card-title">Dosyaları Karşılaştır</div>
-            <div class="card-subtitle">Müşteri BOM ve ERP dosyalarını seçin. Tüm satırlar incelenip renkli durum raporu üretilir.</div>
-          </div>
-          <div class="step-pill">01 / GİRDİ</div>
-        </div>
-        <div class="card-body">
-          <form id="compare-form">
-            <div class="uploads">
-              <!-- Customer Files Dropzone -->
-              <div class="upload" data-role="customer">
-                <div class="file-icon">XLSX</div>
-                <div class="upload-copy">
-                  <div class="upload-title">Müşteri BOM dosyası (veya dosyaları)</div>
-                  <div class="upload-desc">Tek veya birden fazla dosya / panel alt kart listeleri (klasör veya çoklu seçim)</div>
-                  <div class="file-selected" id="customer-name"></div>
-                </div>
-                <button class="pick" type="button">Dosya seçin</button>
-                <input type="file" accept=".xlsx" multiple hidden>
-              </div>
-
-              <!-- ERP File Dropzone -->
-              <div class="upload" data-role="erp">
-                <div class="file-icon">XLSX</div>
-                <div class="upload-copy">
-                  <div class="upload-title">ERP malzeme dosyası</div>
-                  <div class="upload-desc">Part Number, Description ve TH/SMD sütunları</div>
-                  <div class="file-selected" id="erp-name"></div>
-                </div>
-                <button class="pick" type="button">Dosya seçin</button>
-                <input type="file" accept=".xlsx" hidden>
-              </div>
-            </div>
-
-            <div class="options">
-              <span class="check-label">
-                <img src="/static/deka-bird.png" alt="DEKA" style="height:16px;width:auto">
-                <span>Doğrudan BOM ↔ ERP karşılaştırması (MPN, RefDes ve Açıklama analizi)</span>
-              </span>
-              <span class="hint">En fazla 20 MB / dosya</span>
-            </div>
-
-            <div class="actions">
-              <button class="primary" id="submit-button" type="submit">
-                <span>Karşılaştırmayı başlat</span>
-                <span aria-hidden="true">→</span>
-              </button>
-              <span class="secure">Dosyalar herhangi bir harici servise gönderilmez.</span>
-            </div>
-          </form>
-        </div>
-      </article>
-
-      <!-- Steps Card -->
-      <article class="card">
-        <div class="card-head">
-          <div style="display:flex;align-items:center;gap:9px">
-            <img src="/static/deka-bird.png" alt="DEKA" style="height:20px;width:auto">
-            <div>
-              <div class="card-title">Kontrol Adımları</div>
-              <div class="card-subtitle">Sistem dosyaları şu sırayla inceler</div>
-            </div>
-          </div>
-        </div>
-        <div class="card-body">
-          <div class="how">
-            <div class="how-row">
-              <div class="num">1</div>
-              <div>
-                <div class="how-title">Ürün kodlarını eşleştirir (1. Aşama)</div>
-                <div class="how-desc">Part Number (MPN) değerlerini boşluk, parantezli alternatif kodlar ve büyük/küçük harf duyarsız olarak eşleştirir.</div>
-              </div>
-            </div>
-            <div class="how-row">
-              <div class="num">2</div>
-              <div>
-                <div class="how-title">Dizgi ve RefDes eşlemesi (2. Aşama)</div>
-                <div class="how-desc">Part Number farklı olsa bile devre pozisyonu (C1, R1 vb.) aynı olan parçaları tespit eder; alternatifiyle eşleşenleri bağlar.</div>
-              </div>
-            </div>
-            <div class="how-row">
-              <div class="num">3</div>
-              <div>
-                <div class="how-title">Miktar, montaj ve değer kontrolü (3. Aşama)</div>
-                <div class="how-desc">Kodu boş olan parçaları birebir açıklamayla eşler. Miktar (Qty), TH/SMD montaj tipi ve kılıf/voltaj farklarını denetler.</div>
-              </div>
-            </div>
-            <div class="how-row">
-              <div class="num">4</div>
-              <div>
-                <div class="how-title">Master renkli rapor oluşturur</div>
-                <div class="how-desc">Hatalar kırmızı, uyarılar sarı, sorunsuzlar normal olarak listelenir.</div>
-              </div>
-            </div>
-          </div>
-          <div class="notice">
-            Rapor tüm kalemleri eksiksiz kapsar. Miktar ve kılıf çelişkileri <b>Kırmızı (Hata)</b>, alternatif parça veya küçük uyarılar <b>Sarı (Uyarı)</b>, sorunsuz eşleşen satırlar <b>Normal (Uygun)</b> olarak işaretlenir.
-          </div>
-        </div>
-      </article>
-
-    </section>
-
-    <!-- Results Card -->
-    <section class="card results" id="results">
-      <div class="result-head">
+      <!-- Page Heading -->
+      <section class="page-heading">
         <div>
-          <h2>Karşılaştırma Sonucu</h2>
-          <div class="card-subtitle" id="result-summary"></div>
+          <div class="eyebrow">Veri Kontrol Merkezi</div>
+          <h1>BOM Karşılaştırma</h1>
+          <p>Müşteri BOM listesini ERP kayıtlarıyla üç aşamalı akıllı algoritmayla karşılaştırın.</p>
         </div>
-        <div class="buttons">
-          <button class="secondary" id="new-run" type="button">Yeni Karşılaştırma</button>
-          <a class="secondary green" id="download-link" href="#">Excel Raporunu İndir ↓</a>
+        <div class="heading-meta">
+          <img src="/static/deka-bird.png" alt="DEKA" style="height:18px;width:auto">
+          <span>DEKA Elektronik · Ar-Ge</span>
         </div>
-      </div>
+      </section>
 
-      <div class="metrics">
-        <div class="metric">
-          <div class="metric-num" id="metric-total">0</div>
-          <div class="metric-label">Toplam Parça</div>
-        </div>
-        <div class="metric">
-          <div class="metric-num" style="color:var(--deka-red)" id="metric-error">0</div>
-          <div class="metric-label">Hata (Kırmızı)</div>
-        </div>
-        <div class="metric">
-          <div class="metric-num" style="color:var(--amber)" id="metric-warn">0</div>
-          <div class="metric-label">Uyarı (Sarı)</div>
-        </div>
-        <div class="metric">
-          <div class="metric-num" style="color:var(--green)" id="metric-clean">0</div>
-          <div class="metric-label">Sorunsuz (Uygun)</div>
-        </div>
-      </div>
+      <!-- Workspace Grid -->
+      <section class="workspace-grid">
 
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead id="table-head"></thead>
-          <tbody id="table-body"></tbody>
-        </table>
-      </div>
+        <!-- Upload Card -->
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <div class="card-title">Dosyaları Karşılaştır</div>
+              <div class="card-subtitle">Müşteri BOM ve ERP dosyalarını seçin. Tüm satırlar incelenip renkli durum raporu üretilir.</div>
+            </div>
+            <div class="step-pill">01 / GİRDİ</div>
+          </div>
+          <div class="card-body">
+            <form id="compare-form">
+              <div class="uploads">
+                <!-- Customer Files Dropzone -->
+                <div class="upload" data-role="customer">
+                  <div class="file-icon">XLSX</div>
+                  <div class="upload-copy">
+                    <div class="upload-title">Müşteri BOM dosyası (veya dosyaları)</div>
+                    <div class="upload-desc">Tek veya birden fazla dosya / panel alt kart listeleri (klasör veya çoklu seçim)</div>
+                    <div class="file-selected" id="customer-name"></div>
+                  </div>
+                  <button class="pick" type="button">Dosya seçin</button>
+                  <input type="file" accept=".xlsx" multiple hidden>
+                </div>
 
-      <div class="foot" id="result-foot">
-        Rapordaki her satır için durum ve varsa hata/uyarı nedenleri gösterilir.
-      </div>
-    </section>
+                <!-- ERP File Dropzone -->
+                <div class="upload" data-role="erp">
+                  <div class="file-icon">XLSX</div>
+                  <div class="upload-copy">
+                    <div class="upload-title">ERP malzeme dosyası</div>
+                    <div class="upload-desc">Part Number, Description ve TH/SMD sütunları</div>
+                    <div class="file-selected" id="erp-name"></div>
+                  </div>
+                  <button class="pick" type="button">Dosya seçin</button>
+                  <input type="file" accept=".xlsx" hidden>
+                </div>
+              </div>
+
+              <div class="options">
+                <span class="check-label">
+                  <img src="/static/deka-bird.png" alt="DEKA" style="height:16px;width:auto">
+                  <span>Doğrudan BOM ↔ ERP karşılaştırması (MPN, RefDes ve Açıklama analizi)</span>
+                </span>
+                <span class="hint">En fazla 20 MB / dosya</span>
+              </div>
+
+              <div class="actions">
+                <button class="primary" id="submit-button" type="submit">
+                  <span>Karşılaştırmayı başlat</span>
+                  <span aria-hidden="true">→</span>
+                </button>
+                <span class="secure">Dosyalar herhangi bir harici servise gönderilmez.</span>
+              </div>
+            </form>
+          </div>
+        </article>
+
+        <!-- Steps Card -->
+        <article class="card">
+          <div class="card-head">
+            <div style="display:flex;align-items:center;gap:9px">
+              <img src="/static/deka-bird.png" alt="DEKA" style="height:20px;width:auto">
+              <div>
+                <div class="card-title">Kontrol Adımları</div>
+                <div class="card-subtitle">Sistem dosyaları şu sırayla inceler</div>
+              </div>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="how">
+              <div class="how-row">
+                <div class="num">1</div>
+                <div>
+                  <div class="how-title">Ürün kodlarını eşleştirir (1. Aşama)</div>
+                  <div class="how-desc">Part Number (MPN) değerlerini boşluk, parantezli alternatif kodlar ve büyük/küçük harf duyarsız olarak eşleştirir.</div>
+                </div>
+              </div>
+              <div class="how-row">
+                <div class="num">2</div>
+                <div>
+                  <div class="how-title">Dizgi ve RefDes eşlemesi (2. Aşama)</div>
+                  <div class="how-desc">Part Number farklı olsa bile devre pozisyonu (C1, R1 vb.) aynı olan parçaları tespit eder; alternatifiyle eşleşenleri bağlar.</div>
+                </div>
+              </div>
+              <div class="how-row">
+                <div class="num">3</div>
+                <div>
+                  <div class="how-title">Miktar, montaj ve değer kontrolü (3. Aşama)</div>
+                  <div class="how-desc">Kodu boş olan parçaları birebir açıklamayla eşler. Miktar (Qty), TH/SMD montaj tipi ve kılıf/voltaj farklarını denetler.</div>
+                </div>
+              </div>
+              <div class="how-row">
+                <div class="num">4</div>
+                <div>
+                  <div class="how-title">Master renkli rapor oluşturur</div>
+                  <div class="how-desc">Hatalar kırmızı, uyarılar sarı, sorunsuzlar normal olarak listelenir.</div>
+                </div>
+              </div>
+            </div>
+            <div class="notice">
+              Rapor tüm kalemleri eksiksiz kapsar. Miktar ve kılıf çelişkileri <b>Kırmızı (Hata)</b>, alternatif parça veya küçük uyarılar <b>Sarı (Uyarı)</b>, sorunsuz eşleşen satırlar <b>Normal (Uygun)</b> olarak işaretlenir.
+            </div>
+          </div>
+        </article>
+
+      </section>
+
+      <!-- Results Card (BOM Comparison) -->
+      <section class="card results" id="results">
+        <div class="result-head">
+          <div>
+            <h2>Karşılaştırma Sonucu</h2>
+            <div class="card-subtitle" id="result-summary"></div>
+          </div>
+          <div class="buttons">
+            <button class="secondary" id="new-run" type="button">Yeni Karşılaştırma</button>
+            <a class="secondary green" id="download-link" href="#">Excel Raporunu İndir ↓</a>
+          </div>
+        </div>
+
+        <div class="metrics">
+          <div class="metric">
+            <div class="metric-num" id="metric-total">0</div>
+            <div class="metric-label">Toplam Parça</div>
+          </div>
+          <div class="metric">
+            <div class="metric-num" style="color:var(--deka-red)" id="metric-error">0</div>
+            <div class="metric-label">Hata (Kırmızı)</div>
+          </div>
+          <div class="metric">
+            <div class="metric-num" style="color:var(--amber)" id="metric-warn">0</div>
+            <div class="metric-label">Uyarı (Sarı)</div>
+          </div>
+          <div class="metric">
+            <div class="metric-num" style="color:var(--green)" id="metric-clean">0</div>
+            <div class="metric-label">Sorunsuz (Uygun)</div>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead id="table-head"></thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
+
+        <div class="foot" id="result-foot">
+          Rapordaki her satır için durum ve varsa hata/uyarı nedenleri gösterilir.
+        </div>
+      </section>
+
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!-- TAB 2: DATASHEET ANALİZİ & ERP EŞLEME (YENİ MODÜL)          -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <div class="tab-view" id="view-datasheet">
+
+      <!-- Page Heading -->
+      <section class="page-heading">
+        <div>
+          <div class="eyebrow">ERP Sözlük & Özellik Entegrasyonu</div>
+          <h1>Datasheet Analizi & ERP Eşleme</h1>
+          <p>Bileşen datasheet PDF'lerini yükleyin; teknik özellikleri otomatik çıkarıp Malzeme_Tipleri kurallarıyla eşleştirin.</p>
+        </div>
+        <div class="heading-meta">
+          <img src="/static/deka-bird.png" alt="DEKA" style="height:18px;width:auto">
+          <span>DEKA Elektronik · Ar-Ge</span>
+        </div>
+      </section>
+
+      <!-- Workspace Grid -->
+      <section class="workspace-grid">
+
+        <!-- Input Card -->
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <div class="card-title">Datasheet ve Kural Dosyalarını Yükleyin</div>
+              <div class="card-subtitle">Tek veya birden fazla PDF datasheet ile Malzeme_Tipleri.xlsx dosyanızı ekleyin.</div>
+            </div>
+            <div class="step-pill">01 / DATASHEET</div>
+          </div>
+          <div class="card-body">
+            <form id="datasheet-form">
+              <div class="uploads">
+
+                <!-- 1. Datasheet PDF Dropzone -->
+                <div class="upload" id="ds-pdf-zone">
+                  <div class="file-icon pdf">PDF</div>
+                  <div class="upload-copy">
+                    <div class="upload-title">Datasheet PDF Dosyaları (Çoklu Yükleme Desteklenir)</div>
+                    <div class="upload-desc">Bir veya çok sayıda PDF datasheet sürükleyin veya seçin (Uzun dökümanlar taranır)</div>
+                    <div class="file-selected" id="ds-pdf-count"></div>
+                  </div>
+                  <button class="pick" type="button" id="ds-pdf-pick">PDF Seçin</button>
+                  <input type="file" id="ds-pdf-input" accept=".pdf" multiple hidden>
+                </div>
+
+                <!-- Selected PDF Items List with Part Number Inputs -->
+                <div class="pdf-items-list" id="ds-pdf-list" style="display:none;"></div>
+
+                <!-- 2. Malzeme Tipleri Rules File Dropzone -->
+                <div class="upload" id="ds-rules-zone">
+                  <div class="file-icon">XLSX</div>
+                  <div class="upload-copy">
+                    <div class="upload-title">Malzeme Tipleri (Kurallar) Dosyası</div>
+                    <div class="upload-desc">ERP özellik ve kodlama kurallarını içeren Malzeme_Tipleri.xlsx dosyası</div>
+                    <div class="file-selected" id="ds-rules-name"></div>
+                  </div>
+                  <button class="pick" type="button" id="ds-rules-pick">Excel Seçin</button>
+                  <input type="file" id="ds-rules-input" accept=".xlsx" hidden>
+                </div>
+
+              </div>
+
+              <div class="options">
+                <span class="check-label">
+                  <img src="/static/deka-bird.png" alt="DEKA" style="height:16px;width:auto">
+                  <span>Otomatik malzeme tipi ve SORTNO sözlük eşleştirmesi</span>
+                </span>
+                <span class="hint">PDF & Excel · En fazla 20 MB / dosya</span>
+              </div>
+
+              <div class="actions">
+                <button class="primary" id="ds-submit-button" type="submit">
+                  <span>Datasheetleri Analiz Et ve Eşle</span>
+                  <span aria-hidden="true">→</span>
+                </button>
+                <span class="secure">Tamamen yerel işlem yapılır, dış API kullanılmadı.</span>
+              </div>
+            </form>
+          </div>
+        </article>
+
+        <!-- Guide Card -->
+        <article class="card">
+          <div class="card-head">
+            <div style="display:flex;align-items:center;gap:9px">
+              <img src="/static/deka-bird.png" alt="DEKA" style="height:20px;width:auto">
+              <div>
+                <div class="card-title">Nasıl Çalışır?</div>
+                <div class="card-subtitle">Datasheetten ERP'ye otomatik eşleme adımları</div>
+              </div>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="how">
+              <div class="how-row">
+                <div class="num">1</div>
+                <div>
+                  <div class="how-title">Akıllı PDF Okuma (Uzun Dosyalar Desteklenir)</div>
+                  <div class="how-desc">50-100 sayfalık kataloglarda bile sipariş tabloları, elektriksel özellikler ve kılıf sayfaları filtrelenerek taranır.</div>
+                </div>
+              </div>
+              <div class="how-row">
+                <div class="num">2</div>
+                <div>
+                  <div class="how-title">Otomatik Malzeme Tipi Tespiti</div>
+                  <div class="how-desc">Part Number ve datasheet teknik terimlerinden malzemenin tipi (CAP, RES, DIO, FET, ICR, MCU vb.) otomatik tespit edilir.</div>
+                </div>
+              </div>
+              <div class="how-row">
+                <div class="num">3</div>
+                <div>
+                  <div class="how-title">Sözlük ve SORTNO Eşleşmesi</div>
+                  <div class="how-desc">Yüklediğiniz kurallar dosyasındaki 67 malzeme tipi ve 52.000+ satırlık sözlükten değer kodları ve SORTNO sıralaması eşleştirilir.</div>
+                </div>
+              </div>
+              <div class="how-row">
+                <div class="num">4</div>
+                <div>
+                  <div class="how-title">ERP Açıklaması ve Malzeme Kodu Üretimi</div>
+                  <div class="how-desc">Tek tıkla kopyalanabilir ERP Açıklaması ve ERP Kodu üretilir; tüm analiz tek bir Excel tablosu olarak indirilebilir.</div>
+                </div>
+              </div>
+            </div>
+            <div class="notice">
+              Part Number alanına yazdığınız kod dosya adından otomatik gelir; isterseniz üzerinde değişiklik yapabilirsiniz.
+            </div>
+          </div>
+        </article>
+
+      </section>
+
+      <!-- Results Card (Datasheet ERP Mapping) -->
+      <section class="card results" id="ds-results">
+        <div class="result-head">
+          <div>
+            <h2 id="ds-results-title">Datasheet ERP Eşleme Sonuçları</h2>
+            <div class="card-subtitle" id="ds-result-summary">Tüm teknik özellikler sözlük kurallarıyla eşleştirildi · dış API kullanılmadı</div>
+          </div>
+          <div class="buttons">
+            <button class="secondary" id="ds-new-run" type="button">Yeni Analiz Yap</button>
+            <a class="secondary green" id="ds-download-link" href="#">Tümünü Excel Olarak İndir (.xlsx) ↓</a>
+          </div>
+        </div>
+
+        <div class="datasheet-cards" id="ds-cards-container">
+          <!-- Component Cards will be rendered dynamically here -->
+        </div>
+
+        <div class="foot">
+          Her bileşen için oluşturulan ERP Açıklaması, kurallardaki SORTNO sırasına göre dizilmiştir.
+        </div>
+      </section>
+
+    </div>
 
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script>
-    const form = document.querySelector('#compare-form');
-    const submit = document.querySelector('#submit-button');
+    // ═══════════════════════════════════════════════════════════
+    // TAB SWITCHING LOGIC
+    // ═══════════════════════════════════════════════════════════
+    function switchTab(tabId) {
+      document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-view').forEach(v => v.classList.remove('active'));
+
+      if (tabId === 'datasheet') {
+        document.querySelector('#tab-btn-datasheet').classList.add('active');
+        document.querySelector('#view-datasheet').classList.add('active');
+      } else {
+        document.querySelector('#tab-btn-bom').classList.add('active');
+        document.querySelector('#view-bom').classList.add('active');
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // TOAST NOTIFICATIONS
+    // ═══════════════════════════════════════════════════════════
     const toast = document.querySelector('#toast');
-    let selected = { customer: [], erp: null };
-    let lastResult = null;
     let toastTimer;
 
     function showToast(message, error = false) {
@@ -817,6 +1318,24 @@
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => toast.classList.remove('show'), 6500);
     }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[char]));
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // TAB 1: BOM KARŞILAŞTIRMA SCRIPT
+    // ═══════════════════════════════════════════════════════════
+    const form = document.querySelector('#compare-form');
+    const submit = document.querySelector('#submit-button');
+    let selected = { customer: [], erp: null };
+    let lastResult = null;
 
     function setFiles(role, files) {
       if (!files || !files.length) return;
@@ -901,7 +1420,7 @@
       return files;
     }
 
-    document.querySelectorAll('.upload').forEach(zone => {
+    document.querySelectorAll('.upload[data-role]').forEach(zone => {
       const role = zone.dataset.role;
       const input = zone.querySelector('input');
       const pick = zone.querySelector('.pick');
@@ -975,16 +1494,6 @@
       }
     });
 
-    function escapeHtml(value) {
-      return String(value ?? '').replace(/[&<>"']/g, char => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;'
-      }[char]));
-    }
-
     function render(data) {
       document.querySelector('#result-summary').textContent = 'Tüm satırlar karşılaştırıldı · dış API kullanılmadı';
       document.querySelector('#metric-total').textContent = data.row_count;
@@ -1041,8 +1550,340 @@
       document.querySelector('#results').classList.remove('show');
       document.querySelector('#workspace').scrollIntoView({ behavior: 'smooth' });
       selected = { customer: [], erp: null };
-      document.querySelectorAll('.upload input').forEach(input => input.value = '');
-      document.querySelectorAll('.file-selected').forEach(label => label.textContent = '');
+      document.querySelectorAll('.upload[data-role] input').forEach(input => input.value = '');
+      document.querySelectorAll('.upload[data-role] .file-selected').forEach(label => label.textContent = '');
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // TAB 2: DATASHEET ANALİZİ & ERP EŞLEME SCRIPT
+    // ═══════════════════════════════════════════════════════════
+    let dsSelected = {
+      pdfs: [],         // Array of File objects
+      pnMap: {},        // filename -> user entered part number
+      matMap: {},       // filename -> user selected material type (AUTO, RES, CAP, DIO, IND, IC)
+      rulesFile: null,  // File object
+    };
+
+    const dsPdfZone = document.querySelector('#ds-pdf-zone');
+    const dsPdfInput = document.querySelector('#ds-pdf-input');
+    const dsPdfPick = document.querySelector('#ds-pdf-pick');
+    const dsPdfCount = document.querySelector('#ds-pdf-count');
+    const dsPdfList = document.querySelector('#ds-pdf-list');
+
+    const dsRulesZone = document.querySelector('#ds-rules-zone');
+    const dsRulesInput = document.querySelector('#ds-rules-input');
+    const dsRulesPick = document.querySelector('#ds-rules-pick');
+    const dsRulesName = document.querySelector('#ds-rules-name');
+
+    const dsForm = document.querySelector('#datasheet-form');
+    const dsSubmitBtn = document.querySelector('#ds-submit-button');
+
+    // PDF Pick click
+    dsPdfPick.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dsPdfInput.click();
+    });
+    dsPdfZone.addEventListener('click', () => dsPdfInput.click());
+
+    dsPdfInput.addEventListener('change', () => {
+      handlePdfFiles(Array.from(dsPdfInput.files || []));
+    });
+
+    // PDF Drag & Drop
+    for (const ev of ['dragenter', 'dragover']) {
+      dsPdfZone.addEventListener(ev, e => { e.preventDefault(); dsPdfZone.classList.add('over'); });
+    }
+    for (const ev of ['dragleave', 'drop']) {
+      dsPdfZone.addEventListener(ev, e => { e.preventDefault(); dsPdfZone.classList.remove('over'); });
+    }
+    dsPdfZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dsPdfZone.classList.remove('over');
+      const files = Array.from(e.dataTransfer.files || []).filter(f => f.name.toLowerCase().endsWith('.pdf'));
+      if (!files.length) {
+        showToast('Lütfen yalnızca .pdf uzantılı dosyalar yükleyin.', true);
+        return;
+      }
+      handlePdfFiles(files);
+    });
+
+    function handlePdfFiles(files) {
+      for (const f of files) {
+        if (!f.name.toLowerCase().endsWith('.pdf')) continue;
+        if (f.size > 20 * 1024 * 1024) {
+          showToast(`'${f.name}' 20 MB sınırını aşıyor.`, true);
+          continue;
+        }
+        // Avoid duplicate by filename
+        if (!dsSelected.pdfs.some(existing => existing.name === f.name)) {
+          dsSelected.pdfs.push(f);
+          // Guess part number from stem: e.g. CL21B104KBCNNNC.pdf -> CL21B104KBCNNNC
+          const stem = f.name.replace(/\.pdf$/i, '').trim();
+          dsSelected.pnMap[f.name] = stem;
+          dsSelected.matMap[f.name] = 'AUTO';
+        }
+      }
+      renderPdfList();
+    }
+
+    function renderPdfList() {
+      if (!dsSelected.pdfs.length) {
+        dsPdfList.style.display = 'none';
+        dsPdfList.innerHTML = '';
+        dsPdfCount.textContent = '';
+        return;
+      }
+      dsPdfList.style.display = 'flex';
+      dsPdfCount.textContent = `${dsSelected.pdfs.length} adet PDF datasheet seçildi`;
+
+      dsPdfList.innerHTML = dsSelected.pdfs.map(f => {
+        const pnVal = dsSelected.pnMap[f.name] || '';
+        const matVal = dsSelected.matMap[f.name] || 'AUTO';
+        const sizeMb = (f.size / (1024 * 1024)).toFixed(2);
+        return `
+          <div class="pdf-item">
+            <div class="pdf-item-info">
+              <span class="pdf-badge">PDF</span>
+              <span class="pdf-filename" title="${escapeHtml(f.name)}">${escapeHtml(f.name)} (${sizeMb} MB)</span>
+            </div>
+            <div class="pn-input-wrap">
+              <span class="pn-label">Part Number:</span>
+              <input type="text" class="pn-input" data-filename="${escapeHtml(f.name)}" value="${escapeHtml(pnVal)}" placeholder="Örn: CL21B104KBCNNNC">
+            </div>
+            <div class="mat-input-wrap">
+              <span class="pn-label">Tip:</span>
+              <select class="mat-select" data-filename="${escapeHtml(f.name)}">
+                <option value="AUTO" ${matVal === 'AUTO' ? 'selected' : ''}>🤖 Otomatik</option>
+                <option value="RES" ${matVal === 'RES' ? 'selected' : ''}>Direnç (RES)</option>
+                <option value="CAP" ${matVal === 'CAP' ? 'selected' : ''}>Kapasitör (CAP)</option>
+                <option value="CON" ${matVal === 'CON' ? 'selected' : ''}>Konnektör (CON)</option>
+                <option value="DIO" ${matVal === 'DIO' ? 'selected' : ''}>Diyot (DIO)</option>
+                <option value="TRA" ${matVal === 'TRA' ? 'selected' : ''}>Transistör (TRA)</option>
+                <option value="IND" ${matVal === 'IND' ? 'selected' : ''}>Endüktör (IND)</option>
+                <option value="ICR" ${matVal === 'ICR' ? 'selected' : ''}>Regülatör (ICR)</option>
+              </select>
+            </div>
+            <button type="button" class="btn-remove-pdf" onclick="removePdf('${escapeHtml(f.name)}')" title="Kaldır">✕</button>
+          </div>
+        `;
+      }).join('');
+
+      // Attach event listener for PN inputs
+      dsPdfList.querySelectorAll('.pn-input').forEach(input => {
+        input.addEventListener('input', e => {
+          const fn = e.target.dataset.filename;
+          dsSelected.pnMap[fn] = e.target.value.trim();
+        });
+      });
+
+      // Attach event listener for Material Type selects
+      dsPdfList.querySelectorAll('.mat-select').forEach(sel => {
+        sel.addEventListener('change', e => {
+          const fn = e.target.dataset.filename;
+          dsSelected.matMap[fn] = e.target.value;
+        });
+      });
+    }
+
+    window.removePdf = function(filename) {
+      dsSelected.pdfs = dsSelected.pdfs.filter(f => f.name !== filename);
+      delete dsSelected.pnMap[filename];
+      delete dsSelected.matMap[filename];
+      renderPdfList();
+    };
+
+    // Rules Excel File Picker
+    dsRulesPick.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dsRulesInput.click();
+    });
+    dsRulesZone.addEventListener('click', () => dsRulesInput.click());
+
+    dsRulesInput.addEventListener('change', () => {
+      handleRulesFile(dsRulesInput.files ? dsRulesInput.files[0] : null);
+    });
+
+    for (const ev of ['dragenter', 'dragover']) {
+      dsRulesZone.addEventListener(ev, e => { e.preventDefault(); dsRulesZone.classList.add('over'); });
+    }
+    for (const ev of ['dragleave', 'drop']) {
+      dsRulesZone.addEventListener(ev, e => { e.preventDefault(); dsRulesZone.classList.remove('over'); });
+    }
+    dsRulesZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dsRulesZone.classList.remove('over');
+      const files = Array.from(e.dataTransfer.files || []).filter(f => f.name.toLowerCase().endsWith('.xlsx'));
+      if (!files.length) {
+        showToast('Lütfen .xlsx uzantılı Malzeme Tipleri dosyasını seçin.', true);
+        return;
+      }
+      handleRulesFile(files[0]);
+    });
+
+    function handleRulesFile(file) {
+      if (!file) return;
+      if (!file.name.toLowerCase().endsWith('.xlsx')) {
+        showToast('Kurallar dosyası yalnızca .xlsx olabilir.', true);
+        return;
+      }
+      if (file.size > 20 * 1024 * 1024) {
+        showToast('Kurallar dosyası 20 MB sınırını aşıyor.', true);
+        return;
+      }
+      dsSelected.rulesFile = file;
+      dsRulesName.textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB ✓`;
+    }
+
+    // Submit Datasheet Analysis
+    dsForm.addEventListener('submit', async e => {
+      e.preventDefault();
+      if (!dsSelected.pdfs.length) {
+        showToast('Lütfen en az bir adet PDF datasheet yükleyin.', true);
+        return;
+      }
+      if (!dsSelected.rulesFile) {
+        showToast('Lütfen Malzeme Tipleri Excel dosyasını (Malzeme_Tipleri.xlsx) yükleyin.', true);
+        return;
+      }
+
+      const body = new FormData();
+      for (const pdf of dsSelected.pdfs) {
+        body.append('datasheet_files', pdf);
+      }
+      body.append('rules_file', dsSelected.rulesFile);
+      body.append('part_numbers_json', JSON.stringify(dsSelected.pnMap));
+      body.append('material_types_json', JSON.stringify(dsSelected.matMap));
+
+      dsSubmitBtn.disabled = true;
+      dsSubmitBtn.innerHTML = '<span class="spinner"></span><span>Datasheetler okunuyor ve eşleştiriliyor...</span>';
+
+      try {
+        const resp = await fetch('/api/datasheet-analyze', { method: 'POST', body });
+        const data = await resp.json();
+        if (!resp.ok) {
+          throw new Error(data.detail || 'Datasheet analizi sırasında bir hata oluştu.');
+        }
+        renderDatasheetResults(data);
+        showToast(`${data.count} datasheet başarıyla analiz edildi ve ERP kurallarıyla eşleştirildi.`);
+      } catch (err) {
+        showToast(err.message || 'Sunucu hatası oluştu.', true);
+      } finally {
+        dsSubmitBtn.disabled = false;
+        dsSubmitBtn.innerHTML = '<span>Datasheetleri Analiz Et ve Eşle</span><span aria-hidden="true">→</span>';
+      }
+    });
+
+    function renderDatasheetResults(data) {
+      const container = document.querySelector('#ds-cards-container');
+      const resultsSection = document.querySelector('#ds-results');
+      const downloadLink = document.querySelector('#ds-download-link');
+      const titleElem = document.querySelector('#ds-results-title');
+
+      titleElem.textContent = `Datasheet ERP Eşleme Sonuçları (${data.count} Parça)`;
+      downloadLink.href = data.download_url;
+
+      container.innerHTML = data.analyses.map((item, idx) => {
+        const propsRows = item.properties.map(p => {
+          let statusBadge = 'pill-gray';
+          if (p.status === 'TAM EŞLEŞTİ') statusBadge = 'pill-uygun';
+          else if (p.status === 'YAKIN EŞLEŞTİ') statusBadge = 'pill-uyari';
+          else if (p.status === 'SÖZLÜKTE YOK') statusBadge = 'pill-uyari';
+          else if (p.status === 'UYGULANMAZ (N/A)') statusBadge = 'pill-gray';
+
+          return `
+            <tr>
+              <td><b>${escapeHtml(p.attribute_name)}</b></td>
+              <td style="color:var(--gray-500)">${escapeHtml(p.sort_no)}</td>
+              <td>${escapeHtml(p.extracted_value || '—')}</td>
+              <td><b>${escapeHtml(p.matched_erp_value || '—')}</b></td>
+              <td><code>${escapeHtml(p.erp_code || '—')}</code></td>
+              <td><span class="pill ${statusBadge}">${escapeHtml(p.status)}</span></td>
+            </tr>
+          `;
+        }).join('');
+
+        const copyIdDesc = `copy-desc-${idx}`;
+        const copyIdCode = `copy-code-${idx}`;
+
+        return `
+          <article class="component-card">
+            <div class="component-header">
+              <div class="component-title-box">
+                <span class="component-pn">${escapeHtml(item.part_number)}</span>
+                <span class="badge-tag pill-blue">${escapeHtml(item.material_type_name)}</span>
+              </div>
+              <div class="component-badges">
+                <span class="badge-tag pill-uygun">%${Math.round(item.confidence * 100)} Güven</span>
+                <span class="badge-tag pill-gray">${escapeHtml(item.inferred_mounting)}</span>
+                <span class="badge-tag pill-gray">${escapeHtml(item.page_count)} Sayfa</span>
+              </div>
+            </div>
+
+            <div class="component-body">
+              <!-- ERP Output Highlights -->
+              <div class="erp-box" style="margin-bottom: 4px;">
+                <div class="erp-box-label">
+                  <span>Önerilen ERP Açıklaması (Malzeme Tipleri Sözlüğündeki VALUE AÇIKLAMASI & SORTNO Sıralı)</span>
+                  <button type="button" class="btn-copy" id="${copyIdDesc}" onclick="copyText('${escapeHtml(item.suggested_description)}', '${copyIdDesc}')">📋 Açıklamayı Kopyala</button>
+                </div>
+                <div class="erp-box-content" style="margin-top: 4px;">
+                  <span class="erp-box-val" style="font-size: 14px; color: var(--deka-red); font-weight: 700;">${escapeHtml(item.suggested_description || 'Açıklama üretilemedi')}</span>
+                </div>
+              </div>
+
+              <!-- Properties Breakdown Table -->
+              <div>
+                <div style="font-size:12px;font-weight:700;color:var(--gray-700);margin-bottom:6px;">
+                  Malzeme Tipleri Dosyasıyla Eşleşen Özellikler (${item.properties.length} Özellik):
+                </div>
+                <table class="card-props-table">
+                  <thead>
+                    <tr>
+                      <th>ERP Özellik Adı (ÖZELLİK AÇIKLAMASI)</th>
+                      <th>SORTNO</th>
+                      <th>Datasheet Değeri</th>
+                      <th>Eşleşen Değer (VALUE AÇIKLAMASI)</th>
+                      <th>ERP Değer Kodu (VALUE Sütunu)</th>
+                      <th>Eşleşme Durumu</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${propsRows || '<tr><td colspan="6" class="empty">Özellik bulunamadı.</td></tr>'}
+                  </tbody>
+                </table>
+              </div>
+
+            </div>
+          </article>
+        `;
+      }).join('');
+
+      resultsSection.classList.add('show');
+      resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    window.copyText = function(text, btnId) {
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = document.getElementById(btnId);
+        if (btn) {
+          const original = btn.textContent;
+          btn.textContent = '✓ Kopyalandı!';
+          btn.classList.add('copied');
+          setTimeout(() => {
+            btn.textContent = original;
+            btn.classList.remove('copied');
+          }, 2000);
+        }
+        showToast('Panoya kopyalandı.');
+      }).catch(() => {
+        showToast('Kopyalama başarısız oldu.', true);
+      });
+    };
+
+    document.querySelector('#ds-new-run').addEventListener('click', () => {
+      document.querySelector('#ds-results').classList.remove('show');
+      document.querySelector('#view-datasheet').scrollIntoView({ behavior: 'smooth' });
     });
   </script>
 </body>

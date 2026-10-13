@@ -9,12 +9,18 @@ from threading import Lock
 from uuid import uuid4
 from zipfile import BadZipFile
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+import json
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from openpyxl.utils.exceptions import InvalidFileException
 
-from bom_enricher.comparison import compare_workbooks
+from bom_enricher.comparison import compare_workbooks, load_rulebook
+from bom_enricher.datasheet_analyzer import (
+    analyze_single_datasheet,
+    generate_datasheet_excel_report,
+)
 
 
 _MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -143,6 +149,101 @@ async def compare_uploads(
     }
 
 
+@app.post("/api/datasheet-analyze", tags=["Datasheet"])
+async def analyze_datasheets(
+    datasheet_files: list[UploadFile] = File(...),
+    rules_file: UploadFile | None = File(None),
+    part_numbers_json: str | None = Form(None),
+    material_types_json: str | None = Form(None),
+) -> dict[str, object]:
+    if not datasheet_files:
+        raise HTTPException(status_code=400, detail="En az bir PDF datasheet dosyası yükleyin.")
+
+    job_dir = tempfile.TemporaryDirectory(prefix="datasheet-analysis-")
+    try:
+        # Load rules
+        rules_path: Path
+        if rules_file is not None and getattr(rules_file, "filename", None):
+            filename = Path(rules_file.filename or "").name
+            if Path(filename).suffix.casefold() != ".xlsx":
+                raise HTTPException(status_code=400, detail="Kurallar dosyası yalnızca .xlsx olmalıdır.")
+            content = await rules_file.read(_MAX_UPLOAD_BYTES + 1)
+            if not content:
+                raise HTTPException(status_code=400, detail="Kurallar dosyası boş.")
+            rules_path = Path(job_dir.name) / "rules.xlsx"
+            rules_path.write_bytes(content)
+        elif DEFAULT_RULES_PATH.exists():
+            rules_path = DEFAULT_RULES_PATH
+        else:
+            raise HTTPException(status_code=400, detail="Lütfen Malzeme Tipleri Excel dosyasını yükleyin.")
+
+        rulebook = load_rulebook(rules_path)
+
+        # Parse part number and material type overrides
+        pn_overrides: dict[str, str] = {}
+        if part_numbers_json:
+            try:
+                pn_overrides = json.loads(part_numbers_json)
+            except Exception:
+                pass
+
+        mat_overrides: dict[str, str] = {}
+        if material_types_json:
+            try:
+                mat_overrides = json.loads(material_types_json)
+            except Exception:
+                pass
+
+        analyses = []
+        for upload in datasheet_files:
+            fname = Path(upload.filename or "").name
+            if not fname:
+                continue
+            if Path(fname).suffix.casefold() != ".pdf":
+                raise HTTPException(status_code=400, detail=f"'{fname}': Yalnızca PDF dosyası yükleyebilirsiniz.")
+            pdf_bytes = await upload.read(_MAX_UPLOAD_BYTES + 1)
+            if not pdf_bytes:
+                continue
+            pn_override = pn_overrides.get(fname)
+            mat_override = mat_overrides.get(fname)
+            res = analyze_single_datasheet(
+                fname,
+                pdf_bytes,
+                rulebook,
+                part_number_override=pn_override,
+                material_type_override=mat_override,
+            )
+            analyses.append(res)
+
+        if not analyses:
+            raise HTTPException(status_code=400, detail="Geçerli bir PDF dosyası işlenemedi.")
+
+        # Generate excel report
+        report_path = Path(job_dir.name) / "Datasheet_ERP_Esleme_Raporu.xlsx"
+        generate_datasheet_excel_report(analyses, report_path)
+
+        result_id = uuid4().hex
+        _store_result(result_id, report_path, job_dir)
+
+        return {
+            "result_id": result_id,
+            "count": len(analyses),
+            "analyses": [a.to_dict() for a in analyses],
+            "download_url": f"/api/results/{result_id}/workbook",
+        }
+    except HTTPException:
+        job_dir.cleanup()
+        raise
+    except Exception as exc:
+        job_dir.cleanup()
+        raise HTTPException(status_code=422, detail=f"Datasheet analizi hatası: {str(exc)}") from exc
+    finally:
+        for upload in datasheet_files:
+            await upload.close()
+        if rules_file is not None:
+            await rules_file.close()
+
+
 @app.get("/api/results/{result_id}/workbook", tags=["BOM"], include_in_schema=False)
 def download_result(result_id: str) -> FileResponse:
     with _jobs_lock:
@@ -152,7 +253,7 @@ def download_result(result_id: str) -> FileResponse:
     return FileResponse(
         job[0],
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename="Hata_ve_Kiyaslama_Raporu.xlsx",
+        filename=job[0].name,
     )
 
 

@@ -15,10 +15,11 @@ dependencies = [
     "fastapi>=0.110,<1",
     "uvicorn>=0.27,<1",
     "python-multipart>=0.0.9,<1",
+    "pypdf>=4.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "httpx>=0.27,<1"]
+dev = ["pytest", "httpx>=0.27,<1", "reportlab>=4.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
