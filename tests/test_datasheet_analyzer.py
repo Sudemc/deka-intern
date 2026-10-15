@@ -355,4 +355,29 @@ def test_exact_pitch_and_pin_number_matching(rulebook):
     assert pin_m.erp_code == "4"
 
 
+def test_yageo_ac0603fr_07255kl_automotive_resistor(rulebook):
+    pn = "AC0603FR-07255KL"
+    mat_type, conf, reason = classify_material_type("AUTOMOTIVE GRADE AC series THICK FILM CHIP RESISTORS", pn)
+    assert mat_type == "RES"
+
+    pdf_bytes = _create_sample_pdf(
+        "YAGEO AUTOMOTIVE GRADE AC SERIES THICK FILM CHIP RESISTORS",
+        pn,
+        [
+            "Product specification - March 19, 2021 V.8",
+            "Sizes 0201/0402/0603/0805/1206/1210/1218/2010/2512",
+            "AEC-Q200 qualified",
+            "AC0603: 1/10W, 75V",
+            "Ordering example: AC0402FR-07100KL",
+        ],
+    )
+    result = analyze_single_datasheet("AC_series.pdf", pdf_bytes, rulebook, part_number_override=pn)
+    assert result.material_type == "RES"
+    assert result.suggested_description == "SMD 0603 Package, 255K, 0.01 1/10W, Thick Film, Automotive AEC-Q200, Yageo"
+    assert result.suggested_erp_code == "RESSS2K2550FC8AU-YG"
+    assert len(result.properties) == 8
+    assert all(p.status == "TAM EŞLEŞTİ" for p in result.properties)
+
+
+
 

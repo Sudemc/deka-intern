@@ -177,9 +177,12 @@ def _extract_voltage(text: str) -> Decimal | None:
         whole, frac = match_vcode.groups()
         return Decimal(f"{whole}.{frac}")
 
-    match = re.search(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(?:v|volt|vdc)(?!\.?reg)(?![a-z0-9])", text)
-    if match:
-        return Decimal(match.group(1))
+    for m in re.finditer(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(?:v|volt|vdc)(?!\.?reg)(?!\.?\d)(?![a-z0-9])", text):
+        val = Decimal(m.group(1))
+        # Exclude years (1950-2050) and unrealistic voltages (> 1000V)
+        if 1950 <= val <= 2050 or val > 1000:
+            continue
+        return val
     return None
 
 

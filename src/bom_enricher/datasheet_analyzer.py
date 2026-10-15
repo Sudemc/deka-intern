@@ -322,10 +322,12 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
     text_lower = text.casefold()
 
     # 1. High confidence Part Number prefixes
-    if re.match(r"^CL\d{2}[A-Z]\d{3}", pn) or re.match(r"^GRM\d{2}", pn) or re.match(r"^CC\d{4}", pn) or re.match(r"^AC\d{4}[A-Z]", pn):
-        return "CAP", 0.98, "Part Number standart seramik kapasitör kodlamasına uyuyor."
-    if re.match(r"^(?:RC\d{4}|CRCW\d{4}|ERJ\d|WR\d{2}|PYU-RC)", pn):
+    # Resistors: Yageo RC and AC series (e.g. RC0805JR-07300RL, AC0603FR-07255KL), Vishay CRCW, Panasonic ERJ, Walsin WR
+    if re.match(r"^(?:RC|AC)\d{4}[A-Z]{2}-", pn) or re.match(r"^(?:RC\d{4}|CRCW\d{4}|ERJ\d|WR\d{2}|PYU-RC)", pn):
         return "RES", 0.98, "Part Number standart çip direnç kodlamasına uyuyor."
+    # Capacitors: Samsung CL, Murata GRM, Yageo CC, Yageo AC automotive MLCC
+    if re.match(r"^CL\d{2}[A-Z]\d{3}", pn) or re.match(r"^GRM\d{2}", pn) or re.match(r"^CC\d{4}", pn) or re.match(r"^AC\d{4}[A-Z0-9]*(?:BB|BN)\d+", pn):
+        return "CAP", 0.98, "Part Number standart seramik kapasitör kodlamasına uyuyor."
     if re.match(r"^(?:BAT|BZX|1N4148|1N400|1N58|SS\d{2}|MBR|SM712|SMAJ|SMBJ)", pn):
         return "DIO", 0.98, "Part Number standart diyot serisine uyuyor."
     if re.match(r"^(?:2N7002|BSS138|BSS84|SI23\d{2}|AO34\d{2}|IRF)", pn):
@@ -1075,13 +1077,24 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             pkg = specs.get("package", "")
             extracted_val_str = pkg
             if pkg:
+                # 1st pass: exact word boundary match avoiding array multipliers like 2x, 4x
                 for e in entries:
-                    desc_clean = re.sub(r"[^A-Za-z0-9]", "", e.value_description or "").upper()
-                    pkg_clean = re.sub(r"[^A-Za-z0-9]", "", pkg).upper()
-                    if pkg_clean and (pkg_clean in desc_clean or desc_clean == pkg_clean):
+                    desc = e.value_description or ""
+                    if re.search(r"\b\d+x", desc, re.I):
+                        continue
+                    if re.search(rf"\b{re.escape(pkg)}\b", desc, re.I):
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
+                # 2nd pass: fallback
+                if not matched_entry:
+                    for e in entries:
+                        desc_clean = re.sub(r"[^A-Za-z0-9]", "", e.value_description or "").upper()
+                        pkg_clean = re.sub(r"[^A-Za-z0-9]", "", pkg).upper()
+                        if pkg_clean and (pkg_clean in desc_clean or desc_clean == pkg_clean):
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
 
         # 3. VALUE
         elif attr_norm == "value":
