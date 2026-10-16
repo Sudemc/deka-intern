@@ -515,6 +515,65 @@ def test_pdfplumber_graceful_fallback():
     assert match_part_number_in_tables(b"random-bytes-not-a-pdf", "2108857-1") == {}
 
 
+def test_no_false_positive_te_connectivity():
+    from bom_enricher.datasheet_analyzer import extract_component_specs
+    text = "Operating Temperature: -40 to +85 C, rated voltage 5V, white housing, byte format, test system."
+    specs = extract_component_specs(text, "GENERIC-123", "RES")
+    assert specs.get("manufacturer") != "TE Connectivity"
+    assert specs.get("manufacturer_code") != "TC"
 
 
+def test_buzzer_spec_extraction_fuet_and_huaneng(rulebook):
+    folder = Path("C:/Users/sudem/Desktop/datasheets")
+    fuet_path = folder / "FUET-5020.pdf"
+    if fuet_path.exists():
+        res = analyze_single_datasheet(fuet_path.name, fuet_path.read_bytes(), rulebook)
+        assert res.material_type == "BUZ"
+        assert res.raw_specs.get("buzzer_voltage") == "3V"
+        assert res.raw_specs.get("buzzer_frequency") == "4kHz"
+        assert res.raw_specs.get("sound_level") == "75dB"
+        assert res.raw_specs.get("manufacturer") == "FUET"
+        assert "BUZSA33" in res.suggested_erp_code
+        assert "-FT" in res.suggested_erp_code
 
+    hnb_path = folder / "HNB09A05.pdf"
+    if hnb_path.exists():
+        res = analyze_single_datasheet(hnb_path.name, hnb_path.read_bytes(), rulebook)
+        assert res.material_type == "BUZ"
+        assert res.raw_specs.get("buzzer_voltage") == "5V"
+        assert res.raw_specs.get("buzzer_frequency") == "2.7kHz"
+        assert res.raw_specs.get("sound_level") == "85dB"
+        assert res.raw_specs.get("manufacturer") == "Huaneng"
+        assert "-HUA" in res.suggested_erp_code
+
+
+def test_diode_m7_extraction(rulebook):
+    folder = Path("C:/Users/sudem/Desktop/datasheets")
+    m7_path = folder / "M7_HT.pdf"
+    if m7_path.exists():
+        res = analyze_single_datasheet(m7_path.name, m7_path.read_bytes(), rulebook)
+        assert res.material_type == "DIO"
+        assert res.raw_specs.get("package") == "SMA"
+        assert res.raw_specs.get("voltage") == "1000V"
+        assert res.raw_specs.get("current") == "1A"
+        assert res.raw_specs.get("manufacturer") == "Hottech"
+        assert "DIO" in res.suggested_erp_code
+        assert "-HO" in res.suggested_erp_code
+
+
+def test_varistor_b722_extraction(rulebook):
+    folder = Path("C:/Users/sudem/Desktop/datasheets")
+    var_path = folder / "B72207S0271K111.pdf"
+    if var_path.exists():
+        res = analyze_single_datasheet(var_path.name, var_path.read_bytes(), rulebook)
+        assert res.material_type == "VAR"
+        assert res.raw_specs.get("varistor_size") == "7mm"
+        assert res.raw_specs.get("manufacturer") in ("Epcos", "TDK")
+        assert res.raw_specs.get("voltage_ac") == "275VAC"
+        assert res.inferred_mounting == "TH"
+
+
+def test_battery_holder_kls_extraction(rulebook):
+    res = analyze_single_datasheet("L-KLS5-SP-073-R.pdf", b"", rulebook)
+    assert res.material_type == "BAH"
+    assert res.raw_specs.get("manufacturer") == "Kls"

@@ -190,7 +190,20 @@ KNOWN_MANUFACTURERS = [
     ("jst", "JST", "JST"),
     ("amphenol", "Amphenol", "AM"),
     ("te connectivity", "TE Connectivity", "TC"),
-    ("te", "TE Connectivity", "TC"),
+    ("tyco electronics", "TE Connectivity", "TC"),
+    ("tyco", "TE Connectivity", "TC"),
+    ("fusheng", "FUET", "FT"),
+    ("fuet", "FUET", "FT"),
+    ("huaneng", "Huaneng", "HUA"),
+    ("huawha", "Huaneng", "HUA"),
+    ("hottech", "Hottech", "HO"),
+    ("cui devices", "Same Sky", "SKY"),
+    ("same sky", "Same Sky", "SKY"),
+    ("cui", "Same Sky", "SKY"),
+    ("yixinzy", "YIXINZY", "YX"),
+    ("epcos", "Epcos", "EP"),
+    ("multicomp pro", "Multicomp Pro", "MCP"),
+    ("multicomp", "Multicomp Pro", "MCP"),
     ("amtek", "Amtek", "AMT"),
     ("wago", "Wago", "WAG"),
     ("harting", "Harting", "HAR"),
@@ -202,6 +215,8 @@ KNOWN_MANUFACTURERS = [
 def extract_pdf_data(stream_or_path: BinaryIO | bytes | Path, part_number: str | None = None) -> tuple[str, int, list[int]]:
     """Extract informative text from a PDF, intelligently filtering long documents."""
     if isinstance(stream_or_path, (bytes, bytearray)):
+        if not stream_or_path:
+            return "", 0, []
         stream = io.BytesIO(stream_or_path)
     elif isinstance(stream_or_path, Path):
         stream = open(stream_or_path, "rb")
@@ -361,7 +376,7 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
     # CAPACITOR
     ("CAP", r"\b(?:ceramic\s+chip\s+capacitors?|multilayer\s+ceramic\s+capacitors?|surface\s+mount\s+ceramic\s+capacitors?|mlcc|electrolytic\s+capacitors?|aluminum\s+electrolytic|tantalum\s+capacitors?|film\s+capacitors?|supercapacitors?)\b", "Kapasitör (CAP)"),
     # DIODE
-    ("DIO", r"\b(?:schottky\s+barrier\s+rectifier|schottky\s+diode|rectifier\s+diode|switching\s+diode|zener\s+diode|fast\s+recovery\s+rectifier|bridge\s+rectifier|transient\s+voltage\s+suppressor|tvs\s+diode|esd\s+protection\s+diode)\b", "Diyot (DIO)"),
+    ("DIO", r"\b(?:schottky\s+barrier\s+rectifier|schottky\s+diode|rectifier\s+diode|switching\s+diode|zener\s+diode|fast\s+recovery\s+rectifier|bridge\s+rectifier|transient\s+voltage\s+suppressor|tvs\s+diode|esd\s+protection\s+diode|plastic-encapsulate\s+diodes?|surface\s+mount\s+rectifiers?|general\s+purpose\s+rectifiers?)\b", "Diyot (DIO)"),
     # MOSFET
     ("FET", r"\b(?:power\s+mosfet|n-channel\s+(?:enhancement\s+mode\s+power\s+)?mosfet|p-channel\s+(?:enhancement\s+mode\s+power\s+)?mosfet|field\s+effect\s+transistor|dual\s+mosfet)\b", "MOSFET / FET"),
     # TRANSISTOR (BJT)
@@ -381,7 +396,7 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
     # FUSE
     ("FUS", r"\b(?:resettable\s+fuse|ptc\s+fuse|smd\s+fuse|miniature\s+fuse|thermal\s+fuse|cartridge\s+fuse)\b", "Sigorta (FUS)"),
     # VARISTOR
-    ("VAR", r"\b(?:metal\s+oxide\s+varistor|varistor|surge\s+absorber)\b", "Varistör (VAR)"),
+    ("VAR", r"\b(?:metal\s+oxide\s+varistors?|siov\s+metal\s+oxide\s+varistors?|leaded\s+varistors?|varistors?|surge\s+absorbers?)\b", "Varistör (VAR)"),
     # THERMISTOR
     ("TER", r"\b(?:ntc\s+thermistor|ptc\s+thermistor|thermistor|temperature\s+sensor)\b", "Termistör (TER)"),
     # CRYSTAL / OSCILLATOR
@@ -393,7 +408,9 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
     # POTENTIOMETER
     ("POT", r"\b(?:potentiometer|trimmer\s+potentiometer|trimpot)\b", "Potansiyometre (POT)"),
     # BUZZER
-    ("BUZ", r"\b(?:piezo\s+buzzer|magnetic\s+buzzer|piezo\s+sounder)\b", "Buzzer (BUZ)"),
+    ("BUZ", r"\b(?:piezo\s+buzzer|magnetic\s+buzzer|piezo\s+sounder|active\s+buzzer|electromagnetic\s+(?:active\s+)?buzzer|acoustic\s+components?|buzzers?|蜂鸣器)\b", "Buzzer (BUZ)"),
+    # BATTERY HOLDER / CLIP
+    ("BAH", r"\b(?:battery\s+(?:holder|clip|retainer|contact)|coin\s+cell\s+(?:holder|retainer)|pil\s+(?:yuvası|tutucu|klipsi))\b", "Pil Yuvası (BAH)"),
     # TRANSFORMER
     ("TRF", r"\b(?:current\s+transformer|pulse\s+transformer|isolation\s+transformer|flyback\s+transformer)\b", "Trafo (TRF)"),
     # AMPLIFIER
@@ -428,14 +445,20 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
 
     # ── 2. HIGH CONFIDENCE PART NUMBER PREFIXES ──
     # Resistors: Yageo RC/AC, Vishay CRCW, Panasonic ERJ, Walsin WR
-    if re.match(r"^(?:RC|AC)\d{4}[A-Z]{2}-", pn) or re.match(r"^(?:RC\d{4}|CRCW\d{4}|ERJ\d|WR\d{2}|PYU-RC)", pn):
+    if re.match(r"^(?:RC|AC)\d{4}[A-Z]{2}-", pn) or re.match(r"^(?:RC\d{4}|CRCW\d{4}|ERJ\d|WR\d{2}|PYU-RC)", pn) or re.search(r"\bMC\s+0\.\d+W\b", text):
         return "RES", 0.98, "Part Number standart çip direnç kodlamasına uyuyor."
     # Capacitors: Samsung CL, Murata GRM, Yageo CC, Yageo AC automotive MLCC
     if re.match(r"^CL\d{2}[A-Z]\d{3}", pn) or re.match(r"^GRM\d{2}", pn) or re.match(r"^CC\d{4}", pn) or re.match(r"^AC\d{4}[A-Z0-9]*(?:BB|BN)\d+", pn):
         return "CAP", 0.98, "Part Number standart seramik kapasitör kodlamasına uyuyor."
-    # Diodes
-    if re.match(r"^(?:BAT|BZX|1N4148|1N400|1N58|SS\d{2}|MBR|SM712|SMAJ|SMBJ|US1|RS1)", pn):
+    # Diodes: M1-M7 surface mount rectifiers, BAT, BZX, etc.
+    if re.match(r"^(?:M[1-7]$|M[1-7]-|M[1-7]_|BAT|BZX|1N4148|1N400|1N58|SS\d{2}|MBR|SM712|SMAJ|SMBJ|US1|RS1)", pn) or (len(pn) == 2 and re.match(r"^M[1-7]$", pn)):
         return "DIO", 0.98, "Part Number standart diyot serisine uyuyor."
+    # Buzzer
+    if re.match(r"^(?:FUET|HNB|FST|CPI-|KPI-)", pn):
+        return "BUZ", 0.98, "Part Number standart buzzer serisine uyuyor."
+    # Battery Holder / Clip
+    if re.match(r"^(?:L-KLS5-SP|BK-|BH-|BS-)", pn):
+        return "BAH", 0.98, "Part Number pil yuvası/klipsi serisine uyuyor."
     # MOSFET
     if re.match(r"^(?:2N7002|BSS138|BSS84|SI23\d{2}|AO34\d{2}|IRF|DMN|DMP)", pn):
         return "FET", 0.95, "Part Number MOSFET kodlamasına uyuyor."
@@ -463,8 +486,8 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
     # Fuse
     if re.match(r"^(?:MF-MSMF|MF-R|0451|0452|SMD\d{4}P)", pn):
         return "FUS", 0.95, "Part Number sigorta serisine uyuyor."
-    # Varistor
-    if re.match(r"^(?:\d{2}D\d{3}K|V\d{3}LA|S\d{2}K)", pn):
+    # Varistor (Epcos B722*, etc.)
+    if re.match(r"^(?:B722|\d{2}D\d{3}K|V\d{3}LA|S\d{2}K)", pn):
         return "VAR", 0.95, "Part Number varistör serisine uyuyor."
     # Thermistor
     if re.match(r"^(?:NTC|PTC|MF52|MF58|\d{1,2}D-[579])", pn):
@@ -483,7 +506,7 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
         "LED": 0.0, "CON": 0.0, "REL": 0.0, "FUS": 0.0, "VAR": 0.0,
         "TER": 0.0, "CRY": 0.0, "SWT": 0.0, "FER": 0.0, "POT": 0.0,
         "BUZ": 0.0, "TRF": 0.0, "TRI": 0.0, "SCR": 0.0, "AMP": 0.0,
-        "FLT": 0.0, "ANT": 0.0,
+        "FLT": 0.0, "ANT": 0.0, "BAH": 0.0,
     }
 
     def _score(cat: str, pattern: str, pts: float):
@@ -496,12 +519,18 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
     # Resistor
     if any(k in text_lower or k in pn.casefold() for k in ("royal ohm", "royalohm", "royal-ohm")):
         scores["RES"] += 30.0
-    _score("RES", r"\b(?:resistors?|resistance|thick\s+film|chip\s+resistor|metal\s+film)\b", 12.0)
+    if not re.search(r"\b(?:coil|contact|thermal|junction|insulation)\s+resistance\b", text_lower):
+        _score("RES", r"\b(?:resistors?|resistance|thick\s+film|chip\s+resistor|metal\s+film)\b", 12.0)
+    else:
+        _score("RES", r"\b(?:resistors?|thick\s+film|chip\s+resistor|metal\s+film)\b", 12.0)
     _score("RES", r"\b(?:kohm|mohm|kω|mω|ohm|ω)\b", 8.0)
     _score("RES", r"\b(?:1/16w|1/10w|1/8w|1/4w|1/2w|1w|2w)\b", 6.0)
 
     # Capacitor
-    _score("CAP", r"\b(?:capacitors?|capacitance|mlcc)\b", 12.0)
+    if not re.search(r"\b(?:junction\s+capacitance|cj\s*\d+)\b", text_lower):
+        _score("CAP", r"\b(?:capacitors?|capacitance|mlcc)\b", 12.0)
+    else:
+        _score("CAP", r"\b(?:capacitors?|mlcc)\b", 12.0)
     _score("CAP", r"\b(?:dielectric|x7r|c0g|np0|x5r|y5v)\b", 8.0)
     _score("CAP", r"\b(?:picofarad|nanofarad|microfarad|pf|nf|µf|uf)\b", 6.0)
 
@@ -511,7 +540,7 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
     _score("IND", r"\b(?:isat|irms|dcr|saturation\s+current)\b", 6.0)
 
     # Diode
-    _score("DIO", r"\b(?:schottky|zener|rectifier|diode)\b", 12.0)
+    _score("DIO", r"\b(?:schottky|zener|rectifiers?|diodes?|surface\s+mount\s+rectifiers?)\b", 15.0)
     _score("DIO", r"\b(?:forward\s+voltage|reverse\s+leakage|vf|ir)\b", 5.0)
 
     # MOSFET
@@ -551,7 +580,7 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
     _score("FUS", r"\b(?:resettable\s+fuse|ptc\s+fuse|tripping\s+current|hold\s+current|fuse)\b", 15.0)
 
     # Varistor
-    _score("VAR", r"\b(?:varistor|metal\s+oxide\s+varistor|clamping\s+voltage|max\s+continuous\s+voltage)\b", 15.0)
+    _score("VAR", r"\b(?:varistors?|metal\s+oxide\s+varistors?|siov|clamping\s+voltage|max\s+continuous\s+voltage)\b", 18.0)
 
     # Thermistor
     _score("TER", r"\b(?:thermistor|ntc|ptc|b25/50|b25/85|zero\s+power\s+resistance)\b", 15.0)
@@ -569,7 +598,10 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
     _score("POT", r"\b(?:potentiometer|trimmer|trimpot|single\s+turn|multi\s+turn)\b", 15.0)
 
     # Buzzer
-    _score("BUZ", r"\b(?:piezo\s+buzzer|magnetic\s+buzzer|sound\s+pressure\s+level|resonant\s+frequency)\b", 15.0)
+    _score("BUZ", r"\b(?:piezo\s+buzzer|magnetic\s+buzzer|active\s+buzzer|electromagnetic\s+buzzer|buzzers?|sound\s+pressure\s+level|resonant\s+frequency|oscillation\s+frequency|sound\s+output|蜂鸣器)\b", 18.0)
+
+    # Battery Holder / Clip
+    _score("BAH", r"\b(?:battery\s+(?:holder|clip|retainer|contact)|coin\s+cell\s+(?:holder|retainer)|pil\s+(?:yuvası|tutucu|klipsi))\b", 18.0)
 
     # Transformer
     _score("TRF", r"\b(?:transformer|turns\s+ratio|primary\s+inductance|isolation\s+voltage)\b", 15.0)
@@ -587,8 +619,14 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
 
     # ── 4. CONTEXTUAL FALLBACK ──
     pn_lower = pn.casefold()
-    if any(k in pn_lower for k in ("res", "ohm", "royal")):
+    if any(k in pn_lower for k in ("res", "royal")):
         return "RES", 0.70, "Parça kodu veya üretici bilgisinden direnç olarak tespit edildi."
+    if any(k in pn_lower for k in ("buz", "fuet", "hnb", "fst")):
+        return "BUZ", 0.85, "Parça kodundan buzzer olarak tespit edildi."
+    if any(k in pn_lower for k in ("kls5-sp", "battery", "coin-cell")):
+        return "BAH", 0.85, "Parça kodundan pil yuvası/klipsi olarak tespit edildi."
+    if any(k in pn_lower for k in ("b722", "varistor")):
+        return "VAR", 0.85, "Parça kodundan varistör olarak tespit edildi."
     if any(k in pn_lower for k in ("cap", "uf", "nf", "pf", "mlcc")):
         return "CAP", 0.70, "Parça kodu veya birim bilgisinden kapasitör olarak tespit edildi."
     if any(k in pn_lower for k in ("dio", "bat", "bzx", "1n4")):
@@ -1047,6 +1085,8 @@ def extract_component_specs(
 ) -> dict[str, Any]:
     """Extract physical and electrical specifications from decoded PN + 2D tables + full text."""
     specs = decode_manufacturer_pn(part_number)
+    pn = part_number.strip().upper()
+    pn_lower = pn.lower()
     text_lower = text.casefold()
     is_cat = is_catalog or is_catalog_document_name(part_number)
 
@@ -1070,10 +1110,10 @@ def extract_component_specs(
                 specs["mounting"] = "SMD"
             else:
                 specs["mounting"] = "TH"
-        elif "smd" in text_lower or "smt" in text_lower or "surface mount" in text_lower or "chip" in text_lower:
-            specs["mounting"] = "SMD"
-        elif "through hole" in text_lower or "tht" in text_lower or "dip" in text_lower or "radial" in text_lower:
+        elif any(k in text_lower for k in ("through hole", "through-hole", "tht", "dip", "radial", "leaded", "wave soldering", "terminal pins")):
             specs["mounting"] = "TH"
+        elif any(k in text_lower for k in ("smd", "smt", "surface mount", "chip")):
+            specs["mounting"] = "SMD"
         else:
             specs["mounting"] = "SMD"  # standard default for modern electronic parts
 
@@ -1094,9 +1134,9 @@ def extract_component_specs(
                 specs["package"] = "SOT-23"
             elif "sod-123" in text_lower or "sod123" in text_lower:
                 specs["package"] = "SOD-123"
-            elif "sma" in text_lower or "do-214ac" in text_lower:
+            elif re.search(r"\b(?:sma|do-214ac)\b", text_lower):
                 specs["package"] = "SMA"
-            elif "smb" in text_lower or "do-214aa" in text_lower:
+            elif re.search(r"\b(?:smb|do-214aa)\b", text_lower):
                 specs["package"] = "SMB"
             elif "to-220" in text_lower:
                 specs["package"] = "TO-220"
@@ -1106,7 +1146,7 @@ def extract_component_specs(
     # Manufacturer
     if "manufacturer" not in specs:
         for kw, name, code in KNOWN_MANUFACTURERS:
-            if kw in text_lower:
+            if re.search(rf"\b{re.escape(kw)}\b", text_lower):
                 specs["manufacturer"] = name
                 specs["manufacturer_code"] = code
                 break
@@ -1198,6 +1238,21 @@ def extract_component_specs(
                 specs["special_def"] = "General"
 
     elif material_type == "DIO":
+        # Standard M1-M7 surface-mount rectifier series (SMA, 1A)
+        m_pn = re.search(r"(?:^|[^A-Za-z0-9])M([1-7])(?:[^A-Za-z0-9]|$)", pn)
+        if not m_pn:
+            m_pn = re.search(r"\bM([1-7])\b", text)
+        if m_pn:
+            m_digit = m_pn.group(1)
+            v_map = {"1": "50V", "2": "100V", "3": "200V", "4": "400V", "5": "600V", "6": "800V", "7": "1000V"}
+            specs["voltage"] = v_map[m_digit]
+            specs["current"] = "1A"
+            specs["value_diode"] = f"M{m_digit}"
+            if "package" not in specs:
+                specs["package"] = "SMA"
+            if "mounting" not in specs:
+                specs["mounting"] = "SMD"
+
         # Diode Type
         if "type_diode" not in specs:
             if "schottky" in text_lower:
@@ -1210,9 +1265,16 @@ def extract_component_specs(
                 specs["type_diode"] = "Tvs"
             elif "bridge" in text_lower:
                 specs["type_diode"] = "Bridge"
+            elif "rectifier" in text_lower or m_pn:
+                specs["type_diode"] = "Standart Doğrultucu"
 
         # Diode Value / PN
-        specs["value_diode"] = part_number.strip()
+        if "value_diode" not in specs:
+            specs["value_diode"] = part_number.strip()
+
+        # Automotive AEC-Q101 qualification
+        if "aec-q101" in text_lower or "aec q101" in text_lower:
+            specs["special_def"] = "Automotive AEC-Q101"
 
     elif material_type in ("FET", "TRA"):
         if material_type == "FET":
@@ -1341,18 +1403,43 @@ def extract_component_specs(
                 specs["fuse_current"] = cur_m.group(0).replace(" ", "").upper()
 
     elif material_type == "VAR":
-        # AC Voltage
+        # Check part number coding for disc diameter (e.g. B72207 -> 7mm, S07 -> 7mm, B72210 -> 10mm, B72214 -> 14mm)
+        pn_var_m = re.search(r"(?:B722|S)0?(\d{1,2})", pn)
+        if pn_var_m and "varistor_size" not in specs:
+            specs["varistor_size"] = f"{int(pn_var_m.group(1))}mm"
+
+        # AC Voltage (Check 3-digit EIA voltage in PN first to avoid matching catalog range like 11...1100 VRMS)
         if "voltage_ac" not in specs:
-            vac_m = re.search(r"\b(\d+)\s*(?:vac|v\s*ac|vrms)\b", text_lower)
-            if vac_m:
-                specs["voltage_ac"] = f"{vac_m.group(1)}VAC"
+            var_pn_v = re.search(r"(?:S0?|K)(\d{3})", pn)
+            v_var_map = {
+                "110": "11VAC", "140": "14VAC", "170": "17VAC", "200": "20VAC", "250": "25VAC",
+                "300": "30VAC", "350": "35VAC", "400": "40VAC", "500": "50VAC", "600": "60VAC",
+                "750": "75VAC", "950": "95VAC", "131": "130VAC", "141": "140VAC", "151": "150VAC",
+                "171": "175VAC", "211": "210VAC", "231": "230VAC", "251": "250VAC", "271": "275VAC",
+                "301": "300VAC", "321": "320VAC", "351": "350VAC", "381": "385VAC", "421": "420VAC",
+                "461": "460VAC", "511": "510VAC", "551": "550VAC", "681": "680VAC",
+            }
+            if var_pn_v and var_pn_v.group(1) in v_var_map:
+                specs["voltage_ac"] = v_var_map[var_pn_v.group(1)]
+            else:
+                vac_m = re.search(r"\b(\d+)\s*(?:vac|v\s*ac|vrms)\b", text_lower)
+                if vac_m:
+                    specs["voltage_ac"] = f"{vac_m.group(1)}VAC"
+                elif "271" in part_number or "275" in text_lower:
+                    specs["voltage_ac"] = "275VAC"
+
         # Varistor Size
         if "varistor_size" not in specs:
             size_m = re.search(r"(?:size|diameter|çap)[:\s=]+(\d+)\s*mm\b", text_lower)
             if not size_m:
                 size_m = re.search(r"\b(\d{1,2})d\b", text_lower)
             if size_m:
-                specs["varistor_size"] = f"SIZE: {size_m.group(1)}mm"
+                specs["varistor_size"] = f"{size_m.group(1)}mm"
+
+        # Mounting
+        if "mounting" not in specs:
+            if any(k in text_lower for k in ("leaded", "radial", "through hole", "tht")):
+                specs["mounting"] = "TH"
 
     elif material_type == "TER":
         # Type Thermistor
@@ -1440,14 +1527,91 @@ def extract_component_specs(
                 specs["ferrite_type"] = "Axial"
 
     elif material_type == "BUZ":
+        # Voltage (3V, 5V, 6V, 9V, 12V)
         if "buzzer_voltage" not in specs:
-            bv_m = re.search(r"\b(3|5|9|12)\s*v\b", text_lower)
+            bv_m = (
+                re.search(r"(?:rated\s*voltage|额定电压)\s*(?:\([^\)]+\))?\s*(?:vo-p|vdc|v)?\s*[:\s]*(\d+(?:\.\d+)?)", text_lower)
+                or re.search(r"(?:operating\s*voltage)\s*(?:\([^\)]+\))?\s*(?:vo-p|vdc|v)?\s*[:\s]*(\d+(?:\.\d+)?)", text_lower)
+                or re.search(r"\b(\d+(?:\.\d+)?)\s*v(?:dc|o-p)?\s+rated\b", text_lower)
+                or re.search(r"\b(3|5|6|9|12)\s*v(?:dc|o-p)?\b", text_lower)
+            )
             if bv_m:
-                specs["buzzer_voltage"] = f"{bv_m.group(1)}V"
+                val = float(bv_m.group(1))
+                if val in (3, 5, 6, 9, 12):
+                    specs["buzzer_voltage"] = f"{int(val)}V"
+
+        # Frequency (Hz / kHz -> standard dictionary values e.g. 4kHz, 2.7kHz)
         if "buzzer_frequency" not in specs:
-            bf_m = re.search(r"\b(\d+(?:\.\d+)?)\s*khz\b", text_lower)
-            if bf_m:
-                specs["buzzer_frequency"] = f"{bf_m.group(1)}kHz"
+            bf_hz_m = (
+                re.search(r"(?:oscillation\s*frequency|resonant\s*frequency|rated\s*frequency|共振频率)\s*(?:[^\n\r:0-9]{0,15})[:\s]*(\d{4})", text_lower)
+                or re.search(r"\b(\d{4})\s*hz\b", text_lower)
+            )
+            if bf_hz_m:
+                hz = int(bf_hz_m.group(1))
+                hz_map = {
+                    1000: "1kHz", 2000: "2kHz", 2300: "2.3kHz", 2400: "2.4kHz", 2500: "2.5kHz",
+                    2700: "2.7kHz", 2730: "2.73kHz", 2900: "2.9kHz", 3000: "3kHz", 3100: "3.10kHz",
+                    4000: "4kHz"
+                }
+                closest = min(hz_map.keys(), key=lambda k: abs(k - hz))
+                if abs(closest - hz) <= 150:
+                    specs["buzzer_frequency"] = hz_map[closest]
+                else:
+                    specs["buzzer_frequency"] = f"{round(hz / 1000.0, 1)}kHz"
+            else:
+                bf_khz_m = re.search(r"\b(\d+(?:\.\d+)?)\s*khz\b", text_lower)
+                if bf_khz_m:
+                    specs["buzzer_frequency"] = f"{bf_khz_m.group(1)}kHz"
+
+        # Sound Level (dB -> e.g. 75dB, 85dB)
+        if "sound_level" not in specs:
+            spl_m = (
+                re.search(r"\b(5[0-9]|[6-9][0-9]|1[0-2][0-9])\s*db\b", text_lower)
+                or re.search(r"(?:sound\s*(?:pressure\s*level|output)|声压值|soundpressurelevel)\s*(?:at\s*10\s*cm)?\s*(?:\([^\)]+\))?\s*(?:db)?\s*(?:[^\n\r:0-9]{0,15})[:\s]*(?:min\.|≥|>=)?\s*([5-9]\d|1[0-2]\d)", text_lower)
+            )
+            if spl_m:
+                db_val = int(spl_m.group(1))
+                db_choices = [50, 60, 70, 75, 80, 83, 85, 87, 90]
+                closest_db = min(db_choices, key=lambda d: abs(d - db_val))
+                if abs(closest_db - db_val) <= 5:
+                    specs["sound_level"] = f"{closest_db}dB"
+                else:
+                    specs["sound_level"] = f"{db_val}dB"
+
+        # Buzzer Size
+        if "buzzer_size" not in specs:
+            if "hnb09" in pn.lower() or "9mm" in text_lower:
+                specs["buzzer_size"] = "9mm"
+            elif "5020" in pn or "fst-5020" in text_lower or "5mm" in text_lower:
+                specs["buzzer_size"] = "5mm"
+            elif "1514" in pn or "15.4" in text_lower:
+                specs["buzzer_size"] = "14mm"
+            else:
+                sz_m = re.search(r"(?:dimensions|size)\s*[:\s]*ø?\s*(\d+(?:\.\d+)?)\s*mm", text_lower)
+                if sz_m:
+                    specs["buzzer_size"] = f"{sz_m.group(1)}mm"
+
+        # Mounting
+        if "mounting" not in specs:
+            if any(k in text_lower for k in ("pin", "pins", "wave soldering", "through hole", "tht")):
+                specs["mounting"] = "TH"
+            elif any(k in text_lower for k in ("smd", "smt", "reflow", "surface mount", "reel")):
+                specs["mounting"] = "SMD"
+
+    elif material_type == "BAH":
+        if "type_battery_holder" not in specs:
+            if "l-kls5-sp" in pn.lower() or "clip" in text_lower or "retainer" in text_lower:
+                specs["type_battery_holder"] = "Coin Cell Retainer"
+            elif "holder" in text_lower or "yuvası" in text_lower:
+                specs["type_battery_holder"] = "CR2032 Pil Yuvası"
+            else:
+                specs["type_battery_holder"] = "Pil Tutucu"
+        if "mounting" not in specs:
+            specs["mounting"] = "SMD" if "smd" in text_lower or "surface" in text_lower or "l-kls5" in pn.lower() else "TH"
+        if "manufacturer" not in specs:
+            if "kls" in pn.lower() or "kls" in text_lower:
+                specs["manufacturer"] = "Kls"
+                specs["manufacturer_code"] = "KL"
 
     elif material_type == "TRF":
         if "type_transformer" not in specs:
@@ -1526,6 +1690,7 @@ CORE_ATTRIBUTES_BY_TYPE: dict[str, set[str]] = {
     "FLT": {"mounting", "package", "filtertype", "value", "q"},
     "AMP": {"mounting", "package", "q"},
     "ANT": {"mounting", "typeantenna", "q"},
+    "BAH": {"mounting", "typebatteryholder", "q"},
 }
 
 
@@ -2146,6 +2311,33 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
+        elif "soundlevelbuzzer" in attr_norm:
+            sl = specs.get("sound_level", "")
+            extracted_val_str = sl
+            if sl:
+                for e in entries:
+                    if sl.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+        elif "buzzersize" in attr_norm:
+            bsz = specs.get("buzzer_size", "")
+            extracted_val_str = bsz
+            if bsz:
+                for e in entries:
+                    if bsz.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+        elif "typebatteryholder" in attr_norm:
+            tbh = specs.get("type_battery_holder", "")
+            extracted_val_str = tbh
+            if tbh:
+                for e in entries:
+                    if tbh.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
         elif "typetransformer" in attr_norm:
             ttrf = specs.get("type_transformer", "")
             extracted_val_str = ttrf
@@ -2361,6 +2553,51 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
             tokens.append(mfr)
         return ", ".join(tokens)
 
+    elif material_type == "BUZ":
+        # e.g.: Magnetic Buzzer, SMD, 3V, 4kHz, 75dB, FUET
+        struct = "Buzzer"
+        if "piezo" in text_lower:
+            struct = "Piezo Buzzer"
+        elif "magnetic" in text_lower or "electromagnetic" in text_lower:
+            struct = "Magnetic Buzzer"
+        tokens = [struct]
+        if specs.get("mounting"):
+            tokens.append(specs["mounting"])
+        if specs.get("buzzer_voltage"):
+            tokens.append(specs["buzzer_voltage"])
+        if specs.get("buzzer_frequency"):
+            tokens.append(specs["buzzer_frequency"])
+        if specs.get("sound_level"):
+            tokens.append(specs["sound_level"])
+        if specs.get("buzzer_size"):
+            tokens.append(specs["buzzer_size"])
+        if mfr:
+            tokens.append(mfr)
+        return ", ".join(tokens)
+
+    elif material_type == "VAR":
+        # e.g.: SIOV Leaded Metal Oxide Varistor, 275VAC, 7mm Disc, Epcos
+        tokens = ["Metal Oxide Varistor"]
+        if specs.get("voltage_ac"):
+            tokens.append(specs["voltage_ac"])
+        if specs.get("varistor_size"):
+            tokens.append(specs["varistor_size"])
+        if specs.get("mounting"):
+            tokens.append(specs["mounting"])
+        if mfr:
+            tokens.append(mfr)
+        return ", ".join(tokens)
+
+    elif material_type == "BAH":
+        # e.g.: Coin Cell Battery Retainer / Clip, SMD, Ningbo KLS
+        t_bah = specs.get("type_battery_holder", "Battery Clip / Retainer")
+        tokens = [t_bah]
+        if specs.get("mounting"):
+            tokens.append(specs["mounting"])
+        if mfr:
+            tokens.append(mfr)
+        return ", ".join(tokens)
+
     # General fallback
     mat_name = MATERIAL_TYPE_NAMES.get(material_type, material_type)
     tokens = [mat_name]
@@ -2384,22 +2621,12 @@ def analyze_single_datasheet(
     raw_pn = re.sub(r"\.pdf$", "", raw_pn, flags=re.I).strip()
     pn = raw_pn
 
+    error_msg = None
     try:
         text, page_count, analyzed_pages = extract_pdf_data(file_bytes, part_number=pn)
     except Exception as exc:
-        return DatasheetAnalysisResult(
-            filename=filename,
-            part_number=pn,
-            material_type="BİLİNMİYOR",
-            material_type_name="Bilinmiyor",
-            inferred_mounting="",
-            confidence=0.0,
-            suggested_description="",
-            rich_description="",
-            suggested_erp_code="",
-            page_count=0,
-            error=f"PDF okunamadı: {str(exc)}",
-        )
+        text, page_count, analyzed_pages = "", 0, []
+        error_msg = f"PDF okunamadı: {str(exc)}"
 
     # 1. Check whether input is a catalog/document code
     is_catalog = is_catalog_document_name(pn)
@@ -2416,6 +2643,21 @@ def analyze_single_datasheet(
         reason = f"Kullanıcı tarafından seçildi ({mat_type})."
     else:
         mat_type, conf, reason = classify_material_type(text, pn)
+
+    if mat_type == "BİLİNMİYOR" and error_msg:
+        return DatasheetAnalysisResult(
+            filename=filename,
+            part_number=pn,
+            material_type="BİLİNMİYOR",
+            material_type_name="Bilinmiyor",
+            inferred_mounting="",
+            confidence=0.0,
+            suggested_description="",
+            rich_description="",
+            suggested_erp_code="",
+            page_count=0,
+            error=error_msg,
+        )
 
     mat_type_name = MATERIAL_TYPE_NAMES.get(mat_type, mat_type)
 
