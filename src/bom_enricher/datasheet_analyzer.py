@@ -910,6 +910,86 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
     return specs
 
 
+def extract_pdf_tables(file_bytes: bytes) -> list[list[list[str]]]:
+    """Extract all 2D tables from PDF bytes using pdfplumber without any external API or network calls."""
+    tables: list[list[list[str]]] = []
+    try:
+        import pdfplumber
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                page_tables = page.extract_tables()
+                if page_tables:
+                    for t in page_tables:
+                        clean_table: list[list[str]] = []
+                        for row in t:
+                            if row:
+                                clean_table.append([str(c).strip() if c is not None else "" for c in row])
+                        if clean_table:
+                            tables.append(clean_table)
+    except Exception:
+        pass
+    return tables
+
+
+def match_part_number_in_tables(file_bytes: bytes | None, part_number: str) -> dict[str, Any]:
+    """Search 2D tables in PDF for exact row matching part_number and extract its column attributes.
+
+    Provides deterministic, coordinate-accurate parameter extraction for multi-variant catalogs.
+    """
+    if not file_bytes or not part_number or len(part_number) < 2:
+        return {}
+
+    pn_clean = part_number.strip().upper()
+    variant_specs: dict[str, Any] = {}
+
+    try:
+        tables = extract_pdf_tables(file_bytes)
+        for table in tables:
+            for row in table:
+                # Find if any cell in this row matches the part number
+                matched_col = -1
+                for c_idx, cell in enumerate(row):
+                    if cell.upper() == pn_clean or re.search(rf"\b{re.escape(pn_clean)}\b", cell, re.I):
+                        matched_col = c_idx
+                        break
+
+                if matched_col >= 0:
+                    for c_idx, cell in enumerate(row):
+                        if c_idx == matched_col or not cell:
+                            continue
+
+                        # 1. Dimensions / Lengths (between 1.0 and 3000.0 mm)
+                        num_m = re.match(r"^(\d+(?:\.\d+)?)(?:\s*mm)?$", cell)
+                        if num_m:
+                            val = float(num_m.group(1))
+                            dash_suffix = pn_clean.split("-")[-1] if "-" in pn_clean else ""
+                            if 1.0 <= val <= 3000.0 and (not dash_suffix.isdigit() or val != float(dash_suffix)):
+                                if "cable_length" not in variant_specs:
+                                    variant_specs["cable_length"] = f"{int(val) if val == int(val) else val}mm"
+
+                        # 2. Connector Types
+                        conn_m = re.search(r"\b(MHF(?:-TYPE|4-TYPE|\s*4)?|SMA|U\.FL|IPEX|MCX|MMCX|Type-C|USB|RJ45|JST|Molex)\b", cell, re.I)
+                        if conn_m and "mating_connector" not in variant_specs:
+                            variant_specs["mating_connector"] = conn_m.group(1).upper().replace("-TYPE", "")
+
+                        # 3. Pin Counts
+                        pins_m = re.search(r"\b(\d{1,3})\s*(?:pin|circuits?|pos|poles?|way)\b", cell, re.I)
+                        if pins_m and "pin_number" not in variant_specs:
+                            variant_specs["pin_number"] = f"{pins_m.group(1)} pin"
+
+                        # 4. Pitch
+                        pitch_m = re.search(r"\b(1\.00?|1\.25|1\.27|1\.50?|2\.00?|2\.50?|2\.54|3\.00?|3\.81|3\.96|4\.20?|5\.00?|5\.08)\s*mm\b", cell, re.I)
+                        if pitch_m and "pitch" not in variant_specs:
+                            variant_specs["pitch"] = pitch_m.group(0).lower()
+
+                    if variant_specs:
+                        return variant_specs
+    except Exception:
+        pass
+
+    return variant_specs
+
+
 def _extract_part_variant_table_row(text: str, part_number: str) -> dict[str, Any]:
     """Find the specific row or table entry corresponding to *part_number* in multi-variant datasheets.
 
@@ -958,13 +1038,26 @@ def _extract_part_variant_table_row(text: str, part_number: str) -> dict[str, An
     return variant_specs
 
 
-def extract_component_specs(material_type: str, text: str, part_number: str = "", is_catalog: bool = False) -> dict[str, Any]:
-    """Extract physical and electrical specifications from decoded PN + full text."""
+def extract_component_specs(
+    material_type: str,
+    text: str,
+    part_number: str = "",
+    is_catalog: bool = False,
+    file_bytes: bytes | None = None,
+) -> dict[str, Any]:
+    """Extract physical and electrical specifications from decoded PN + 2D tables + full text."""
     specs = decode_manufacturer_pn(part_number)
     text_lower = text.casefold()
     is_cat = is_catalog or is_catalog_document_name(part_number)
 
-    # Universal Table Variant Extraction for multi-part catalogs
+    # 1. Native 2D Table Extraction via pdfplumber
+    if file_bytes:
+        table_specs = match_part_number_in_tables(file_bytes, part_number)
+        for k, v in table_specs.items():
+            if k not in specs:
+                specs[k] = v
+
+    # 2. Universal Line-by-Line Regex Fallback for multi-part catalogs
     variant_specs = _extract_part_variant_table_row(text, part_number)
     for k, v in variant_specs.items():
         if k not in specs:
@@ -2326,7 +2419,7 @@ def analyze_single_datasheet(
 
     mat_type_name = MATERIAL_TYPE_NAMES.get(mat_type, mat_type)
 
-    specs = extract_component_specs(mat_type, text, pn, is_catalog=is_catalog)
+    specs = extract_component_specs(mat_type, text, pn, is_catalog=is_catalog, file_bytes=file_bytes)
     specs["is_catalog"] = is_catalog
     mounting = specs.get("mounting", "SMD")
 

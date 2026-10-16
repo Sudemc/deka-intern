@@ -479,5 +479,42 @@ def test_te_connectivity_antenna_2108857_1(rulebook):
     assert rich_desc == "RF Board Antenna, WiFi, 50mm MHF Cable, TE Connectivity"
 
 
+def test_pdfplumber_2d_table_extraction_antenna():
+    from bom_enricher.datasheet_analyzer import match_part_number_in_tables, extract_pdf_tables
+    from pathlib import Path
+    pdf_path = Path(r"C:\Users\sudem\.gemini\antigravity\brain\8be84be6-1095-43d5-b848-ce9fe57a8347\.user_uploaded\media_1792147543521.pdf")
+    if pdf_path.exists():
+        pdf_bytes = pdf_path.read_bytes()
+        tables = extract_pdf_tables(pdf_bytes)
+        assert len(tables) >= 5
+
+        # Variant 1: 50mm MHF
+        res1 = match_part_number_in_tables(pdf_bytes, "2108857-1")
+        assert res1.get("cable_length") == "50mm"
+        assert res1.get("mating_connector") == "MHF"
+
+        # Variant 2: 100mm MHF
+        res2 = match_part_number_in_tables(pdf_bytes, "2108857-2")
+        assert res2.get("cable_length") == "100mm"
+        assert res2.get("mating_connector") == "MHF"
+
+        # Variant 5: 50mm MHF4
+        res5 = match_part_number_in_tables(pdf_bytes, "2108857-5")
+        assert res5.get("cable_length") == "50mm"
+        assert res5.get("mating_connector") == "MHF4"
+
+
+def test_pdfplumber_graceful_fallback():
+    from bom_enricher.datasheet_analyzer import match_part_number_in_tables, extract_pdf_tables
+    # Empty bytes
+    assert extract_pdf_tables(b"") == []
+    assert match_part_number_in_tables(b"", "2108857-1") == {}
+    assert match_part_number_in_tables(None, "2108857-1") == {}
+    # Non-PDF random bytes
+    assert extract_pdf_tables(b"random-bytes-not-a-pdf") == []
+    assert match_part_number_in_tables(b"random-bytes-not-a-pdf", "2108857-1") == {}
+
+
+
 
 
