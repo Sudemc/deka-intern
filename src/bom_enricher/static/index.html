@@ -1913,6 +1913,7 @@
         }).join('');
 
         const copyIdDesc = `copy-desc-${idx}`;
+        const copyIdRich = `copy-rich-${idx}`;
         const copyIdCode = `copy-code-${idx}`;
 
         return `
@@ -1950,6 +1951,18 @@
               ` : ''}
 
               <!-- ERP Output Highlights -->
+              ${item.rich_description && item.rich_description !== item.suggested_description ? `
+              <div class="erp-box" style="margin-bottom: 8px; border-left: 4px solid #10b981; background: #f0fdf4;">
+                <div class="erp-box-label">
+                  <span style="color: #065f46; font-weight: 700;">⭐ Zenginleştirilmiş Mühendislik Açıklaması (Sektör Standardı)</span>
+                  <button type="button" class="btn-copy" id="${copyIdRich}" onclick="copyText('${escapeHtml(item.rich_description)}', '${copyIdRich}')">📋 Açıklamayı Kopyala</button>
+                </div>
+                <div class="erp-box-content" style="margin-top: 4px;">
+                  <span class="erp-box-val" style="font-size: 14px; color: #047857; font-weight: 700;">${escapeHtml(item.rich_description)}</span>
+                </div>
+              </div>
+              ` : ''}
+
               <div class="erp-box" style="margin-bottom: 8px;">
                 <div class="erp-box-label">
                   <span>Önerilen ERP Açıklaması (Malzeme Tipleri Sözlüğündeki VALUE AÇIKLAMASI & SORTNO Sıralı)</span>
@@ -1966,8 +1979,13 @@
                   <span>Önerilen ERP Kodu (Sözlük Kural Kodları Birleşimi)</span>
                   <button type="button" class="btn-copy" id="${copyIdCode}" onclick="copyText('${escapeHtml(item.suggested_erp_code)}', '${copyIdCode}')">📋 Kodu Kopyala</button>
                 </div>
-                <div class="erp-box-content" style="margin-top: 4px;">
+                <div class="erp-box-content" style="margin-top: 4px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                   <code style="font-size: 14px; color: #1e40af; font-weight: 700;">${escapeHtml(item.suggested_erp_code)}</code>
+                  ${item.suggested_erp_code.includes('0000XX') ? `
+                  <span class="pill" style="background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; font-size: 11px;">
+                    ℹ️ <b>0000XX:</b> DEKA ERP dahili sayaç numarasıdır (örn: 000023). Üretici datasheet'inde bulunmaz; ERP veritabanı sıra numarasıdır.
+                  </span>
+                  ` : ''}
                 </div>
               </div>
               ` : ''}

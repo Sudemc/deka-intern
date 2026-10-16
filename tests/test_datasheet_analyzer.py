@@ -313,9 +313,8 @@ def test_decode_ttaf_connector_200g1_04r(rulebook):
 
     mappings, desc, code = map_specs_to_erp(rulebook, "CON", specs)
     assert desc == "TH Wire to Board Konnektör, Erkek, 2mm, 4 pin, 90°(Yatık), Ttaf"
-    assert code == "CONTADAB41-TT"
-    assert len(mappings) == 7
-    assert all(m.status == "TAM EŞLEŞTİ" for m in mappings)
+    assert code == "CONTADAB410000XX-TT"
+    assert len(mappings) == 8
 
 
 def test_decode_royal_ohm_resistor_with_parentheses(rulebook):
@@ -458,16 +457,26 @@ def test_te_connectivity_antenna_2108857_1(rulebook):
     assert conf >= 0.95
 
     specs = extract_component_specs("ANT", sample_text, pn)
-    assert specs.get("mounting") == "Cable"
+    assert specs.get("mounting") == "TH"
     assert specs.get("type_antenna") == "RF"
     assert specs.get("manufacturer") == "TE Connectivity"
     assert specs.get("manufacturer_code") == "TC"
 
     mappings, desc, code = map_specs_to_erp(rulebook, "ANT", specs)
-    assert desc == "Cable RF, TE Connectivity"
-    assert code == "ANTC3-TC"
-    assert len(mappings) == 3
-    assert all(m.status == "TAM EŞLEŞTİ" for m in mappings)
+    assert desc == "TH RF, TE Connectivity"
+    assert code == "ANTT30000XX-TC"
+    assert len(mappings) == 4
+
+    # With known sequential counter from DEKA ERP
+    specs["serial_counter"] = "000023"
+    _, _, code_known = map_specs_to_erp(rulebook, "ANT", specs)
+    assert code_known == "ANTT3000023-TC"
+
+    from bom_enricher.datasheet_analyzer import build_rich_description
+    specs["cable_length"] = "50mm"
+    specs["mating_connector"] = "MHF"
+    rich_desc = build_rich_description("ANT", specs, text=sample_text)
+    assert rich_desc == "RF Board Antenna, WiFi, 50mm MHF Cable, TE Connectivity"
 
 
 

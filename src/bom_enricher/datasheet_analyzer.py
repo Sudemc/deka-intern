@@ -52,7 +52,8 @@ class DatasheetAnalysisResult:
     inferred_mounting: str              # e.g. "SMD"
     confidence: float                   # 0.0 - 1.0
     suggested_description: str          # e.g. "SMD 0805 Package, 100nF, %10, 50V, X7R, Samsung"
-    suggested_erp_code: str             # e.g. "CAPSS31003KD4X7R-SA"
+    rich_description: str = ""          # e.g. "RF Board Antenna, WiFi, 50mm MHF Cable, TE Connectivity"
+    suggested_erp_code: str = ""        # e.g. "CAPSS31003KD4X7R-SA"
     properties: list[PropertyMapping] = field(default_factory=list)
     raw_specs: dict[str, Any] = field(default_factory=dict)
     page_count: int = 1
@@ -71,6 +72,7 @@ class DatasheetAnalysisResult:
             "inferred_mounting": self.inferred_mounting,
             "confidence": round(self.confidence, 2),
             "suggested_description": self.suggested_description,
+            "rich_description": self.rich_description or self.suggested_description,
             "suggested_erp_code": self.suggested_erp_code,
             "page_count": self.page_count,
             "analyzed_pages": self.analyzed_pages,
@@ -908,11 +910,65 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
     return specs
 
 
+def _extract_part_variant_table_row(text: str, part_number: str) -> dict[str, Any]:
+    """Find the specific row or table entry corresponding to *part_number* in multi-variant datasheets.
+
+    Extracts variant-specific dimensions, cable lengths, connectors, pin counts, voltages, etc.
+    This works universally for antennas, connectors, diodes, passives, and IC families.
+    """
+    if not part_number or len(part_number) < 2:
+        return {}
+    variant_specs: dict[str, Any] = {}
+    pn_clean = part_number.strip()
+
+    for line in text.splitlines():
+        line_s = line.strip()
+        if not line_s:
+            continue
+        # Does this line contain the part number as a distinct token?
+        m = re.search(rf"(?:^|[\s|;,]){re.escape(pn_clean)}(?:[\s|;,]|$)", line_s)
+        if m:
+            after_pn = line_s[m.end():].strip()
+            tokens = after_pn.split()
+
+            # Find dimensions / lengths (between 1.0 and 3000.0)
+            dims = []
+            for t in tokens:
+                num_m = re.match(r"^(\d+(?:\.\d+)?)(?:mm)?$", t)
+                if num_m:
+                    val = float(num_m.group(1))
+                    dash_suffix = pn_clean.split("-")[-1] if "-" in pn_clean else ""
+                    if 1.0 <= val <= 3000.0 and (not dash_suffix.isdigit() or val != float(dash_suffix)):
+                        dims.append(val)
+
+            if dims and "cable_length" not in variant_specs:
+                val = dims[0]
+                variant_specs["cable_length"] = f"{int(val) if val == int(val) else val}mm"
+
+            # Connectors (MHF, MHF4, SMA, U.FL, IPEX, etc.)
+            conn_m = re.search(r"\b(MHF(?:-TYPE|4-TYPE|\s*4)?|SMA|U\.FL|IPEX|MCX|MMCX|Type-C|USB|RJ45|JST|Molex)\b", line_s, re.I)
+            if conn_m and "mating_connector" not in variant_specs:
+                variant_specs["mating_connector"] = conn_m.group(1).upper().replace("-TYPE", "")
+
+            # Pin count
+            pins_m = re.search(r"\b(\d{1,3})\s*(?:pin|circuits?|pos|poles?|way)\b", line_s, re.I)
+            if pins_m and "pin_number" not in variant_specs:
+                variant_specs["pin_number"] = f"{pins_m.group(1)} pin"
+
+    return variant_specs
+
+
 def extract_component_specs(material_type: str, text: str, part_number: str = "", is_catalog: bool = False) -> dict[str, Any]:
     """Extract physical and electrical specifications from decoded PN + full text."""
     specs = decode_manufacturer_pn(part_number)
     text_lower = text.casefold()
     is_cat = is_catalog or is_catalog_document_name(part_number)
+
+    # Universal Table Variant Extraction for multi-part catalogs
+    variant_specs = _extract_part_variant_table_row(text, part_number)
+    for k, v in variant_specs.items():
+        if k not in specs:
+            specs[k] = v
 
     # Mounting
     if "mounting" not in specs:
@@ -1312,15 +1368,27 @@ def extract_component_specs(material_type: str, text: str, part_number: str = ""
                 specs["type_transformer"] = "Standard Transformer"
 
     elif material_type == "ANT":
-        # Mounting: Cable, SMD, TH
-        if any(k in text_lower for k in ("cable", "coaxial", "micro-coaxial", "mating connector", "adhesive")):
-            specs["mounting"] = "Cable"
+        # Mounting: TH (Board/PCB Antenna), SMD (Chip), Cable (External Cable)
+        if any(k in text_lower for k in ("pcb antenna", "board antenna", "embedded antenna", "adhesive backing on the pcb")):
+            specs["mounting"] = "TH"
         elif any(k in text_lower for k in ("smd", "surface mount", "chip antenna")):
             specs["mounting"] = "SMD"
         elif any(k in text_lower for k in ("through hole", "tht", "dip")):
             specs["mounting"] = "TH"
-        else:
+        elif any(k in text_lower for k in ("cable", "coaxial", "micro-coaxial", "mating connector", "adhesive")):
             specs["mounting"] = "Cable"
+        else:
+            specs["mounting"] = "TH"
+
+        # Protocol / Application
+        if "wifi" in text_lower or "wi-fi" in text_lower:
+            specs["protocol"] = "WiFi"
+        elif "bluetooth" in text_lower or "zigbee" in text_lower:
+            specs["protocol"] = "BLE"
+        elif "gps" in text_lower or "gnss" in text_lower:
+            specs["protocol"] = "GPS"
+        elif "lte" in text_lower or "5g" in text_lower or "cellular" in text_lower:
+            specs["protocol"] = "Cellular"
 
         # Type Antenna: 1:Chip, 2:Wire, 3:RF
         if "chip" in text_lower:
@@ -1421,7 +1489,20 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
         if is_electrolytic and "specialdefinition" in attr_norm:
             continue
 
-        if material_type in ("CON", "ANT", "CRY", "POT", "SWT", "FER", "FLT", "TRF") and "serial" in attr_norm:
+        # Sequential ERP Counter (e.g. Serial Antenna Number, Serial Connector Number, Serial Crystal Number, etc.)
+        # These are internal sequential counters in DEKA ERP (e.g. 000023). They do not exist in manufacturer datasheets.
+        if "serial" in attr_norm:
+            counter_val = specs.get("serial_counter") or "0000XX"
+            mappings.append(PropertyMapping(
+                attribute_name=attr_display_name,
+                sort_no=sort_no,
+                extracted_value="DEKA ERP Dahili Sıra Sayacı (Örn: 000023)",
+                matched_erp_value="Otomatik Sayaç",
+                erp_code=counter_val,
+                prefix=entries[0].prefix or "",
+                status="ERP SAYAÇ (Dahili)",
+            ))
+            code_tokens.append(counter_val)
             continue
 
         # 1. MOUNTING
@@ -2045,6 +2126,159 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
     return mappings, suggested_desc, suggested_code
 
 
+def build_rich_description(material_type: str, specs: dict[str, Any], text: str = "") -> str:
+    """Build a rich, industry-standard engineering description for any electronic component."""
+    mfr = specs.get("manufacturer", "")
+    text_lower = text.casefold()
+
+    if material_type == "ANT":
+        # e.g.: RF Board Antenna, WiFi, 50mm MHF Cable, TE Connectivity
+        type_ant = specs.get("type_antenna", "RF")
+        struct = "Board Antenna" if specs.get("mounting") == "TH" or "pcb" in text_lower or "board" in text_lower else "Antenna"
+        proto = specs.get("protocol") or ("WiFi" if "wifi" in text_lower else "")
+        cable_parts = []
+        if specs.get("cable_length"):
+            cable_parts.append(specs["cable_length"])
+        if specs.get("mating_connector"):
+            cable_parts.append(specs["mating_connector"])
+        if cable_parts:
+            cable_parts.append("Cable")
+        cable_str = " ".join(cable_parts)
+
+        tokens = [f"{type_ant} {struct}".strip()]
+        if proto:
+            tokens.append(proto)
+        if cable_str:
+            tokens.append(cable_str)
+        if mfr:
+            tokens.append(mfr)
+        return ", ".join(tokens)
+
+    elif material_type == "RES":
+        # e.g.: Thick Film Chip Resistor, 255K 1% 1/10W, 0603 SMD, Automotive AEC-Q200, Yageo
+        comp = specs.get("composition", "Thick Film")
+        title = f"{comp} Chip Resistor" if specs.get("mounting") == "SMD" else f"{comp} Resistor"
+        val_parts = []
+        if specs.get("resistance_str"):
+            val_parts.append(specs["resistance_str"])
+        if specs.get("tolerance"):
+            val_parts.append(specs["tolerance"])
+        if specs.get("wattage"):
+            val_parts.append(specs["wattage"])
+        val_str = " ".join(val_parts)
+        pkg_str = f"{specs.get('package', '')} {specs.get('mounting', 'SMD')}".strip()
+        tokens = [title]
+        if val_str:
+            tokens.append(val_str)
+        if pkg_str:
+            tokens.append(pkg_str)
+        if specs.get("special_def") and specs["special_def"] != "General":
+            tokens.append(specs["special_def"])
+        if mfr:
+            tokens.append(mfr)
+        return ", ".join(tokens)
+
+    elif material_type == "CAP":
+        # e.g.: Multilayer Ceramic Chip Capacitor, 100nF 50V 10%, 0805 SMD X7R, Samsung
+        is_mlcc = specs.get("special_def") in ("X7R", "X5R", "C0G", "NP0", "Y5V", "X7S") or specs.get("package") in ("0402", "0603", "0805", "1206")
+        title = "Multilayer Ceramic Chip Capacitor" if is_mlcc else "Capacitor"
+        val_parts = []
+        if specs.get("capacitance_str"):
+            val_parts.append(specs["capacitance_str"])
+        if specs.get("voltage"):
+            val_parts.append(specs["voltage"])
+        if specs.get("tolerance"):
+            val_parts.append(specs["tolerance"])
+        val_str = " ".join(val_parts)
+        pkg_parts = []
+        if specs.get("package"):
+            pkg_parts.append(specs["package"])
+        if specs.get("mounting"):
+            pkg_parts.append(specs["mounting"])
+        if specs.get("special_def"):
+            pkg_parts.append(specs["special_def"])
+        pkg_str = " ".join(pkg_parts)
+        tokens = [title]
+        if val_str:
+            tokens.append(val_str)
+        if pkg_str:
+            tokens.append(pkg_str)
+        if mfr:
+            tokens.append(mfr)
+        return ", ".join(tokens)
+
+    elif material_type == "DIO":
+        # e.g.: Schottky Barrier Diode, 40V 200mA, SOT-23 SMD, Diodes Inc
+        t_dio = specs.get("type_diode", "Diode")
+        title = f"{t_dio} Diode" if "diode" not in t_dio.lower() else t_dio
+        ratings = []
+        if specs.get("voltage"):
+            ratings.append(specs["voltage"])
+        if specs.get("current"):
+            ratings.append(specs["current"])
+        ratings_str = " ".join(ratings)
+        pkg_str = f"{specs.get('package', '')} {specs.get('mounting', '')}".strip()
+        tokens = [title]
+        if specs.get("value_diode"):
+            tokens.append(specs["value_diode"])
+        if ratings_str:
+            tokens.append(ratings_str)
+        if pkg_str:
+            tokens.append(pkg_str)
+        if mfr:
+            tokens.append(mfr)
+        return ", ".join(tokens)
+
+    elif material_type == "CON":
+        # e.g.: Wire to Board Konnektör, 2.00mm, 4 Pin, 90°(Yatık), Molex
+        title = specs.get("type_connector", "Konnektör")
+        tokens = [title]
+        if specs.get("pitch"):
+            tokens.append(specs["pitch"])
+        if specs.get("pin_number"):
+            tokens.append(specs["pin_number"])
+        if specs.get("angle"):
+            tokens.append(specs["angle"])
+        if specs.get("pin_type"):
+            tokens.append(specs["pin_type"])
+        if mfr:
+            tokens.append(mfr)
+        return ", ".join(tokens)
+
+    elif material_type == "IND":
+        # e.g.: Power Inductor, 10uH 1.5A, SMD, Coilcraft
+        tokens = ["Power Inductor"]
+        if specs.get("inductance_str"):
+            tokens.append(specs["inductance_str"])
+        if specs.get("size_inductor"):
+            tokens.append(specs["size_inductor"])
+        if specs.get("package"):
+            tokens.append(specs["package"])
+        if mfr:
+            tokens.append(mfr)
+        return ", ".join(tokens)
+
+    elif material_type == "CRY":
+        tokens = ["Quartz Crystal"]
+        if specs.get("frequency_str"):
+            tokens.append(specs["frequency_str"])
+        if specs.get("package"):
+            tokens.append(specs["package"])
+        if mfr:
+            tokens.append(mfr)
+        return ", ".join(tokens)
+
+    # General fallback
+    mat_name = MATERIAL_TYPE_NAMES.get(material_type, material_type)
+    tokens = [mat_name]
+    for key in ("value_pn", "voltage", "current", "package", "mounting"):
+        if specs.get(key):
+            tokens.append(str(specs[key]))
+    if mfr:
+        tokens.append(mfr)
+    return ", ".join(tokens)
+
+
 def analyze_single_datasheet(
     filename: str,
     file_bytes: bytes,
@@ -2068,6 +2302,7 @@ def analyze_single_datasheet(
             inferred_mounting="",
             confidence=0.0,
             suggested_description="",
+            rich_description="",
             suggested_erp_code="",
             page_count=0,
             error=f"PDF okunamadı: {str(exc)}",
@@ -2096,6 +2331,7 @@ def analyze_single_datasheet(
     mounting = specs.get("mounting", "SMD")
 
     mappings, suggested_desc, suggested_code = map_specs_to_erp(rulebook, mat_type, specs)
+    rich_desc = build_rich_description(mat_type, specs, text=text)
 
     if is_catalog:
         conf = min(conf, 0.65)
@@ -2116,6 +2352,7 @@ def analyze_single_datasheet(
         inferred_mounting=mounting,
         confidence=conf,
         suggested_description=suggested_desc,
+        rich_description=rich_desc,
         suggested_erp_code=suggested_code,
         properties=mappings,
         raw_specs=specs,
@@ -2152,7 +2389,9 @@ def generate_datasheet_excel_report(analyses: list[DatasheetAnalysisResult], out
         "Part Number",
         "Malzeme Tipi",
         "Montaj (TH/SMD)",
-        "Önerilen ERP Açıklaması",
+        "Önerilen ERP Kodu",
+        "Zengin Mühendislik Açıklaması",
+        "Sözlük ERP Açıklaması",
         "Güven Skoru",
         "Sayfa Sayısı",
         "Eşleşen Özellik Sayısı",
@@ -2195,6 +2434,8 @@ def generate_datasheet_excel_report(analyses: list[DatasheetAnalysisResult], out
             item.part_number,
             item.material_type_name,
             item.inferred_mounting,
+            item.suggested_erp_code,
+            item.rich_description or item.suggested_description,
             item.suggested_description,
             f"{int(item.confidence * 100)}%",
             item.page_count,
