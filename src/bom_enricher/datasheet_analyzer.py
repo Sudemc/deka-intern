@@ -187,8 +187,8 @@ KNOWN_MANUFACTURERS = [
     ("ttaf", "Ttaf", "TT"),
     ("jst", "JST", "JST"),
     ("amphenol", "Amphenol", "AM"),
-    ("te connectivity", "TE", "TE"),
-    ("te", "TE", "TE"),
+    ("te connectivity", "TE Connectivity", "TC"),
+    ("te", "TE Connectivity", "TC"),
     ("amtek", "Amtek", "AMT"),
     ("wago", "Wago", "WAG"),
     ("harting", "Harting", "HAR"),
@@ -400,6 +400,8 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
     ("LED", r"\b(?:surface\s+mount\s+led|light\s+emitting\s+diode|chip\s+led|smd\s+led)\b", "LED"),
     # CONNECTOR
     ("CON", r"\b(?:wire-to-board|board-to-board|pin\s+header|terminal\s+block|receptacle\s+housing|pcb\s+connector|crimp\s+housing|wafer\s+connector|box\s+header)\b", "Konnektör (CON)"),
+    # ANTENNA
+    ("ANT", r"\b(?:triple\s+band\s+(?:embedded\s+)?antenna|embedded\s+antenna|chip\s+antenna|pcb\s+antenna|rf\s+antenna|wifi\s+antenna|patch\s+antenna|dipole\s+antenna|antennas?)\b", "Anten (ANT)"),
 ]
 
 
@@ -479,7 +481,7 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
         "LED": 0.0, "CON": 0.0, "REL": 0.0, "FUS": 0.0, "VAR": 0.0,
         "TER": 0.0, "CRY": 0.0, "SWT": 0.0, "FER": 0.0, "POT": 0.0,
         "BUZ": 0.0, "TRF": 0.0, "TRI": 0.0, "SCR": 0.0, "AMP": 0.0,
-        "FLT": 0.0,
+        "FLT": 0.0, "ANT": 0.0,
     }
 
     def _score(cat: str, pattern: str, pts: float):
@@ -532,9 +534,13 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
     _score("LED", r"\b(?:light\s+emitting\s+diode|luminous\s+intensity|dominant\s+wavelength|chip\s+led)\b", 15.0)
 
     # Connector
-    _score("CON", r"\b(?:connector|header|housing|crimp|terminal\s+block|wire-to-board)\b", 15.0)
-    if any(w in text_lower for w in ("molex", "jst", "amphenol", "te connectivity", "phoenix contact", "wago", "ttaf", "amtek")):
-        scores["CON"] += 12.0
+    if not re.search(r"\b(?:antenna|relay|transformer|optocoupler)\b", cover_lower):
+        _score("CON", r"\b(?:connector|header|housing|crimp|terminal\s+block|wire-to-board)\b", 15.0)
+        if any(w in text_lower for w in ("molex", "jst", "phoenix contact", "wago", "ttaf", "amtek")):
+            scores["CON"] += 12.0
+
+    # Antenna
+    _score("ANT", r"\b(?:antennas?|vswr|gain\s*(?:dbi)?|radiation\s+pattern|rf\s+data|peak\s+gain|average\s+gain|feed\s+point|polarization|triple\s+band)\b", 18.0)
 
     # Relay
     _score("REL", r"\b(?:relay|contact\s+rating|coil\s+voltage|spst|spdt)\b", 15.0)
@@ -1305,6 +1311,25 @@ def extract_component_specs(material_type: str, text: str, part_number: str = ""
             else:
                 specs["type_transformer"] = "Standard Transformer"
 
+    elif material_type == "ANT":
+        # Mounting: Cable, SMD, TH
+        if any(k in text_lower for k in ("cable", "coaxial", "micro-coaxial", "mating connector", "adhesive")):
+            specs["mounting"] = "Cable"
+        elif any(k in text_lower for k in ("smd", "surface mount", "chip antenna")):
+            specs["mounting"] = "SMD"
+        elif any(k in text_lower for k in ("through hole", "tht", "dip")):
+            specs["mounting"] = "TH"
+        else:
+            specs["mounting"] = "Cable"
+
+        # Type Antenna: 1:Chip, 2:Wire, 3:RF
+        if "chip" in text_lower:
+            specs["type_antenna"] = "Chip"
+        elif "wire" in text_lower:
+            specs["type_antenna"] = "Wire"
+        else:
+            specs["type_antenna"] = "RF"
+
     # Common for ICs and discrete parts: set part number as value
     if material_type in ("OPT", "ICS", "MCU", "TRI", "SCR", "AMP", "FLT", "ICL", "ICM", "ICC", "ICD", "ICB"):
         specs["value_pn"] = part_number.strip()
@@ -1339,6 +1364,7 @@ CORE_ATTRIBUTES_BY_TYPE: dict[str, set[str]] = {
     "SCR": {"mounting", "package", "value", "q"},
     "FLT": {"mounting", "package", "filtertype", "value", "q"},
     "AMP": {"mounting", "package", "q"},
+    "ANT": {"mounting", "typeantenna", "q"},
 }
 
 
@@ -1395,7 +1421,7 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
         if is_electrolytic and "specialdefinition" in attr_norm:
             continue
 
-        if material_type == "CON" and "serial" in attr_norm:
+        if material_type in ("CON", "ANT", "CRY", "POT", "SWT", "FER", "FLT", "TRF") and "serial" in attr_norm:
             continue
 
         # 1. MOUNTING
@@ -1407,6 +1433,9 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                     matched_entry = e
                     break
                 elif e.value == "T" and target == "TH":
+                    matched_entry = e
+                    break
+                elif e.value == "C" and target in ("C", "CABLE"):
                     matched_entry = e
                     break
                 elif e.value_description and target in e.value_description.upper():
@@ -1630,13 +1659,37 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
         # 10. MANUFACTURER (Q)
         elif attr_norm == "q":
             target_mfr = specs.get("manufacturer", "")
+            target_mfr_code = specs.get("manufacturer_code", "")
             extracted_val_str = target_mfr
-            if target_mfr:
-                for e in entries:
-                    if target_mfr.casefold() in e.value_description.casefold():
-                        matched_entry = e
-                        status = "TAM EŞLEŞTİ"
-                        break
+            if target_mfr or target_mfr_code:
+                # Pass 1: exact code match (e.g. 'TC' == e.value)
+                if target_mfr_code:
+                    for e in entries:
+                        if target_mfr_code.upper() == e.value.strip().upper():
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
+                # Pass 2: exact description match (e.g. 'TE Connectivity' == 'TE Connectivity')
+                if not matched_entry and target_mfr:
+                    for e in entries:
+                        if target_mfr.casefold() == e.value_description.strip().rstrip(",").casefold():
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
+                # Pass 3: word boundary match (e.g. '\bTE Connectivity\b' or '\bSamsung\b')
+                if not matched_entry and target_mfr:
+                    for e in entries:
+                        if re.search(rf"\b{re.escape(target_mfr)}\b", e.value_description, re.IGNORECASE):
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
+                # Pass 4: substring match ONLY if length >= 4 (to avoid 2-letter false matches like 'TE' matching 'Qualitek')
+                if not matched_entry and target_mfr and len(target_mfr) >= 4:
+                    for e in entries:
+                        if target_mfr.casefold() in e.value_description.casefold():
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
 
         # 11. CONNECTOR ATTRIBUTES
         elif "typeconnector" in attr_norm:
@@ -1925,6 +1978,15 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             if ttrf:
                 for e in entries:
                     if ttrf.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+        elif "typeantenna" in attr_norm:
+            ta = specs.get("type_antenna", "")
+            extracted_val_str = ta
+            if ta:
+                for e in entries:
+                    if ta.casefold() in e.value_description.casefold():
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break

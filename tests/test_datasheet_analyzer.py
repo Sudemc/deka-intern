@@ -434,5 +434,41 @@ def test_inductor_spec_extraction_and_mapping(rulebook):
     assert val_m.status in ("TAM EŞLEŞTİ", "YAKIN EŞLEŞTİ")
 
 
+def test_te_connectivity_antenna_2108857_1(rulebook):
+    """Verify that TE Connectivity antenna 2108857-1 is classified as ANT and maps to ANTC3-TC."""
+    sample_text = (
+        "--- PAGE 1 ---\n"
+        "Wi-Fi 6/ 6E TRIPLE BAND EMBEDDED ANTENNA\n"
+        "Part Numbers: 2108857-1, 2108857-2\n"
+        "TE Connectivity\n"
+        "FEATURES & BENEFITS\n"
+        "• WiFi 6, also including WiFi 6E new 6GHz band, Bluetooth, ZigBee\n"
+        "• Adhesive backing on the PCB simplifies mounting within the device\n"
+        "• Global Frequency coverage\n"
+        "• Wide selection of micro-coaxial cable lengths\n"
+        "SPECIFICATIONS\n"
+        "Frequency Range (MHz) 2400-2500 5150-5875 5925-7125\n"
+        "Mounting Adhesive Tape\n"
+        "Cable (Coaxial) 0.81mm and 1.37mm Dia.\n"
+        "--- PAGE 2 ---\n"
+    )
+    pn = "2108857-1"
+    mat_type, conf, reason = classify_material_type(sample_text, pn)
+    assert mat_type == "ANT"
+    assert conf >= 0.95
+
+    specs = extract_component_specs("ANT", sample_text, pn)
+    assert specs.get("mounting") == "Cable"
+    assert specs.get("type_antenna") == "RF"
+    assert specs.get("manufacturer") == "TE Connectivity"
+    assert specs.get("manufacturer_code") == "TC"
+
+    mappings, desc, code = map_specs_to_erp(rulebook, "ANT", specs)
+    assert desc == "Cable RF, TE Connectivity"
+    assert code == "ANTC3-TC"
+    assert len(mappings) == 3
+    assert all(m.status == "TAM EŞLEŞTİ" for m in mappings)
+
+
 
 
