@@ -1696,14 +1696,54 @@
             <div class="mat-input-wrap">
               <span class="pn-label">Tip:</span>
               <select class="mat-select" data-filename="${escapeHtml(f.name)}">
-                <option value="AUTO" ${matVal === 'AUTO' ? 'selected' : ''}>🤖 Otomatik</option>
-                <option value="RES" ${matVal === 'RES' ? 'selected' : ''}>Direnç (RES)</option>
-                <option value="CAP" ${matVal === 'CAP' ? 'selected' : ''}>Kapasitör (CAP)</option>
-                <option value="CON" ${matVal === 'CON' ? 'selected' : ''}>Konnektör (CON)</option>
-                <option value="DIO" ${matVal === 'DIO' ? 'selected' : ''}>Diyot (DIO)</option>
-                <option value="TRA" ${matVal === 'TRA' ? 'selected' : ''}>Transistör (TRA)</option>
-                <option value="IND" ${matVal === 'IND' ? 'selected' : ''}>Endüktör (IND)</option>
-                <option value="ICR" ${matVal === 'ICR' ? 'selected' : ''}>Regülatör (ICR)</option>
+                <option value="AUTO" ${matVal === 'AUTO' ? 'selected' : ''}>🤖 Otomatik Tespit</option>
+                <optgroup label="── Pasif Bileşenler ──">
+                  <option value="RES" ${matVal === 'RES' ? 'selected' : ''}>Direnç (RES)</option>
+                  <option value="CAP" ${matVal === 'CAP' ? 'selected' : ''}>Kapasitör (CAP)</option>
+                  <option value="IND" ${matVal === 'IND' ? 'selected' : ''}>Bobin / İndüktör (IND)</option>
+                  <option value="POT" ${matVal === 'POT' ? 'selected' : ''}>Potansiyometre (POT)</option>
+                  <option value="FER" ${matVal === 'FER' ? 'selected' : ''}>Ferrit Boncuk (FER)</option>
+                  <option value="TER" ${matVal === 'TER' ? 'selected' : ''}>Termistör NTC/PTC (TER)</option>
+                  <option value="VAR" ${matVal === 'VAR' ? 'selected' : ''}>Varistör (VAR)</option>
+                  <option value="FUS" ${matVal === 'FUS' ? 'selected' : ''}>Sigorta (FUS)</option>
+                  <option value="CRY" ${matVal === 'CRY' ? 'selected' : ''}>Kristal / Osilatör (CRY)</option>
+                  <option value="FLT" ${matVal === 'FLT' ? 'selected' : ''}>Filtre (FLT)</option>
+                </optgroup>
+                <optgroup label="── Yarı İletkenler & Aktifler ──">
+                  <option value="DIO" ${matVal === 'DIO' ? 'selected' : ''}>Diyot (DIO)</option>
+                  <option value="FET" ${matVal === 'FET' ? 'selected' : ''}>MOSFET / FET</option>
+                  <option value="TRA" ${matVal === 'TRA' ? 'selected' : ''}>Transistör BJT (TRA)</option>
+                  <option value="TRI" ${matVal === 'TRI' ? 'selected' : ''}>Triyak (TRI)</option>
+                  <option value="SCR" ${matVal === 'SCR' ? 'selected' : ''}>Tristör (SCR)</option>
+                  <option value="LED" ${matVal === 'LED' ? 'selected' : ''}>LED</option>
+                  <option value="OPT" ${matVal === 'OPT' ? 'selected' : ''}>Optokuplör (OPT)</option>
+                </optgroup>
+                <optgroup label="── Entegre Devreler (IC) ──">
+                  <option value="ICR" ${matVal === 'ICR' ? 'selected' : ''}>Voltaj Regülatörü / LDO (ICR)</option>
+                  <option value="ICS" ${matVal === 'ICS' ? 'selected' : ''}>SMPS Güç Entegresi (ICS)</option>
+                  <option value="MCU" ${matVal === 'MCU' ? 'selected' : ''}>Mikrodenetleyici (MCU)</option>
+                  <option value="AMP" ${matVal === 'AMP' ? 'selected' : ''}>Amplifikatör / Op-Amp (AMP)</option>
+                  <option value="ICL" ${matVal === 'ICL' ? 'selected' : ''}>Lojik Entegre (ICL)</option>
+                  <option value="ICM" ${matVal === 'ICM' ? 'selected' : ''}>Bellek Entegresi (ICM)</option>
+                  <option value="ICC" ${matVal === 'ICC' ? 'selected' : ''}>Haberleşme Entegresi (ICC)</option>
+                  <option value="ICD" ${matVal === 'ICD' ? 'selected' : ''}>Sürücü Entegre (ICD)</option>
+                  <option value="ICB" ${matVal === 'ICB' ? 'selected' : ''}>Batarya Yönetimi (ICB)</option>
+                </optgroup>
+                <optgroup label="── Elektromekanik & Bağlantı ──">
+                  <option value="CON" ${matVal === 'CON' ? 'selected' : ''}>Konnektör (CON)</option>
+                  <option value="TRM" ${matVal === 'TRM' ? 'selected' : ''}>Terminal / Klemens (TRM)</option>
+                  <option value="SWT" ${matVal === 'SWT' ? 'selected' : ''}>Anahtar / Switch (SWT)</option>
+                  <option value="REL" ${matVal === 'REL' ? 'selected' : ''}>Röle (REL)</option>
+                  <option value="BUZ" ${matVal === 'BUZ' ? 'selected' : ''}>Buzzer (BUZ)</option>
+                  <option value="SPK" ${matVal === 'SPK' ? 'selected' : ''}>Hoparlör (SPK)</option>
+                  <option value="MIC" ${matVal === 'MIC' ? 'selected' : ''}>Mikrofon (MIC)</option>
+                  <option value="TRF" ${matVal === 'TRF' ? 'selected' : ''}>Trafo (TRF)</option>
+                  <option value="DSP" ${matVal === 'DSP' ? 'selected' : ''}>Ekran / Display (DSP)</option>
+                  <option value="ENC" ${matVal === 'ENC' ? 'selected' : ''}>Enkoder (ENC)</option>
+                  <option value="ANT" ${matVal === 'ANT' ? 'selected' : ''}>Anten (ANT)</option>
+                  <option value="CBL" ${matVal === 'CBL' ? 'selected' : ''}>Kablo (CBL)</option>
+                  <option value="PCB" ${matVal === 'PCB' ? 'selected' : ''}>Baskı Devre Kartı (PCB)</option>
+                </optgroup>
               </select>
             </div>
             <button type="button" class="btn-remove-pdf" onclick="removePdf('${escapeHtml(f.name)}')" title="Kaldır">✕</button>

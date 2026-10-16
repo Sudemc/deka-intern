@@ -379,5 +379,60 @@ def test_yageo_ac0603fr_07255kl_automotive_resistor(rulebook):
     assert all(p.status == "TAM EŞLEŞTİ" for p in result.properties)
 
 
+def test_classify_from_cover_page_titles():
+    """Verify that cover page titles accurately classify component material type."""
+    test_cases = [
+        ("RES", "--- PAGE 1 ---\nDATA SHEET\nTHICK FILM CHIP RESISTORS\nAUTOMOTIVE GRADE\n--- PAGE 2 ---"),
+        ("CAP", "--- PAGE 1 ---\nSURFACE MOUNT MULTILAYER CERAMIC CAPACITORS\nCC Series 6.3V to 50V\n--- PAGE 2 ---"),
+        ("DIO", "--- PAGE 1 ---\nSCHOTTKY BARRIER RECTIFIER\n3.0 AMPERES 40 VOLTS SS34\n--- PAGE 2 ---"),
+        ("FET", "--- PAGE 1 ---\nN-Channel Enhancement Mode Power MOSFET\n30V 5.8A SI2302\n--- PAGE 2 ---"),
+        ("TRA", "--- PAGE 1 ---\nNPN General Purpose Transistor\nBC847 SOT-23\n--- PAGE 2 ---"),
+        ("IND", "--- PAGE 1 ---\nSMD Power Inductor\nNR4018 Series 10uH Shielded\n--- PAGE 2 ---"),
+        ("ICR", "--- PAGE 1 ---\nLow Dropout Linear Regulator\nAMS1117 3.3V 1A\n--- PAGE 2 ---"),
+        ("ICS", "--- PAGE 1 ---\nStep-Down Switching Regulator\nLM2596 3A Buck Converter\n--- PAGE 2 ---"),
+        ("MCU", "--- PAGE 1 ---\n32-Bit ARM Cortex-M0 Microcontroller\nSTM32F030F4P6\n--- PAGE 2 ---"),
+        ("OPT", "--- PAGE 1 ---\nPHOTOCOUPLER\nPC817 Phototransistor Optocoupler\n--- PAGE 2 ---"),
+        ("REL", "--- PAGE 1 ---\nMiniature Power Relay\n12VDC 10A 250VAC HF32F\n--- PAGE 2 ---"),
+        ("FUS", "--- PAGE 1 ---\nSurface Mount Resettable PTC Fuse\n1206 MF-MSMF series\n--- PAGE 2 ---"),
+        ("VAR", "--- PAGE 1 ---\nRadial Lead Metal Oxide Varistor\n14D series 275VAC 430V\n--- PAGE 2 ---"),
+        ("TER", "--- PAGE 1 ---\nNTC Thermistor Temperature Sensor\n10K ohm 3950K\n--- PAGE 2 ---"),
+        ("CRY", "--- PAGE 1 ---\nQuartz Crystal Unit\n32.768kHz 12.5pF SMD 3.2x1.5mm\n--- PAGE 2 ---"),
+        ("SWT", "--- PAGE 1 ---\nTactile Switch\n6x6mm SMD Push Button\n--- PAGE 2 ---"),
+        ("FER", "--- PAGE 1 ---\nFerrite Chip Bead\n0805 120 ohm at 100MHz\n--- PAGE 2 ---"),
+        ("POT", "--- PAGE 1 ---\nTrimmer Potentiometer\n3296 Series 10K Multi Turn\n--- PAGE 2 ---"),
+        ("BUZ", "--- PAGE 1 ---\nPiezo Buzzer\n12V 85dB Resonant Frequency 2.4kHz\n--- PAGE 2 ---"),
+        ("TRF", "--- PAGE 1 ---\nCurrent Transformer\n1:1000 50A Isolation\n--- PAGE 2 ---"),
+        ("AMP", "--- PAGE 1 ---\nOperational Amplifier\nLM358 Dual Op Amp\n--- PAGE 2 ---"),
+    ]
+    for expected_type, sample_text in test_cases:
+        mtype, conf, reason = classify_material_type(sample_text)
+        assert mtype == expected_type, f"Failed for {expected_type}: got {mtype} ({reason})"
+        assert conf >= 0.95
+
+
+def test_inductor_spec_extraction_and_mapping(rulebook):
+    """Verify inductance extraction and mapping to rules.xlsx."""
+    sample_text = (
+        "--- PAGE 1 ---\n"
+        "SMD Power Inductor NR4018 Series\n"
+        "Dimensions: 4.0x4.0x1.8mm\n"
+        "Inductance: 10uH\n"
+        "Mounting: Surface Mount SMD\n"
+        "--- PAGE 2 ---\n"
+    )
+    mat_type, conf, reason = classify_material_type(sample_text, "NR4018-100M")
+    assert mat_type == "IND"
+
+    specs = extract_component_specs("IND", sample_text, "NR4018-100M")
+    assert specs.get("mounting") == "SMD"
+    assert specs.get("inductance_str") == "10uH"
+
+    mappings, desc, code = map_specs_to_erp(rulebook, "IND", specs)
+    # Value Inductor attribute should match 10uH
+    val_m = next(m for m in mappings if "value" in m.attribute_name.casefold())
+    assert val_m.matched_erp_value == "10uH,"
+    assert val_m.status in ("TAM EŞLEŞTİ", "YAKIN EŞLEŞTİ")
+
+
 
 

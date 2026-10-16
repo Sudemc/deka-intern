@@ -163,10 +163,19 @@ def _extract_resistance(text: str) -> Decimal | None:
 
 
 def _extract_inductance(text: str) -> Decimal | None:
+    # Pattern 1: standard number + unit (e.g. 10uh, 4.7uh, 100nh, 1mh)
     match = re.search(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(nh|uh|µh|mh|h)(?![a-z0-9])", text)
     if match:
         num, unit = match.groups()
         return Decimal(num) * _IND_MULTIPLIERS.get(unit, Decimal("1"))
+    # Pattern 2: R-code style like 4u7 -> 4.7 uH, 2m2 -> 2.2 mH
+    match_code = re.search(r"(?<![a-z0-9])(\d+)(u|µ|m|n)h?(\d+)(?![a-z0-9])", text)
+    if match_code:
+        whole, unit_char, frac = match_code.groups()
+        num_str = f"{whole}.{frac}"
+        unit = f"{unit_char}h"
+        if unit in _IND_MULTIPLIERS:
+            return Decimal(num_str) * _IND_MULTIPLIERS[unit]
     return None
 
 
@@ -312,3 +321,13 @@ def _format_res(ohm: Decimal) -> str:
     if ohm >= Decimal("1e3"):
         return f"{ohm / Decimal('1e3'):g}k"
     return f"{ohm:g}R"
+
+
+def _format_ind(henry: Decimal) -> str:
+    if henry >= Decimal("1"):
+        return f"{henry:g}H"
+    if henry >= Decimal("1e-3"):
+        return f"{henry / Decimal('1e-3'):g}mH"
+    if henry >= Decimal("1e-6"):
+        return f"{henry / Decimal('1e-6'):g}uH"
+    return f"{henry / Decimal('1e-9'):g}nH"

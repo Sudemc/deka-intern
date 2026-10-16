@@ -26,6 +26,7 @@ from bom_enricher.semantic_parser import (
     normalize_mounting,
     _format_cap,
     _format_res,
+    _format_ind,
 )
 
 
@@ -97,25 +98,57 @@ class DatasheetAnalysisResult:
 
 
 MATERIAL_TYPE_NAMES = {
-    "CAP": "Kapasitör (CAP)",
+    # Pasif Bileşenler
     "RES": "Direnç (RES)",
+    "CAP": "Kapasitör (CAP)",
+    "IND": "Bobin / İndüktör (IND)",
+    "POT": "Potansiyometre (POT)",
+    "FER": "Ferrit Boncuk (FER)",
+    "TER": "Termistör (TER)",
+    "VAR": "Varistör (VAR)",
+    "FUS": "Sigorta (FUS)",
+    "CRY": "Kristal / Osilatör (CRY)",
+    "FLT": "Filtre (FLT)",
+    # Yarı İletkenler & Aktif Bileşenler
     "DIO": "Diyot (DIO)",
     "FET": "MOSFET / FET",
     "TRA": "Transistör (TRA)",
+    "TRI": "Triyak (TRI)",
+    "SCR": "Tristör (SCR)",
+    "LED": "LED",
+    "OPT": "Optokuplör (OPT)",
+    # Entegre Devreler (IC)
     "ICR": "Voltaj Regülatörü / LDO (ICR)",
     "ICS": "SMPS / Güç Entegresi (ICS)",
     "MCU": "Mikrodenetleyici (MCU)",
-    "IND": "Bobin / İndüktör (IND)",
-    "LED": "LED",
+    "AMP": "Amplifikatör / Op-Amp (AMP)",
+    "ICL": "Mantık Entegresi / Logic (ICL)",
+    "ICM": "Bellek Entegresi / Memory (ICM)",
+    "ICC": "Haberleşme Entegresi (ICC)",
+    "ICD": "Sürücü Entegre (ICD)",
+    "ICB": "Batarya Yönetim Entegresi (ICB)",
+    # Elektromekanik & Bağlantı
     "CON": "Konnektör (CON)",
-    "OPT": "Optokuplör (OPT)",
-    "REL": "Röle (REL)",
-    "FUS": "Sigorta (FUS)",
-    "VAR": "Varistör (VAR)",
-    "TER": "Termistör (TER)",
-    "CRY": "Kristal / Osilatör (CRY)",
+    "TRM": "Terminal / Klemens (TRM)",
     "SWT": "Anahtar / Switch (SWT)",
-    "FER": "Ferrit Boncuk (FER)",
+    "REL": "Röle (REL)",
+    "BUZ": "Buzzer (BUZ)",
+    "SPK": "Hoparlör (SPK)",
+    "MIC": "Mikrofon (MIC)",
+    "TRF": "Trafo (TRF)",
+    "DSP": "Ekran / Display (DSP)",
+    "ENC": "Enkoder (ENC)",
+    "LDR": "Foto Direnç (LDR)",
+    "BAH": "Pil Yuvası (BAH)",
+    "CBL": "Kablo (CBL)",
+    "PCB": "Baskı Devre Kartı (PCB)",
+    "SGT": "Soğutucu (SGT)",
+    "ANT": "Anten (ANT)",
+    "JMP": "Jumper (JMP)",
+    "SHI": "Shield / Koruma (SHI)",
+    "SPR": "Yay / Spring (SPR)",
+    "ADP": "Adaptör (ADP)",
+    "FLM": "Flash Bellek (FLM)",
 }
 
 
@@ -178,19 +211,21 @@ def extract_pdf_data(stream_or_path: BinaryIO | bytes | Path, part_number: str |
     if total_pages == 0:
         return "", 0, []
 
-    # If small PDF (<= 8 pages), read all pages
-    if total_pages <= 8:
+    # If small PDF (<= 10 pages), read all pages
+    if total_pages <= 10:
         pages_to_read = list(range(total_pages))
     else:
-        # Prioritize key pages: always pages 0 and 1
+        # Prioritize key pages: always pages 0 and 1 (cover & main specifications)
         pages_set = {0, 1}
         pn_clean = re.sub(r"[^A-Za-z0-9]", "", part_number or "").casefold()
         keywords = (
             "ordering", "part number", "specifications", "electrical", "ratings",
-            "absolute maximum", "dimension", "package", "characteristics", "marking"
+            "absolute maximum", "dimension", "package", "characteristics", "marking",
+            "features", "description", "table", "typical", "standard", "selection guide",
+            "pin configuration", "terminal", "connection"
         )
         for i in range(total_pages):
-            if len(pages_set) >= 12:
+            if len(pages_set) >= 16:
                 break
             page_text = ""
             try:
@@ -203,7 +238,7 @@ def extract_pdf_data(stream_or_path: BinaryIO | bytes | Path, part_number: str |
             elif any(k in text_lower for k in keywords):
                 pages_set.add(i)
 
-        pages_to_read = sorted(pages_set)[:12]
+        pages_to_read = sorted(pages_set)[:16]
 
     extracted_parts = []
     analyzed_pages = []
@@ -211,7 +246,9 @@ def extract_pdf_data(stream_or_path: BinaryIO | bytes | Path, part_number: str |
         try:
             page_txt = reader.pages[idx].extract_text()
             if page_txt:
-                extracted_parts.append(f"--- PAGE {idx + 1} ---\n" + page_txt)
+                # Normalize Unicode characters (e.g. non-breaking spaces, symbols) and line breaks
+                clean_txt = unicodedata.normalize("NFKC", page_txt).replace("\r\n", "\n").replace("\r", "\n")
+                extracted_parts.append(f"--- PAGE {idx + 1} ---\n" + clean_txt)
                 analyzed_pages.append(idx + 1)
         except Exception:
             continue
@@ -316,131 +353,242 @@ def extract_part_numbers_from_text(text: str) -> list[str]:
     return found
 
 
+COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
+    # RESISTOR
+    ("RES", r"\b(?:thick\s+film\s+chip\s+resistors?|chip\s+resistors?|metal\s+film\s+resistors?|wirewound\s+resistors?|precision\s+(?:thin\s+film\s+)?resistors?|current\s+sens(?:ing|e)\s+resistors?|carbon\s+film\s+resistors?|resistor\s+networks?|fixed\s+resistors?)\b", "Direnç (RES)"),
+    # CAPACITOR
+    ("CAP", r"\b(?:ceramic\s+chip\s+capacitors?|multilayer\s+ceramic\s+capacitors?|surface\s+mount\s+ceramic\s+capacitors?|mlcc|electrolytic\s+capacitors?|aluminum\s+electrolytic|tantalum\s+capacitors?|film\s+capacitors?|supercapacitors?)\b", "Kapasitör (CAP)"),
+    # DIODE
+    ("DIO", r"\b(?:schottky\s+barrier\s+rectifier|schottky\s+diode|rectifier\s+diode|switching\s+diode|zener\s+diode|fast\s+recovery\s+rectifier|bridge\s+rectifier|transient\s+voltage\s+suppressor|tvs\s+diode|esd\s+protection\s+diode)\b", "Diyot (DIO)"),
+    # MOSFET
+    ("FET", r"\b(?:power\s+mosfet|n-channel\s+(?:enhancement\s+mode\s+power\s+)?mosfet|p-channel\s+(?:enhancement\s+mode\s+power\s+)?mosfet|field\s+effect\s+transistor|dual\s+mosfet)\b", "MOSFET / FET"),
+    # TRANSISTOR (BJT)
+    ("TRA", r"\b(?:bipolar\s+(?:junction\s+)?transistor|npn\s+(?:general\s+purpose\s+)?transistor|pnp\s+(?:general\s+purpose\s+)?transistor|digital\s+transistor|darlington\s+transistor|small\s+signal\s+transistor|general\s+purpose\s+transistor)\b", "Transistör (TRA)"),
+    # INDUCTOR
+    ("IND", r"\b(?:power\s+inductor|chip\s+inductor|smd\s+inductor|common\s+mode\s+choke|choke\s+coil|wire-wound\s+inductor|ferrite\s+inductor|shielded\s+power\s+inductor|molded\s+power\s+inductor)\b", "İndüktör / Bobin (IND)"),
+    # VOLTAGE REGULATOR
+    ("ICR", r"\b(?:voltage\s+regulator|low\s+dropout\s+(?:linear\s+)?regulator|ldo\s+regulator|linear\s+regulator|voltage\s+reference|shunt\s+regulator)\b", "Voltaj Regülatörü (ICR)"),
+    # SMPS / POWER IC
+    ("ICS", r"\b(?:step-down\s+(?:converter|regulator|switcher)|step-up\s+(?:converter|regulator)|buck\s+converter|boost\s+converter|pwm\s+controller|switching\s+regulator|smps\s+controller|power\s+switch|off-line\s+switcher)\b", "SMPS Güç Entegresi (ICS)"),
+    # MICROCONTROLLER
+    ("MCU", r"\b(?:microcontroller|32-bit\s+(?:arm\s+)?mcu|8-bit\s+mcu|flash\s+microcontroller|arm\s+cortex-m\d*|pic\s+microcontroller)\b", "Mikrodenetleyici (MCU)"),
+    # OPTOCOUPLER
+    ("OPT", r"\b(?:photocoupler|optocoupler|optoisolator|phototransistor\s+optocoupler)\b", "Optokuplör (OPT)"),
+    # RELAY
+    ("REL", r"\b(?:power\s+relay|miniature\s+relay|signal\s+relay|solid\s+state\s+relay|automotive\s+relay|pcb\s+relay)\b", "Röle (REL)"),
+    # FUSE
+    ("FUS", r"\b(?:resettable\s+fuse|ptc\s+fuse|smd\s+fuse|miniature\s+fuse|thermal\s+fuse|cartridge\s+fuse)\b", "Sigorta (FUS)"),
+    # VARISTOR
+    ("VAR", r"\b(?:metal\s+oxide\s+varistor|varistor|surge\s+absorber)\b", "Varistör (VAR)"),
+    # THERMISTOR
+    ("TER", r"\b(?:ntc\s+thermistor|ptc\s+thermistor|thermistor|temperature\s+sensor)\b", "Termistör (TER)"),
+    # CRYSTAL / OSCILLATOR
+    ("CRY", r"\b(?:quartz\s+crystal|crystal\s+unit|crystal\s+oscillator|ceramic\s+resonator)\b", "Kristal / Osilatör (CRY)"),
+    # SWITCH
+    ("SWT", r"\b(?:tactile\s+switch|tact\s+switch|push\s+button\s+switch|dip\s+switch|slide\s+switch|rocker\s+switch)\b", "Anahtar / Switch (SWT)"),
+    # FERRITE BEAD
+    ("FER", r"\b(?:ferrite\s+bead|ferrite\s+chip\s+bead|chip\s+bead)\b", "Ferrit Boncuk (FER)"),
+    # POTENTIOMETER
+    ("POT", r"\b(?:potentiometer|trimmer\s+potentiometer|trimpot)\b", "Potansiyometre (POT)"),
+    # BUZZER
+    ("BUZ", r"\b(?:piezo\s+buzzer|magnetic\s+buzzer|piezo\s+sounder)\b", "Buzzer (BUZ)"),
+    # TRANSFORMER
+    ("TRF", r"\b(?:current\s+transformer|pulse\s+transformer|isolation\s+transformer|flyback\s+transformer)\b", "Trafo (TRF)"),
+    # AMPLIFIER
+    ("AMP", r"\b(?:operational\s+amplifier|op\s+amp|audio\s+power\s+amplifier|instrumentation\s+amplifier)\b", "Amplifikatör (AMP)"),
+    # LED
+    ("LED", r"\b(?:surface\s+mount\s+led|light\s+emitting\s+diode|chip\s+led|smd\s+led)\b", "LED"),
+    # CONNECTOR
+    ("CON", r"\b(?:wire-to-board|board-to-board|pin\s+header|terminal\s+block|receptacle\s+housing|pcb\s+connector|crimp\s+housing|wafer\s+connector|box\s+header)\b", "Konnektör (CON)"),
+]
+
+
 def classify_material_type(text: str, part_number: str = "") -> tuple[str, float, str]:
-    """Determine component material type (CAP, RES, DIO, etc.) from PN and datasheet content."""
+    """Determine component material type from Cover Page Title, PN, and weighted document content."""
     pn = part_number.strip().upper()
     text_lower = text.casefold()
 
-    # 1. High confidence Part Number prefixes
-    # Resistors: Yageo RC and AC series (e.g. RC0805JR-07300RL, AC0603FR-07255KL), Vishay CRCW, Panasonic ERJ, Walsin WR
+    # ── 1. COVER PAGE / TITLE BLOCK MATCHING (Highest Authority) ──
+    # Manufacturers prominently declare the component category on Page 1.
+    cover_text = ""
+    if "--- PAGE 1 ---" in text:
+        p1 = text.split("--- PAGE 1 ---", 1)[1]
+        cover_text = p1.split("--- PAGE 2 ---", 1)[0] if "--- PAGE 2 ---" in p1 else p1[:2500]
+    else:
+        cover_text = text[:2500]
+    cover_lower = cover_text.casefold()
+
+    for mat_code, pat, display_title in COVER_TITLE_PATTERNS:
+        if re.search(pat, cover_lower):
+            return mat_code, 0.99, f"Datasheet kapağındaki ürün başlığından tespit edildi ({display_title})."
+
+    # ── 2. HIGH CONFIDENCE PART NUMBER PREFIXES ──
+    # Resistors: Yageo RC/AC, Vishay CRCW, Panasonic ERJ, Walsin WR
     if re.match(r"^(?:RC|AC)\d{4}[A-Z]{2}-", pn) or re.match(r"^(?:RC\d{4}|CRCW\d{4}|ERJ\d|WR\d{2}|PYU-RC)", pn):
         return "RES", 0.98, "Part Number standart çip direnç kodlamasına uyuyor."
     # Capacitors: Samsung CL, Murata GRM, Yageo CC, Yageo AC automotive MLCC
     if re.match(r"^CL\d{2}[A-Z]\d{3}", pn) or re.match(r"^GRM\d{2}", pn) or re.match(r"^CC\d{4}", pn) or re.match(r"^AC\d{4}[A-Z0-9]*(?:BB|BN)\d+", pn):
         return "CAP", 0.98, "Part Number standart seramik kapasitör kodlamasına uyuyor."
-    if re.match(r"^(?:BAT|BZX|1N4148|1N400|1N58|SS\d{2}|MBR|SM712|SMAJ|SMBJ)", pn):
+    # Diodes
+    if re.match(r"^(?:BAT|BZX|1N4148|1N400|1N58|SS\d{2}|MBR|SM712|SMAJ|SMBJ|US1|RS1)", pn):
         return "DIO", 0.98, "Part Number standart diyot serisine uyuyor."
-    if re.match(r"^(?:2N7002|BSS138|BSS84|SI23\d{2}|AO34\d{2}|IRF)", pn):
+    # MOSFET
+    if re.match(r"^(?:2N7002|BSS138|BSS84|SI23\d{2}|AO34\d{2}|IRF|DMN|DMP)", pn):
         return "FET", 0.95, "Part Number MOSFET kodlamasına uyuyor."
+    # Transistor (BJT)
     if re.match(r"^(?:BC84|BC85|BC807|BC817|2N3904|2N3906|MMBT)", pn):
         return "TRA", 0.95, "Part Number BJT transistör kodlamasına uyuyor."
-    if re.match(r"^(?:LM1117|AMS1117|LM78|TL431|AP1117|LP29)", pn):
+    # Voltage Regulator
+    if re.match(r"^(?:LM1117|AMS1117|LM78|LM79|TL431|AP1117|LP29|TPS7)", pn):
         return "ICR", 0.95, "Part Number regülatör/LDO kodlamasına uyuyor."
-    if re.match(r"^(?:VIPER|LNK|TNY|TOP\d+|FSL)", pn):
+    # SMPS IC
+    if re.match(r"^(?:VIPER|LNK|TNY|TOP\d+|FSL|MP\d{4}|LM2596|LM2576)", pn):
         return "ICS", 0.95, "Part Number SMPS güç entegresi kodlamasına uyuyor."
+    # Microcontroller
     if re.match(r"^(?:STM32|PIC\d|ATMEGA|ESP32|ATTINY)", pn):
         return "MCU", 0.98, "Part Number mikrodenetleyici kodlamasına uyuyor."
-    if re.match(r"^(?:PC817|EL817|LTV-817|MOC30)", pn):
+    # Optocoupler
+    if re.match(r"^(?:PC817|EL817|LTV-817|MOC30|6N13|FOD817)", pn):
         return "OPT", 0.98, "Part Number optokuplör kodlamasına uyuyor."
+    # Relay
     if re.match(r"^(?:HF\d|G5Q|SRD|G2R)", pn):
         return "REL", 0.95, "Part Number röle kodlamasına uyuyor."
+    # Connector
     if re.match(r"^(?:22-01|0022|2695|5557|JST-|PH-|XH-|VH-|MOLEX|200G|254G|200W|254W|200H|254H|200D|254D|\d{3}[A-Z]\d?-\d{2})", pn):
         return "CON", 0.98, "Part Number standart konnektör/klemens serisine uyuyor."
+    # Fuse
+    if re.match(r"^(?:MF-MSMF|MF-R|0451|0452|SMD\d{4}P)", pn):
+        return "FUS", 0.95, "Part Number sigorta serisine uyuyor."
+    # Varistor
+    if re.match(r"^(?:\d{2}D\d{3}K|V\d{3}LA|S\d{2}K)", pn):
+        return "VAR", 0.95, "Part Number varistör serisine uyuyor."
+    # Thermistor
+    if re.match(r"^(?:NTC|PTC|MF52|MF58|\d{1,2}D-[579])", pn):
+        return "TER", 0.95, "Part Number termistör serisine uyuyor."
+    # Crystal
+    if re.match(r"^(?:ABS\d|ABM\d|ECS-|NX\d{4})", pn):
+        return "CRY", 0.95, "Part Number kristal serisine uyuyor."
+    # Inductor
+    if re.match(r"^(?:NR\d{4}|CD\d{2,3}|MSS\d{4}|SRR\d{4}|IHLP)", pn):
+        return "IND", 0.95, "Part Number indüktör serisine uyuyor."
 
-    # 2. Text Keyword Scoring
+    # ── 3. WEIGHTED TEXT KEYWORD SCORING (Cover: 4x weight, Rest: 1x weight) ──
     scores: dict[str, float] = {
-        "CAP": 0.0, "RES": 0.0, "DIO": 0.0, "FET": 0.0, "TRA": 0.0,
-        "ICR": 0.0, "ICS": 0.0, "MCU": 0.0, "IND": 0.0, "LED": 0.0,
-        "CON": 0.0, "OPT": 0.0, "REL": 0.0, "FUS": 0.0, "VAR": 0.0,
+        "RES": 0.0, "CAP": 0.0, "DIO": 0.0, "FET": 0.0, "TRA": 0.0,
+        "IND": 0.0, "ICR": 0.0, "ICS": 0.0, "MCU": 0.0, "OPT": 0.0,
+        "LED": 0.0, "CON": 0.0, "REL": 0.0, "FUS": 0.0, "VAR": 0.0,
+        "TER": 0.0, "CRY": 0.0, "SWT": 0.0, "FER": 0.0, "POT": 0.0,
+        "BUZ": 0.0, "TRF": 0.0, "TRI": 0.0, "SCR": 0.0, "AMP": 0.0,
+        "FLT": 0.0,
     }
 
-    # Royal Ohm check (exclusive resistor manufacturer)
+    def _score(cat: str, pattern: str, pts: float):
+        # 4x weight if on cover page, 1x if in body
+        if re.search(pattern, cover_lower):
+            scores[cat] += pts * 4.0
+        elif re.search(pattern, text_lower):
+            scores[cat] += pts * 1.0
+
+    # Resistor
     if any(k in text_lower or k in pn.casefold() for k in ("royal ohm", "royalohm", "royal-ohm")):
         scores["RES"] += 30.0
+    _score("RES", r"\b(?:resistors?|resistance|thick\s+film|chip\s+resistor|metal\s+film)\b", 12.0)
+    _score("RES", r"\b(?:kohm|mohm|kω|mω|ohm|ω)\b", 8.0)
+    _score("RES", r"\b(?:1/16w|1/10w|1/8w|1/4w|1/2w|1w|2w)\b", 6.0)
 
-    # Capacitor triggers
-    if "capacitor" in text_lower or "capacitance" in text_lower or "mlcc" in text_lower:
-        scores["CAP"] += 12.0
-    if "dielectric" in text_lower or "x7r" in text_lower or "c0g" in text_lower or "np0" in text_lower:
-        scores["CAP"] += 6.0
-    if "picofarad" in text_lower or "nanofarad" in text_lower or "microfarad" in text_lower:
-        scores["CAP"] += 6.0
+    # Capacitor
+    _score("CAP", r"\b(?:capacitors?|capacitance|mlcc)\b", 12.0)
+    _score("CAP", r"\b(?:dielectric|x7r|c0g|np0|x5r|y5v)\b", 8.0)
+    _score("CAP", r"\b(?:picofarad|nanofarad|microfarad|pf|nf|µf|uf)\b", 6.0)
 
-    # Resistor triggers
-    if any(w in text_lower for w in ("resistor", "resistors", "resistance", "thick film chip", "chip resistor", "metal film")):
-        scores["RES"] += 15.0
-    if "power rating" in text_lower or "rated power" in text_lower:
-        scores["RES"] += 6.0
-    if any(w in text_lower for w in ("kohm", "mohm", "ohm", "kω", "mω", "ω")):
-        scores["RES"] += 8.0
-    if re.search(r"\b\d+(?:\.\d+)?\s*(?:kohm|mohm|ohm|kω|mω|ω)\b", text_lower):
-        scores["RES"] += 10.0
-    if any(w in text_lower for w in ("1/16w", "1/10w", "1/8w", "1/4w", "1/2w", "1w", "2w")):
-        scores["RES"] += 8.0
+    # Inductor
+    _score("IND", r"\b(?:inductors?|inductance|choke|choke\s+coil)\b", 15.0)
+    _score("IND", r"\b(?:microhenry|millihenry|µh|uh|nh|mh)\b", 10.0)
+    _score("IND", r"\b(?:isat|irms|dcr|saturation\s+current)\b", 6.0)
 
-    # Connector triggers
-    if any(w in text_lower for w in ("connector", "header", "housing", "crimp", "terminal block", "pin header", "wire-to-board", "board-to-board", "receptacle housing", "wafer", "crimp terminal")):
-        scores["CON"] += 20.0
-    if any(w in text_lower for w in ("molex", "jst", "amphenol", "te connectivity", "phoenix contact", "wago", "harting", "hirose", "samtec", "ttaf", "amtek")):
-        scores["CON"] += 15.0
-    if "circuits" in text_lower and any(w in text_lower for w in ("pitch", "housing", "crimp", "kk")):
+    # Diode
+    _score("DIO", r"\b(?:schottky|zener|rectifier|diode)\b", 12.0)
+    _score("DIO", r"\b(?:forward\s+voltage|reverse\s+leakage|vf|ir)\b", 5.0)
+
+    # MOSFET
+    _score("FET", r"\b(?:mosfet|n-channel|p-channel|drain-source|rds\(on\))\b", 15.0)
+
+    # Transistor (BJT)
+    _score("TRA", r"\b(?:bipolar\s+transistor|npn|pnp|collector-emitter|hfe)\b", 15.0)
+
+    # Voltage Regulator
+    _score("ICR", r"\b(?:voltage\s+regulator|ldo|low\s+dropout|linear\s+regulator|voltage\s+reference)\b", 15.0)
+
+    # SMPS IC
+    _score("ICS", r"\b(?:buck\s+converter|boost\s+converter|step-down|step-up|switching\s+regulator|pwm\s+controller)\b", 15.0)
+
+    # Microcontroller
+    _score("MCU", r"\b(?:microcontroller|arm\s+cortex|flash\s+mcu|mcu|flash\s+memory)\b", 15.0)
+
+    # Optocoupler
+    _score("OPT", r"\b(?:optocoupler|photocoupler|optoisolator|isolation\s+voltage\s+5000v)\b", 15.0)
+
+    # LED
+    _score("LED", r"\b(?:light\s+emitting\s+diode|luminous\s+intensity|dominant\s+wavelength|chip\s+led)\b", 15.0)
+
+    # Connector
+    _score("CON", r"\b(?:connector|header|housing|crimp|terminal\s+block|wire-to-board)\b", 15.0)
+    if any(w in text_lower for w in ("molex", "jst", "amphenol", "te connectivity", "phoenix contact", "wago", "ttaf", "amtek")):
         scores["CON"] += 12.0
-    if re.search(r"\b\d+\s*(?:circuits|positions|ways)\b", text_lower):
-        scores["CON"] += 10.0
 
-    # Diode triggers
-    if "schottky" in text_lower or "zener" in text_lower or "rectifier" in text_lower:
-        scores["DIO"] += 12.0
-    if "forward voltage" in text_lower and "reverse leakage" in text_lower:
-        scores["DIO"] += 6.0
-    if "diode" in text_lower:
-        scores["DIO"] += 6.0
+    # Relay
+    _score("REL", r"\b(?:relay|contact\s+rating|coil\s+voltage|spst|spdt)\b", 15.0)
 
-    # FET triggers
-    if "mosfet" in text_lower or "n-channel" in text_lower or "p-channel" in text_lower or "drain-source" in text_lower:
-        scores["FET"] += 12.0
+    # Fuse
+    _score("FUS", r"\b(?:resettable\s+fuse|ptc\s+fuse|tripping\s+current|hold\s+current|fuse)\b", 15.0)
 
-    # Transistor triggers
-    if "bipolar transistor" in text_lower or "npn" in text_lower or "pnp" in text_lower or "collector-emitter" in text_lower:
-        scores["TRA"] += 12.0
+    # Varistor
+    _score("VAR", r"\b(?:varistor|metal\s+oxide\s+varistor|clamping\s+voltage|max\s+continuous\s+voltage)\b", 15.0)
 
-    # Regulator triggers
-    if "voltage regulator" in text_lower or "ldo" in text_lower or "low dropout" in text_lower or "linear regulator" in text_lower:
-        scores["ICR"] += 12.0
+    # Thermistor
+    _score("TER", r"\b(?:thermistor|ntc|ptc|b25/50|b25/85|zero\s+power\s+resistance)\b", 15.0)
 
-    # Microcontroller triggers
-    if "microcontroller" in text_lower or "arm cortex" in text_lower or "flash mcu" in text_lower:
-        scores["MCU"] += 12.0
+    # Crystal
+    _score("CRY", r"\b(?:quartz\s+crystal|crystal\s+unit|crystal\s+oscillator|frequency\s+tolerance|load\s+capacitance)\b", 15.0)
 
-    # Inductor triggers
-    if "inductor" in text_lower or "inductance" in text_lower or "choke" in text_lower:
-        scores["IND"] += 12.0
+    # Switch
+    _score("SWT", r"\b(?:tactile\s+switch|tact\s+switch|push\s+button|slide\s+switch|dip\s+switch)\b", 15.0)
 
-    # Optocoupler triggers
-    if "optocoupler" in text_lower or "optoisolator" in text_lower or "phototransistor" in text_lower:
-        scores["OPT"] += 12.0
+    # Ferrite Bead
+    _score("FER", r"\b(?:ferrite\s+bead|ferrite\s+chip|impedance\s+at\s+100mhz)\b", 15.0)
 
-    # Relay triggers
-    if "relay" in text_lower or "contact rating" in text_lower or "coil voltage" in text_lower:
-        scores["REL"] += 12.0
+    # Potentiometer
+    _score("POT", r"\b(?:potentiometer|trimmer|trimpot|single\s+turn|multi\s+turn)\b", 15.0)
+
+    # Buzzer
+    _score("BUZ", r"\b(?:piezo\s+buzzer|magnetic\s+buzzer|sound\s+pressure\s+level|resonant\s+frequency)\b", 15.0)
+
+    # Transformer
+    _score("TRF", r"\b(?:transformer|turns\s+ratio|primary\s+inductance|isolation\s+voltage)\b", 15.0)
+
+    # Amplifier
+    _score("AMP", r"\b(?:operational\s+amplifier|op\s+amp|gain\s+bandwidth|slew\s+rate)\b", 15.0)
 
     best_type = max(scores, key=scores.get)
     best_score = scores[best_type]
 
-    if best_score >= 4.0:
-        conf = min(0.98, 0.5 + (best_score / 30.0))
-        return best_type, conf, f"Datasheet metnindeki teknik anahtar kelimelerden tespit edildi ({best_type})."
+    if best_score >= 8.0:
+        conf = min(0.98, 0.5 + (best_score / 35.0))
+        display_name = MATERIAL_TYPE_NAMES.get(best_type, best_type)
+        return best_type, conf, f"Datasheet metnindeki ağırlıklı teknik anahtar kelimelerden tespit edildi ({display_name})."
 
-    # Contextual fallback based on part number or filename words
+    # ── 4. CONTEXTUAL FALLBACK ──
     pn_lower = pn.casefold()
     if any(k in pn_lower for k in ("res", "ohm", "royal")):
-        return "RES", 0.70, "Dosya adı veya üretici bilgisinden direnç olarak tespit edildi."
+        return "RES", 0.70, "Parça kodu veya üretici bilgisinden direnç olarak tespit edildi."
     if any(k in pn_lower for k in ("cap", "uf", "nf", "pf", "mlcc")):
-        return "CAP", 0.70, "Dosya adı veya birim bilgisinden kapasitör olarak tespit edildi."
+        return "CAP", 0.70, "Parça kodu veya birim bilgisinden kapasitör olarak tespit edildi."
     if any(k in pn_lower for k in ("dio", "bat", "bzx", "1n4")):
-        return "DIO", 0.70, "Dosya adından diyot olarak tespit edildi."
+        return "DIO", 0.70, "Parça kodundan diyot olarak tespit edildi."
     if any(k in pn_lower for k in ("con", "molex", "jst", "hdr", "header", "term", "crimp")):
-        return "CON", 0.70, "Dosya adı veya marka bilgisinden konnektör olarak tespit edildi."
+        return "CON", 0.70, "Parça kodu veya marka bilgisinden konnektör olarak tespit edildi."
+    if any(k in pn_lower for k in ("ind", "choke")):
+        return "IND", 0.70, "Parça kodundan bobin/indüktör olarak tespit edildi."
 
     # Look for known manufacturer in text
     if any(k in text_lower for k in ("molex", "jst", "ttaf", "amtek", "phoenix contact")):
@@ -977,25 +1125,220 @@ def extract_component_specs(material_type: str, text: str, part_number: str = ""
             elif any(k in text_lower for k in ("vertical", "straight", "180 deg", "180°", "dik")):
                 specs["angle"] = "180°(Dik)"
 
+    elif material_type == "IND":
+        # Inductance
+        if "inductance_str" not in specs and not is_cat:
+            ind_dec = _extract_inductance(text_lower)
+            if ind_dec is not None:
+                specs["inductance_str"] = _format_ind(ind_dec)
+
+        # Size inductor / dimensions
+        if "size_inductor" not in specs:
+            size_m = re.search(r"\b(\d+(?:\.\d+)?\s*[x*]\s*\d+(?:\.\d+)?(?:\s*[x*]\s*\d+(?:\.\d+)?)?\s*mm)\b", text_lower)
+            if size_m:
+                specs["size_inductor"] = size_m.group(1).replace(" ", "")
+
+    elif material_type == "LED":
+        # Color
+        if "led_color" not in specs:
+            color_map = [
+                ("red-blue", "Red-Blue"),
+                ("ultra orange red", "Ultra Orange Red"),
+                ("orange", "Orange"),
+                ("amber", "Amber"),
+                ("yellow-green", "Yellow-Green"),
+                ("yellow", "Yellow"),
+                ("green", "Green"),
+                ("blue", "Blue"),
+                ("white", "White"),
+                ("red", "Red"),
+                ("kırmızı", "Red"),
+                ("yeşil", "Green"),
+                ("mavi", "Blue"),
+                ("sarı", "Yellow"),
+                ("beyaz", "White"),
+                ("rgb", "RGB"),
+                ("infrared", "IR"),
+                ("ir", "IR"),
+            ]
+            for pat, col in color_map:
+                if re.search(rf"\b{pat}\b", text_lower):
+                    specs["led_color"] = col
+                    break
+
+    elif material_type == "FUS":
+        # Type Fuse
+        if "type_fuse" not in specs:
+            if any(k in text_lower for k in ("resettable", "ptc")):
+                specs["type_fuse"] = "Resettable Fuse"
+            elif "thermal" in text_lower:
+                specs["type_fuse"] = "Thermal Fuse"
+            elif "holder" in text_lower:
+                specs["type_fuse"] = "Fuse Holder"
+            else:
+                specs["type_fuse"] = "Fuses"
+        # Fuse Current
+        if "fuse_current" not in specs and not is_cat:
+            cur_m = re.search(r"(?:rated\s+current|current\s+rating|ihold|hold\s+current)[:\s=]+(\d+(?:\.\d+)?\s*(?:ma|a))\b", text_lower)
+            if not cur_m:
+                cur_m = re.search(r"\b(\d+(?:\.\d+)?)\s*(?:a|ma)\b", text_lower)
+            if cur_m:
+                specs["fuse_current"] = cur_m.group(0).replace(" ", "").upper()
+
+    elif material_type == "VAR":
+        # AC Voltage
+        if "voltage_ac" not in specs:
+            vac_m = re.search(r"\b(\d+)\s*(?:vac|v\s*ac|vrms)\b", text_lower)
+            if vac_m:
+                specs["voltage_ac"] = f"{vac_m.group(1)}VAC"
+        # Varistor Size
+        if "varistor_size" not in specs:
+            size_m = re.search(r"(?:size|diameter|çap)[:\s=]+(\d+)\s*mm\b", text_lower)
+            if not size_m:
+                size_m = re.search(r"\b(\d{1,2})d\b", text_lower)
+            if size_m:
+                specs["varistor_size"] = f"SIZE: {size_m.group(1)}mm"
+
+    elif material_type == "TER":
+        # Type Thermistor
+        if "type_thermistor" not in specs:
+            if "ptc" in text_lower:
+                specs["type_thermistor"] = "PTC"
+            else:
+                specs["type_thermistor"] = "NTC"
+        # Resistance
+        if "resistance_str" not in specs and not is_cat:
+            res_dec = _extract_resistance(text_lower)
+            if res_dec is not None:
+                specs["resistance_str"] = _format_res(res_dec)
+        # Tolerance
+        if "tolerance" not in specs and not is_cat:
+            tol_dec = _extract_tolerance(text_lower)
+            if tol_dec is not None:
+                specs["tolerance"] = f"%{int(tol_dec)}"
+
+    elif material_type == "CRY":
+        # Frequency / Value
+        if "frequency_str" not in specs:
+            freq_m = re.search(r"\b(\d+(?:\.\d+)?)\s*(mhz|khz)\b", text_lower)
+            if freq_m:
+                specs["frequency_str"] = f"{freq_m.group(1)}{'MHz' if freq_m.group(2) == 'mhz' else 'kHz'}"
+
+    elif material_type == "POT":
+        # Resistance
+        if "resistance_str" not in specs and not is_cat:
+            res_dec = _extract_resistance(text_lower)
+            if res_dec is not None:
+                specs["resistance_str"] = _format_res(res_dec)
+        # Turns
+        if "pot_turns" not in specs:
+            if any(k in text_lower for k in ("multi", "10 turn", "10 tur", "10-turn")):
+                specs["pot_turns"] = "Multi"
+            elif "slide" in text_lower:
+                specs["pot_turns"] = "Slide"
+            else:
+                specs["pot_turns"] = "1 Tur"
+
+    elif material_type == "REL":
+        # Coil Voltage
+        if "relay_coil_voltage" not in specs:
+            cv_m = re.search(r"(?:coil|bobin)[:\s=]+(\d+)\s*v(?:dc)?\b", text_lower)
+            if cv_m:
+                specs["relay_coil_voltage"] = f"Coil:{cv_m.group(1)}VDC"
+        # Contact Voltage
+        if "relay_contact_voltage" not in specs:
+            cont_v = re.search(r"\b(120|125|220|230|250)\s*vac\b", text_lower)
+            if cont_v:
+                specs["relay_contact_voltage"] = f"{cont_v.group(1)}VAC"
+        # Contact Current
+        if "relay_contact_current" not in specs:
+            cont_i = re.search(r"\b(\d+)\s*a\b", text_lower)
+            if cont_i:
+                specs["relay_contact_current"] = f"{cont_i.group(1)}A"
+        # Contact Type
+        if "relay_contact_type" not in specs:
+            if any(k in text_lower for k in ("spst-no", "1 form a", "normally open")):
+                specs["relay_contact_type"] = "NO"
+            elif any(k in text_lower for k in ("spst-nc", "1 form b", "normally closed")):
+                specs["relay_contact_type"] = "NC"
+            elif any(k in text_lower for k in ("spdt", "1 form c", "changeover")):
+                specs["relay_contact_type"] = "NO/NC"
+
+    elif material_type == "SWT":
+        if "type_switch" not in specs:
+            if any(k in text_lower for k in ("tact", "tactile")):
+                specs["type_switch"] = "Tact Switch"
+            elif "push" in text_lower:
+                specs["type_switch"] = "Push Button"
+            elif "slide" in text_lower:
+                specs["type_switch"] = "Slide Switch"
+            elif "toggle" in text_lower:
+                specs["type_switch"] = "Toggle Switch"
+            elif "dip" in text_lower:
+                specs["type_switch"] = "DIP Switch"
+
+    elif material_type == "FER":
+        if "ferrite_type" not in specs:
+            if "toroid" in text_lower:
+                specs["ferrite_type"] = "Toroid"
+            else:
+                specs["ferrite_type"] = "Axial"
+
+    elif material_type == "BUZ":
+        if "buzzer_voltage" not in specs:
+            bv_m = re.search(r"\b(3|5|9|12)\s*v\b", text_lower)
+            if bv_m:
+                specs["buzzer_voltage"] = f"{bv_m.group(1)}V"
+        if "buzzer_frequency" not in specs:
+            bf_m = re.search(r"\b(\d+(?:\.\d+)?)\s*khz\b", text_lower)
+            if bf_m:
+                specs["buzzer_frequency"] = f"{bf_m.group(1)}kHz"
+
+    elif material_type == "TRF":
+        if "type_transformer" not in specs:
+            if "isolation" in text_lower:
+                specs["type_transformer"] = "Isolation Transformer"
+            elif "smps" in text_lower:
+                specs["type_transformer"] = "SMPS Transformer"
+            elif "choke" in text_lower:
+                specs["type_transformer"] = "Choke Coil"
+            else:
+                specs["type_transformer"] = "Standard Transformer"
+
+    # Common for ICs and discrete parts: set part number as value
+    if material_type in ("OPT", "ICS", "MCU", "TRI", "SCR", "AMP", "FLT", "ICL", "ICM", "ICC", "ICD", "ICB"):
+        specs["value_pn"] = part_number.strip()
+
     return specs
 
 
 CORE_ATTRIBUTES_BY_TYPE: dict[str, set[str]] = {
     "RES": {"mounting", "package", "value", "tolerance", "wattage", "compositionresistors", "specialdefinitionresistors", "q"},
     "CAP": {"mounting", "package", "value", "voltage", "tolerance", "temperature", "specialdefinitioncapacitors", "q"},
-    "DIO": {"mounting", "package", "typediode", "value", "q"},
+    "DIO": {"mounting", "package", "typediode", "value", "specialdefinitionall", "q"},
     "CON": {"mounting", "typeconnector", "pintypeofconnector", "pitchconnector", "pitch", "pinnumber", "angle", "q"},
-    "IND": {"mounting", "package", "value", "q"},
+    "IND": {"mounting", "package", "value", "sizeinductor", "q"},
     "FET": {"mounting", "package", "value", "fetchanneltype", "q"},
-    "TRA": {"mounting", "package", "value", "typetransistor", "q"},
-    "ICR": {"mounting", "package", "typeregulator", "regulatoroutputvoltage", "voltage", "q"},
+    "TRA": {"mounting", "package", "value", "typetransistor", "specialdefinitiontransistor", "q"},
+    "ICR": {"mounting", "package", "typeregulator", "regulatoroutputvoltage", "regulatorcurrent", "voltage", "q"},
     "ICS": {"mounting", "package", "value", "q"},
     "MCU": {"mounting", "package", "value", "q"},
     "LED": {"mounting", "package", "ledcolor", "q"},
     "OPT": {"mounting", "package", "value", "q"},
-    "REL": {"mounting", "relaycoilvoltage", "relaycontactvoltage", "q"},
+    "REL": {"mounting", "relaycoilvoltage", "relaycontactvoltage", "relaycontactcurrent", "relaycontacttype", "q"},
     "FUS": {"mounting", "package", "typefuse", "fusecurrent", "q"},
     "VAR": {"mounting", "package", "varistorsize", "voltageac", "q"},
+    "TER": {"mounting", "package", "typethermistor", "value", "tolerance", "q"},
+    "CRY": {"mounting", "value", "q"},
+    "POT": {"mounting", "value", "potturnnumber", "wattage", "q"},
+    "SWT": {"mounting", "typeswitch", "q"},
+    "FER": {"ferritetypes", "q"},
+    "BUZ": {"mounting", "buzzerratedvoltage", "buzzerfrequency", "soundlevelbuzzer", "q"},
+    "TRF": {"mounting", "typetransformer", "q"},
+    "TRI": {"mounting", "package", "value", "q"},
+    "SCR": {"mounting", "package", "value", "q"},
+    "FLT": {"mounting", "package", "filtertype", "value", "q"},
+    "AMP": {"mounting", "package", "q"},
 }
 
 
@@ -1131,6 +1474,48 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                             status = "YAKIN EŞLEŞTİ"
                             break
 
+            elif material_type == "IND":
+                target_val = specs.get("inductance_str", "")
+                extracted_val_str = target_val
+                if target_val:
+                    for e in entries:
+                        i_entry = _extract_inductance(e.value_description.casefold())
+                        i_target = _extract_inductance(target_val.casefold())
+                        if i_entry is not None and i_target is not None and i_entry == i_target:
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
+                        elif target_val.casefold() in e.value_description.casefold():
+                            matched_entry = e
+                            status = "YAKIN EŞLEŞTİ"
+                            break
+
+            elif material_type in ("TER", "POT"):
+                target_val = specs.get("resistance_str", "")
+                extracted_val_str = target_val
+                if target_val:
+                    for e in entries:
+                        r_entry = _extract_resistance(e.value_description.casefold())
+                        r_target = _extract_resistance(target_val.casefold())
+                        if r_entry is not None and r_target is not None and r_entry == r_target:
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
+                        elif target_val.casefold() in e.value_description.casefold():
+                            matched_entry = e
+                            status = "YAKIN EŞLEŞTİ"
+                            break
+
+            elif material_type == "CRY":
+                target_val = specs.get("frequency_str", "")
+                extracted_val_str = target_val
+                if target_val:
+                    for e in entries:
+                        if target_val.casefold() in e.value_description.casefold():
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
+
             elif material_type == "DIO":
                 target_val = specs.get("value_diode", "")
                 extracted_val_str = target_val
@@ -1143,6 +1528,16 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
 
             elif material_type in ("FET", "TRA"):
                 target_val = specs.get("value_fet" if material_type == "FET" else "value_tra", "")
+                extracted_val_str = target_val
+                if target_val:
+                    for e in entries:
+                        if target_val.casefold() in e.value_description.casefold():
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
+
+            else:
+                target_val = specs.get("value_pn", "")
                 extracted_val_str = target_val
                 if target_val:
                     for e in entries:
@@ -1308,6 +1703,228 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                     ) or (
                         "180" in ang and "180" in e.value_description
                     ):
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+
+        # 12. DIODE TYPE
+        elif "typediode" in attr_norm:
+            td = specs.get("type_diode", "")
+            extracted_val_str = td
+            if td:
+                for e in entries:
+                    if td.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+
+        # 13. FET CHANNEL TYPE
+        elif "fetchannel" in attr_norm:
+            fc = specs.get("fet_channel", "")
+            extracted_val_str = fc
+            if fc:
+                for e in entries:
+                    if fc.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+
+        # 14. TRANSISTOR TYPE
+        elif "typetransistor" in attr_norm:
+            tt = specs.get("tra_type", "")
+            extracted_val_str = tt
+            if tt:
+                for e in entries:
+                    if tt.casefold() == e.value_description.strip().casefold() or tt.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+
+        # 15. REGULATOR ATTRIBUTES
+        elif "typeregulator" in attr_norm:
+            tr = specs.get("type_regulator", "")
+            extracted_val_str = tr
+            if tr:
+                for e in entries:
+                    if tr.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+        elif "regulatoroutputvoltage" in attr_norm:
+            rv = specs.get("regulator_voltage", "")
+            extracted_val_str = rv
+            if rv:
+                for e in entries:
+                    if rv.casefold() in e.value_description.casefold() or e.value_description.strip().startswith(rv):
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+
+        # 16. INDUCTOR SIZE
+        elif "sizeinductor" in attr_norm:
+            si = specs.get("size_inductor", "")
+            extracted_val_str = si
+            if si:
+                for e in entries:
+                    if si.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+
+        # 17. LED COLOR
+        elif "ledcolor" in attr_norm:
+            lc = specs.get("led_color", "")
+            extracted_val_str = lc
+            if lc:
+                for e in entries:
+                    if lc.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+
+        # 18. FUSE ATTRIBUTES
+        elif "typefuse" in attr_norm:
+            tf = specs.get("type_fuse", "")
+            extracted_val_str = tf
+            if tf:
+                for e in entries:
+                    if tf.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+        elif "fusecurrent" in attr_norm:
+            fc = specs.get("fuse_current", "")
+            extracted_val_str = fc
+            if fc:
+                for e in entries:
+                    if fc.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+
+        # 19. VARISTOR ATTRIBUTES
+        elif "voltageac" in attr_norm:
+            vac = specs.get("voltage_ac", "")
+            extracted_val_str = vac
+            if vac:
+                for e in entries:
+                    if vac.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+        elif "varistorsize" in attr_norm:
+            vs = specs.get("varistor_size", "")
+            extracted_val_str = vs
+            if vs:
+                for e in entries:
+                    if vs.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+
+        # 20. THERMISTOR TYPE
+        elif "typethermistor" in attr_norm:
+            tt = specs.get("type_thermistor", "")
+            extracted_val_str = tt
+            if tt:
+                for e in entries:
+                    if tt.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+
+        # 21. POT TURNS
+        elif "potturn" in attr_norm:
+            pt = specs.get("pot_turns", "")
+            extracted_val_str = pt
+            if pt:
+                for e in entries:
+                    if pt.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+
+        # 22. RELAY ATTRIBUTES
+        elif "relaycoilvoltage" in attr_norm:
+            rcv = specs.get("relay_coil_voltage", "")
+            extracted_val_str = rcv
+            if rcv:
+                for e in entries:
+                    if rcv.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+        elif "relaycontactvoltage" in attr_norm:
+            rcvolt = specs.get("relay_contact_voltage", "")
+            extracted_val_str = rcvolt
+            if rcvolt:
+                for e in entries:
+                    if rcvolt.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+        elif "relaycontactcurrent" in attr_norm:
+            rci = specs.get("relay_contact_current", "")
+            extracted_val_str = rci
+            if rci:
+                for e in entries:
+                    if rci.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+        elif "relaycontacttype" in attr_norm:
+            rct = specs.get("relay_contact_type", "")
+            extracted_val_str = rct
+            if rct:
+                for e in entries:
+                    if rct.casefold() == e.value_description.strip().casefold() or rct.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+
+        # 23. SWITCH / FERRITE / BUZZER / TRANSFORMER
+        elif "typeswitch" in attr_norm:
+            ts = specs.get("type_switch", "")
+            extracted_val_str = ts
+            if ts:
+                for e in entries:
+                    if ts.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+        elif "ferritetypes" in attr_norm:
+            ft = specs.get("ferrite_type", "")
+            extracted_val_str = ft
+            if ft:
+                for e in entries:
+                    if ft.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+        elif "buzzerratedvoltage" in attr_norm:
+            bv = specs.get("buzzer_voltage", "")
+            extracted_val_str = bv
+            if bv:
+                for e in entries:
+                    if bv.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+        elif "buzzerfrequency" in attr_norm:
+            bf = specs.get("buzzer_frequency", "")
+            extracted_val_str = bf
+            if bf:
+                for e in entries:
+                    if bf.casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+        elif "typetransformer" in attr_norm:
+            ttrf = specs.get("type_transformer", "")
+            extracted_val_str = ttrf
+            if ttrf:
+                for e in entries:
+                    if ttrf.casefold() in e.value_description.casefold():
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
