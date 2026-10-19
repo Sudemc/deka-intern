@@ -49,7 +49,7 @@ def select_target_pages(
             search_tokens.append(no_suffix)
 
         # Common packaging / tape-reel suffixes
-        suffix_clean = re.sub(r"([-_/](?:tr|reel|tape|t|nd|pbf))+$", "", pn_clean, flags=re.IGNORECASE).strip()
+        suffix_clean = re.sub(r"([-_/#+](?:tr|reel|tape|t|nd|pbf))+$", "", pn_clean, flags=re.IGNORECASE).strip()
         if suffix_clean and suffix_clean not in search_tokens:
             search_tokens.append(suffix_clean)
 
@@ -60,14 +60,18 @@ def select_target_pages(
                 search_tokens.append(prefix)
 
         # First alphanumeric token before delimiter (e.g. series prefix like DG8HS)
-        delim_parts = [p for p in re.split(r"[-_/\s]+", pn_clean) if p]
+        delim_parts = [p for p in re.split(r"[-_/#+\s]+", pn_clean) if p]
         if delim_parts and len(delim_parts[0]) >= 3 and delim_parts[0] not in search_tokens:
             search_tokens.append(delim_parts[0])
 
         for token in search_tokens:
             for idx in range(1, total_pages):
-                text = page_texts[idx].lower() if idx < len(page_texts) else ""
-                if token in text:
+                text = page_texts[idx] if idx < len(page_texts) else ""
+                if len(token) < 5:
+                    matched = bool(re.search(rf"\b{re.escape(token)}\b", text, re.IGNORECASE))
+                else:
+                    matched = token in text.lower()
+                if matched:
                     found_page = idx
                     break
             if found_page is not None:

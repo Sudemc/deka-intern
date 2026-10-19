@@ -17,6 +17,8 @@ dependencies = [
     "python-multipart>=0.0.9,<1",
     "pypdf>=4.0",
     "pdfplumber>=0.11",
+    "pypdfium2>=4.0",
+    "pillow>=10.0",
 ]
 
 [project.optional-dependencies]

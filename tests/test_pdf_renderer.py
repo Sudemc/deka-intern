@@ -98,3 +98,16 @@ def test_select_target_pages_max_pages_three():
     pages = select_target_pages(total_pages=5, page_texts=texts, target_pn="target", max_pages=3)
     assert pages == [0, 4, 1]
 
+
+def test_select_target_pages_extended_suffix_and_short_token_boundary():
+    # Suffix with #pbf or +t stripped
+    texts_suffix = ["cover", "notes", "LT1086 regulator pinout"]
+    pages_suffix = select_target_pages(total_pages=3, page_texts=texts_suffix, target_pn="LT1086#PBF", max_pages=2)
+    assert pages_suffix == [0, 2]
+
+    # Short token (< 5 chars) should NOT match as substring of longer word (e.g. "CON" inside "ICONIC")
+    texts_boundary = ["cover", "This is an ICONIC design", "Pinout for CON connector"]
+    pages_boundary = select_target_pages(total_pages=3, page_texts=texts_boundary, target_pn="CON-100", max_pages=2)
+    assert pages_boundary == [0, 2]
+
+
