@@ -14,7 +14,17 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from pypdf import PdfReader
 
-from bom_enricher.comparison import RuleBook, RuleEntry, _normalize_label, _normalize_attribute, _entry_text, _contains_phrase
+from bom_enricher.comparison import (
+    RuleBook,
+    RuleEntry,
+    _normalize_label,
+    _normalize_attribute,
+    _entry_text,
+    _contains_phrase,
+    load_rulebook,
+)
+from bom_enricher.pdf_renderer import select_and_render_pages
+from bom_enricher.vision_client import VisionLLMClient
 from bom_enricher.semantic_parser import (
     _extract_capacitance,
     _extract_resistance,
@@ -28,6 +38,21 @@ from bom_enricher.semantic_parser import (
     _format_res,
     _format_ind,
 )
+
+_DEFAULT_RULEBOOK: RuleBook | None = None
+
+
+def get_default_rulebook() -> RuleBook | None:
+    """Load and cache default rulebook from data/rules.xlsx if available."""
+    global _DEFAULT_RULEBOOK
+    if _DEFAULT_RULEBOOK is None:
+        rules_path = Path(__file__).resolve().parents[2] / "data" / "rules.xlsx"
+        if rules_path.exists():
+            try:
+                _DEFAULT_RULEBOOK = load_rulebook(rules_path)
+            except Exception:
+                _DEFAULT_RULEBOOK = None
+    return _DEFAULT_RULEBOOK
 
 
 @dataclass
@@ -62,6 +87,7 @@ class DatasheetAnalysisResult:
     error: str | None = None
     is_catalog: bool = False
     detected_part_numbers: list[str] = field(default_factory=list)
+    analysis_method: str = "deterministic_text"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,12 +100,14 @@ class DatasheetAnalysisResult:
             "suggested_description": self.suggested_description,
             "rich_description": self.rich_description or self.suggested_description,
             "suggested_erp_code": self.suggested_erp_code,
+            "erp_code": self.suggested_erp_code,
             "page_count": self.page_count,
             "analyzed_pages": self.analyzed_pages,
             "summary_text": self.summary_text,
             "error": self.error,
             "is_catalog": self.is_catalog,
             "detected_part_numbers": self.detected_part_numbers,
+            "analysis_method": self.analysis_method,
             "properties": [
                 {
                     "attribute_name": p.attribute_name,
@@ -93,6 +121,10 @@ class DatasheetAnalysisResult:
                 for p in self.properties
             ],
             "raw_specs": {
+                k: str(v) if isinstance(v, Decimal) else v
+                for k, v in self.raw_specs.items()
+            },
+            "specs": {
                 k: str(v) if isinstance(v, Decimal) else v
                 for k, v in self.raw_specs.items()
             },
@@ -2636,18 +2668,55 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
     return ", ".join(tokens)
 
 
-def analyze_single_datasheet(
-    filename: str,
-    file_bytes: bytes,
-    rulebook: RuleBook,
-    part_number_override: str | None = None,
+def analyze_datasheet(
+    stream_or_path: BinaryIO | bytes | Path | str,
+    part_number: str | None = None,
     material_type_override: str | None = None,
-) -> DatasheetAnalysisResult:
-    """Analyze a single datasheet PDF and map its properties to DEKA ERP format."""
-    raw_pn = (part_number_override or Path(filename).stem).strip()
+    rulebook: RuleBook | None = None,
+    filename: str = "datasheet.pdf",
+    client: VisionLLMClient | None = None,
+) -> dict[str, Any]:
+    """Analyze a single datasheet PDF with multimodal hybrid fusion and map to DEKA ERP format."""
+    # 1. Normalize stream_or_path
+    if isinstance(stream_or_path, (bytes, bytearray)):
+        file_bytes = bytes(stream_or_path)
+    elif isinstance(stream_or_path, (str, Path)):
+        p = Path(stream_or_path)
+        if not filename or filename == "datasheet.pdf":
+            filename = p.name
+        try:
+            file_bytes = p.read_bytes()
+        except Exception:
+            file_bytes = b""
+    elif hasattr(stream_or_path, "read"):
+        try:
+            pos = stream_or_path.tell() if hasattr(stream_or_path, "tell") else None
+            file_bytes = stream_or_path.read()
+            if isinstance(file_bytes, str):
+                file_bytes = file_bytes.encode("utf-8", errors="replace")
+            if pos is not None and hasattr(stream_or_path, "seek"):
+                stream_or_path.seek(pos)
+        except Exception:
+            file_bytes = b""
+    else:
+        file_bytes = b""
+
+    if rulebook is None:
+        rulebook = get_default_rulebook()
+
+    # 2. Priority 1 (Fast-Path): PN Decoding
+    raw_pn = (part_number or Path(filename).stem).strip()
     raw_pn = re.sub(r"\.pdf$", "", raw_pn, flags=re.I).strip()
     pn = raw_pn
 
+    pn_specs: dict[str, Any] = {}
+    if pn:
+        try:
+            pn_specs = decode_manufacturer_pn(pn) or {}
+        except Exception:
+            pn_specs = {}
+
+    # 3. Priority 2: Text Extraction
     error_msg = None
     try:
         text, page_count, analyzed_pages = extract_pdf_data(file_bytes, part_number=pn)
@@ -2655,44 +2724,154 @@ def analyze_single_datasheet(
         text, page_count, analyzed_pages = "", 0, []
         error_msg = f"PDF okunamadı: {str(exc)}"
 
-    # 1. Check whether input is a catalog/document code
+    clean_text = text.strip()
+
     is_catalog = is_catalog_document_name(pn)
     detected_mpns = extract_part_numbers_from_text(text)
 
     # If user didn't enter a manual override, and text has a single unique genuine MPN
-    if is_catalog and not part_number_override and len(detected_mpns) == 1:
+    if is_catalog and not part_number and len(detected_mpns) == 1:
         pn = detected_mpns[0]
         is_catalog = False
+        if not pn_specs:
+            try:
+                pn_specs = decode_manufacturer_pn(pn) or {}
+            except Exception:
+                pn_specs = {}
 
+    # 4. Material Type Classification
     if material_type_override and material_type_override.upper() != "AUTO":
         mat_type = material_type_override.upper()
         conf = 1.0
         reason = f"Kullanıcı tarafından seçildi ({mat_type})."
     else:
-        mat_type, conf, reason = classify_material_type(text, pn)
+        mat_type, conf, reason = classify_material_type(text, pn, filename=filename)
 
+    # If material type is still unknown, check if decoded PN properties provide a clear category
+    if mat_type == "BİLİNMİYOR" and pn_specs:
+        if "resistance_str" in pn_specs or "wattage" in pn_specs:
+            mat_type = "RES"
+            conf = 0.90
+            reason = "Parça numarası kod çözümünden direnç olarak tespit edildi."
+        elif "capacitance_str" in pn_specs or "capacitance_pf" in pn_specs:
+            mat_type = "CAP"
+            conf = 0.90
+            reason = "Parça numarası kod çözümünden kapasitör olarak tespit edildi."
+        elif "pitch" in pn_specs or "type_connector" in pn_specs or "pin_number" in pn_specs:
+            mat_type = "CON"
+            conf = 0.90
+            reason = "Parça numarası kod çözümünden konnektör olarak tespit edildi."
+
+    # Return early if unreadable empty document and unknown
     if mat_type == "BİLİNMİYOR" and error_msg:
-        return DatasheetAnalysisResult(
-            filename=filename,
-            part_number=pn,
-            material_type="BİLİNMİYOR",
-            material_type_name="Bilinmiyor",
-            inferred_mounting="",
-            confidence=0.0,
-            suggested_description="",
-            rich_description="",
-            suggested_erp_code="",
-            page_count=0,
-            error=error_msg,
-        )
+        return {
+            "filename": filename,
+            "part_number": pn,
+            "material_type": "BİLİNMİYOR",
+            "material_type_name": "Bilinmiyor",
+            "inferred_mounting": "",
+            "confidence": 0.0,
+            "suggested_description": "",
+            "rich_description": "",
+            "suggested_erp_code": "",
+            "erp_code": "",
+            "page_count": 0,
+            "analyzed_pages": [],
+            "summary_text": "",
+            "error": error_msg,
+            "is_catalog": False,
+            "detected_part_numbers": [],
+            "analysis_method": "deterministic_text",
+            "properties": [],
+            "_mappings": [],
+            "raw_specs": {},
+            "specs": {},
+        }
 
-    mat_type_name = MATERIAL_TYPE_NAMES.get(mat_type, mat_type)
-
+    # Deterministic spec extraction
     specs = extract_component_specs(mat_type, text, pn, is_catalog=is_catalog, file_bytes=file_bytes)
+    for k, v in pn_specs.items():
+        if k not in specs or specs[k] is None or specs[k] == "":
+            specs[k] = v
+
+    # 5. Priority 3: Vision Fusion Trigger
+    is_text_empty = len(clean_text) == 0
+    are_critical_missing = False
+
+    if mat_type == "CON":
+        are_critical_missing = not (specs.get("pitch") and specs.get("pin_number") and specs.get("type_connector"))
+    elif mat_type == "RES":
+        are_critical_missing = not specs.get("resistance_str")
+    elif mat_type == "CAP":
+        are_critical_missing = not (specs.get("capacitance_str") or specs.get("capacitance_pf"))
+    elif mat_type == "IND":
+        are_critical_missing = not specs.get("inductance_str")
+    elif mat_type == "BİLİNMİYOR":
+        are_critical_missing = True
+
+    used_vision = False
+    if file_bytes and (is_text_empty or are_critical_missing):
+        vlm = client if client is not None else VisionLLMClient()
+        try:
+            if vlm.is_available():
+                rendered = select_and_render_pages(file_bytes, target_pn=pn, max_pages=2)
+                images = [p["base64_png"] for p in rendered if "base64_png" in p]
+                if images:
+                    vlm_hint = mat_type if mat_type != "BİLİNMİYOR" else None
+                    vlm_res = vlm.extract_specs_from_images(images, target_pn=pn, material_type_hint=vlm_hint)
+                    if vlm_res:
+                        vlm_specs = vlm_res.get("specs") or {}
+                        # Merge specs: deterministic/PN specs take precedence, VLM fills any empty/None field
+                        for k, v in vlm_specs.items():
+                            if v is not None and (k not in specs or specs[k] is None or specs[k] == ""):
+                                specs[k] = v
+
+                        vlm_mat = vlm_res.get("material_type")
+                        if (mat_type == "BİLİNMİYOR" or not mat_type) and vlm_mat:
+                            mat_type = vlm_mat
+                            conf = float(vlm_res.get("confidence", 0.85))
+                            reason = f"Vision AI tarafından tespit edildi ({MATERIAL_TYPE_NAMES.get(mat_type, mat_type)})."
+                        elif vlm_res.get("confidence"):
+                            conf = max(conf, float(vlm_res.get("confidence", 0.0)))
+
+                        if not specs.get("manufacturer") and vlm_res.get("manufacturer"):
+                            specs["manufacturer"] = vlm_res["manufacturer"]
+
+                        used_vision = True
+        except Exception:
+            pass
+
+    # 6. Analysis Method Determination
+    if used_vision:
+        analysis_method = "hybrid_vision"
+    else:
+        pn_has_core = False
+        if mat_type == "RES" and pn_specs.get("resistance_str"):
+            pn_has_core = True
+        elif mat_type == "CAP" and (pn_specs.get("capacitance_str") or pn_specs.get("capacitance_pf")):
+            pn_has_core = True
+        elif mat_type == "CON" and pn_specs.get("pitch") and pn_specs.get("pin_number"):
+            pn_has_core = True
+        elif mat_type in ("DIO", "FET", "TRA", "ICR", "ICS", "MCU", "BUZ", "BAH", "VAR") and bool(pn_specs):
+            pn_has_core = True
+        elif pn_specs and any(k in pn_specs for k in ("resistance_str", "capacitance_str", "capacitance_pf", "pin_number", "pitch", "voltage")):
+            pn_has_core = True
+
+        if pn_has_core:
+            analysis_method = "fast_path"
+        else:
+            analysis_method = "deterministic_text"
+
+    # 7. ERP Property Mapping & Presentation
+    mat_type_name = MATERIAL_TYPE_NAMES.get(mat_type, mat_type)
     specs["is_catalog"] = is_catalog
     mounting = specs.get("mounting", "SMD")
 
-    mappings, suggested_desc, suggested_code = map_specs_to_erp(rulebook, mat_type, specs)
+    if rulebook is not None and mat_type != "BİLİNMİYOR":
+        mappings, suggested_desc, suggested_code = map_specs_to_erp(rulebook, mat_type, specs)
+    else:
+        mappings, suggested_desc, suggested_code = [], "", ""
+
     rich_desc = build_rich_description(mat_type, specs, text=text)
 
     if is_catalog:
@@ -2703,26 +2882,86 @@ def analyze_single_datasheet(
             f"Bu doküman {mfr} genel ürün serisi kataloğudur (birden fazla kılıf ve değer içerir). "
             f"Kesin kılıf, direnç, tolerans ve güç eşleşmesi için lütfen tam parça kodunu (örn: RC0805JR-07300RL) giriniz."
         )
+    elif mat_type == "BİLİNMİYOR":
+        summary = "Malzeme tipi kesin belirlenemedi."
     else:
         summary = f"{mat_type_name} olarak tespit edildi ({int(conf * 100)}% güven). {reason}"
 
-    return DatasheetAnalysisResult(
+    serialized_specs = {
+        k: str(v) if isinstance(v, Decimal) else v
+        for k, v in specs.items()
+    }
+
+    return {
+        "filename": filename,
+        "part_number": pn,
+        "material_type": mat_type,
+        "material_type_name": mat_type_name,
+        "inferred_mounting": mounting,
+        "confidence": round(conf, 2),
+        "suggested_description": suggested_desc,
+        "rich_description": rich_desc or suggested_desc,
+        "suggested_erp_code": suggested_code,
+        "erp_code": suggested_code,
+        "page_count": page_count,
+        "analyzed_pages": analyzed_pages,
+        "summary_text": summary,
+        "error": error_msg,
+        "is_catalog": is_catalog,
+        "detected_part_numbers": detected_mpns,
+        "analysis_method": analysis_method,
+        "properties": [
+            {
+                "attribute_name": p.attribute_name,
+                "sort_no": p.sort_no,
+                "extracted_value": p.extracted_value,
+                "matched_erp_value": p.matched_erp_value,
+                "erp_code": p.erp_code,
+                "prefix": p.prefix,
+                "status": p.status,
+            }
+            for p in mappings
+        ],
+        "_mappings": mappings,
+        "raw_specs": serialized_specs,
+        "specs": serialized_specs,
+    }
+
+
+def analyze_single_datasheet(
+    filename: str,
+    file_bytes: bytes,
+    rulebook: RuleBook,
+    part_number_override: str | None = None,
+    material_type_override: str | None = None,
+) -> DatasheetAnalysisResult:
+    """Analyze a single datasheet PDF and map its properties to DEKA ERP format."""
+    res = analyze_datasheet(
+        stream_or_path=file_bytes,
+        part_number=part_number_override,
+        material_type_override=material_type_override,
+        rulebook=rulebook,
         filename=filename,
-        part_number=pn,
-        material_type=mat_type,
-        material_type_name=mat_type_name,
-        inferred_mounting=mounting,
-        confidence=conf,
-        suggested_description=suggested_desc,
-        rich_description=rich_desc,
-        suggested_erp_code=suggested_code,
-        properties=mappings,
-        raw_specs=specs,
-        page_count=page_count,
-        analyzed_pages=analyzed_pages,
-        summary_text=summary,
-        is_catalog=is_catalog,
-        detected_part_numbers=detected_mpns,
+    )
+    return DatasheetAnalysisResult(
+        filename=res["filename"],
+        part_number=res["part_number"],
+        material_type=res["material_type"],
+        material_type_name=res["material_type_name"],
+        inferred_mounting=res["inferred_mounting"],
+        confidence=res["confidence"],
+        suggested_description=res["suggested_description"],
+        rich_description=res["rich_description"],
+        suggested_erp_code=res["suggested_erp_code"],
+        properties=res["_mappings"],
+        raw_specs=res["raw_specs"],
+        page_count=res["page_count"],
+        analyzed_pages=res["analyzed_pages"],
+        summary_text=res["summary_text"],
+        error=res["error"],
+        is_catalog=res["is_catalog"],
+        detected_part_numbers=res["detected_part_numbers"],
+        analysis_method=res["analysis_method"],
     )
 
 

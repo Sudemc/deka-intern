@@ -600,3 +600,127 @@ def test_empty_text_does_not_fallback_to_capacitor():
     assert mat_type == "BİLİNMİYOR"
     assert conf == 0.0
 
+
+def test_analyze_datasheet_cad_zero_text_uses_vision_fusion():
+    from unittest.mock import patch
+    import io
+    from reportlab.pdfgen import canvas
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    # Empty canvas simulating vector CAD drawing without extractable text
+    c.save()
+    cad_pdf_bytes = buf.getvalue()
+
+    mock_vlm_output = {
+        "material_type": "CON",
+        "confidence": 0.90,
+        "manufacturer": "Degson",
+        "specs": {
+            "type_connector": "Wire to Wire Klemens",
+            "pitch": "8.2mm",
+            "pin_number": "12 pin",
+            "pin_type": "Dişi",
+            "mounting": "Cable",
+            "angle": "180°(Dik)",
+        },
+    }
+
+    with patch("bom_enricher.vision_client.VisionLLMClient.is_available", return_value=True), \
+         patch("bom_enricher.vision_client.VisionLLMClient.extract_specs_from_images", return_value=mock_vlm_output):
+        result = analyze_datasheet(cad_pdf_bytes, part_number="DG8HS-1.2-12P-17-100SH/AH")
+        assert result["material_type"] == "CON"
+        assert result["specs"].get("pin_number") == "12 pin"
+        assert result["specs"].get("pitch") == "8.2mm"
+        # Deterministic ERP code must be generated matching CON rules
+        assert result.get("erp_code") in ("CONCAIB4120000XX-DE", "CONCAIB41220000XX-DE")
+        assert result.get("analysis_method") in ("hybrid_vision", "fast_path")
+
+
+def test_analyze_datasheet_fast_path_when_pn_has_core_specs(rulebook):
+    from unittest.mock import patch
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+    pdf_bytes = _create_sample_pdf(
+        "YAGEO CHIP RESISTORS RC SERIES",
+        "RC0805FR-0710KL",
+        ["SMD Resistor 10k 1% 0805", "Resistance: 10k", "Tolerance: 1%"],
+    )
+    # Even if vision client is available, complete text + clean PN doesn't trigger vision
+    with patch("bom_enricher.vision_client.VisionLLMClient.is_available", return_value=True), \
+         patch("bom_enricher.vision_client.VisionLLMClient.extract_specs_from_images") as mock_extract:
+        result = analyze_datasheet(pdf_bytes, part_number="RC0805FR-0710KL", rulebook=rulebook)
+        assert result["material_type"] == "RES"
+        assert result["specs"].get("resistance_str") == "10k"
+        assert result["analysis_method"] == "fast_path"
+        mock_extract.assert_not_called()
+
+
+def test_analyze_datasheet_deterministic_text_method(rulebook):
+    from unittest.mock import patch
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+    # Custom PN that cannot be decoded by decode_manufacturer_pn
+    pdf_bytes = _create_sample_pdf(
+        "GENERAL PURPOSE RECTIFIER DIODE",
+        "GENERIC-RECTIFIER-XYZ",
+        ["Surface Mount Rectifier", "Voltage: 400V", "Current: 1A", "Package: SMA"],
+    )
+    with patch("bom_enricher.vision_client.VisionLLMClient.is_available", return_value=True), \
+         patch("bom_enricher.vision_client.VisionLLMClient.extract_specs_from_images") as mock_extract:
+        result = analyze_datasheet(pdf_bytes, part_number="GENERIC-RECTIFIER-XYZ", rulebook=rulebook)
+        assert result["material_type"] == "DIO"
+        assert result["analysis_method"] == "deterministic_text"
+        mock_extract.assert_not_called()
+
+
+def test_analyze_datasheet_vision_unavailable_graceful_fallback(rulebook):
+    from unittest.mock import patch
+    import io
+    from reportlab.pdfgen import canvas
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.save()
+    cad_pdf_bytes = buf.getvalue()
+
+    with patch("bom_enricher.vision_client.VisionLLMClient.is_available", return_value=False):
+        result = analyze_datasheet(cad_pdf_bytes, part_number="DG8HS-1.2-12P-17-100SH/AH", rulebook=rulebook)
+        assert result["material_type"] == "CON"
+        assert result["specs"].get("pin_number") == "12 pin"
+        # Fast path was used since vision was unavailable
+        assert result["analysis_method"] == "fast_path"
+
+
+def test_analyze_datasheet_adopts_vlm_material_type_for_unknown():
+    from unittest.mock import patch
+    import io
+    from reportlab.pdfgen import canvas
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.save()
+    empty_pdf = buf.getvalue()
+
+    mock_vlm_output = {
+        "material_type": "DIO",
+        "confidence": 0.92,
+        "manufacturer": "Vishay",
+        "specs": {
+            "package": "SMA",
+            "voltage": "600V",
+            "current": "2A",
+        },
+    }
+
+    with patch("bom_enricher.vision_client.VisionLLMClient.is_available", return_value=True), \
+         patch("bom_enricher.vision_client.VisionLLMClient.extract_specs_from_images", return_value=mock_vlm_output):
+        result = analyze_datasheet(empty_pdf, part_number="UNKNOWN-CUSTOM-PN-99")
+        assert result["material_type"] == "DIO"
+        assert result["confidence"] == 0.92
+        assert result["specs"].get("voltage") == "600V"
+        assert result["analysis_method"] == "hybrid_vision"
+
+
+

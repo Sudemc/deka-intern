@@ -211,7 +211,7 @@ git commit -m "feat: add smart PDF page selection and pypdfium2 image renderer"
   - `is_available() -> bool`
   - `extract_specs_from_images(images: list[str], target_pn: str, material_type_hint: str | None = None) -> dict[str, Any] | None`
 
-- [ ] **Step 1: Write the failing test with mocked HTTP responses**
+- [x] **Step 1: Write the failing test with mocked HTTP responses**
 
 ```python
 # In tests/test_vision_client.py
@@ -255,12 +255,12 @@ def test_vision_client_extract_specs_graceful_timeout():
         assert result is None  # Must not crash, return None
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_vision_client.py -v`
 Expected: FAIL with "No module named 'bom_enricher.vision_client'"
 
-- [ ] **Step 3: Implement `src/bom_enricher/vision_client.py`**
+- [x] **Step 3: Implement `src/bom_enricher/vision_client.py`**
 
 1. Create `VisionLLMClient` with configurable `base_url`, `model` (default `"llama3.2-vision:3b"`), and `timeout` (default 15.0s).
 2. `is_available()`: sends quick `httpx.get(f"{self.base_url}/api/tags", timeout=1.5)`. Returns True if 200, False otherwise.
@@ -273,12 +273,12 @@ Expected: FAIL with "No module named 'bom_enricher.vision_client'"
 5. Parse `response.json()["message"]["content"]` as JSON. Validate schema keys.
 6. Return dictionary or `None` on any failure.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_vision_client.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bom_enricher/vision_client.py tests/test_vision_client.py
@@ -297,7 +297,7 @@ git commit -m "feat: add VisionLLMClient with target PN injection and timeout re
 - Consumes: `pdf_renderer.select_and_render_pages`, `vision_client.VisionLLMClient`.
 - Produces: `analyze_datasheet(stream_or_path, part_number=None, material_type_override=None, ...)` with multimodal fallback and fusion.
 
-- [ ] **Step 1: Write the failing test for hybrid fusion**
+- [x] **Step 1: Write the failing test for hybrid fusion**
 
 ```python
 # In tests/test_datasheet_analyzer.py
@@ -339,12 +339,12 @@ def test_analyze_datasheet_cad_zero_text_uses_vision_fusion():
         assert result.get("analysis_method") in ("hybrid_vision", "fast_path")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_analyze_datasheet_cad_zero_text_uses_vision_fusion -v`
 Expected: FAIL (missing `erp_code` or `analysis_method` or falls back to CAP)
 
-- [ ] **Step 3: Implement priority fusion in `datasheet_analyzer.py`**
+- [x] **Step 3: Implement priority fusion in `datasheet_analyzer.py`**
 
 1. In `analyze_datasheet`:
    - Step A (Priority 1 - Fast-Path): Call `decode_manufacturer_pn(part_number)`.
@@ -362,17 +362,17 @@ Expected: FAIL (missing `erp_code` or `analysis_method` or falls back to CAP)
    - Step E: Pass merged specs into `map_specs_to_erp(rulebook, material_type, merged_specs)`.
    - Return enriched dictionary including `analysis_method`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_analyze_datasheet_cad_zero_text_uses_vision_fusion -v`
 Expected: PASS
 
-- [ ] **Step 5: Run full test suite**
+- [x] **Step 5: Run full test suite**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/ -v`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/bom_enricher/datasheet_analyzer.py tests/test_datasheet_analyzer.py
