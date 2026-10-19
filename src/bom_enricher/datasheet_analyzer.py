@@ -187,6 +187,21 @@ MATERIAL_TYPE_NAMES = {
 }
 
 
+NORMALIZE_VLM_TYPE = {
+    "DIODE": "DIO",
+    "TRANSISTOR": "TRA",
+    "TRANS": "TRA",
+    "CONNECTOR": "CON",
+    "INDUCTOR": "IND",
+    "RESISTOR": "RES",
+    "CAPACITOR": "CAP",
+    "BATTERY": "BAH",
+    "BUZZER": "BUZ",
+    "VARISTOR": "VAR",
+    "ANTENNA": "ANT",
+}
+
+
 KNOWN_MANUFACTURERS = [
     ("samsung", "Samsung", "SA"),
     ("yageo", "Yageo", "YA"),
@@ -460,7 +475,6 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
 def classify_material_type(text: str, part_number: str = "", filename: str = "") -> tuple[str, float, str]:
     """Determine component material type from Cover Page Title, PN, and weighted document content."""
     pn = part_number.strip().upper()
-    pn_clean = pn
     text_lower = text.casefold()
 
     # ── 1. COVER PAGE / TITLE BLOCK MATCHING (Highest Authority) ──
@@ -517,7 +531,7 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     # Connector
     if re.match(r"^(?:22-01|0022|2695|5557|JST-|PH-|XH-|VH-|MOLEX|200G|254G|200W|254W|200H|254H|200D|254D|\d{3}[A-Z]\d?-\d{2})", pn):
         return "CON", 0.98, "Part Number standart konnektör/klemens serisine uyuyor."
-    if re.match(r"^DG\d+.*", pn_clean):
+    if re.match(r"^DG\d+.*", pn):
         return "CON", 0.98, "Part Number Degson klemens serisine uyuyor."
     # Fuse
     if re.match(r"^(?:MF-MSMF|MF-R|0451|0452|SMD\d{4}P)", pn):
@@ -2716,51 +2730,103 @@ def analyze_datasheet(
         except Exception:
             pn_specs = {}
 
-    # 3. Priority 2: Text Extraction
-    error_msg = None
-    try:
-        text, page_count, analyzed_pages = extract_pdf_data(file_bytes, part_number=pn)
-    except Exception as exc:
-        text, page_count, analyzed_pages = "", 0, []
-        error_msg = f"PDF okunamadı: {str(exc)}"
-
-    clean_text = text.strip()
-
-    is_catalog = is_catalog_document_name(pn)
-    detected_mpns = extract_part_numbers_from_text(text)
-
-    # If user didn't enter a manual override, and text has a single unique genuine MPN
-    if is_catalog and not part_number and len(detected_mpns) == 1:
-        pn = detected_mpns[0]
-        is_catalog = False
-        if not pn_specs:
-            try:
-                pn_specs = decode_manufacturer_pn(pn) or {}
-            except Exception:
-                pn_specs = {}
-
-    # 4. Material Type Classification
+    # Check if PN already resolves material type and core specs
     if material_type_override and material_type_override.upper() != "AUTO":
         mat_type = material_type_override.upper()
         conf = 1.0
         reason = f"Kullanıcı tarafından seçildi ({mat_type})."
     else:
-        mat_type, conf, reason = classify_material_type(text, pn, filename=filename)
+        mat_type, conf, reason = classify_material_type("", pn, filename=filename)
+        if mat_type == "BİLİNMİYOR" and pn_specs:
+            if "resistance_str" in pn_specs or "wattage" in pn_specs:
+                mat_type = "RES"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden direnç olarak tespit edildi."
+            elif "capacitance_str" in pn_specs or "capacitance_pf" in pn_specs:
+                mat_type = "CAP"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden kapasitör olarak tespit edildi."
+            elif "pitch" in pn_specs or "type_connector" in pn_specs or "pin_number" in pn_specs:
+                mat_type = "CON"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden konnektör olarak tespit edildi."
 
-    # If material type is still unknown, check if decoded PN properties provide a clear category
-    if mat_type == "BİLİNMİYOR" and pn_specs:
-        if "resistance_str" in pn_specs or "wattage" in pn_specs:
-            mat_type = "RES"
-            conf = 0.90
-            reason = "Parça numarası kod çözümünden direnç olarak tespit edildi."
-        elif "capacitance_str" in pn_specs or "capacitance_pf" in pn_specs:
-            mat_type = "CAP"
-            conf = 0.90
-            reason = "Parça numarası kod çözümünden kapasitör olarak tespit edildi."
-        elif "pitch" in pn_specs or "type_connector" in pn_specs or "pin_number" in pn_specs:
-            mat_type = "CON"
-            conf = 0.90
-            reason = "Parça numarası kod çözümünden konnektör olarak tespit edildi."
+    pn_has_core = False
+    if mat_type == "RES" and pn_specs.get("resistance_str"):
+        pn_has_core = True
+    elif mat_type == "CAP" and (pn_specs.get("capacitance_str") or pn_specs.get("capacitance_pf")):
+        pn_has_core = True
+    elif mat_type == "CON" and pn_specs.get("pitch") and pn_specs.get("pin_number"):
+        pn_has_core = True
+    elif mat_type in ("DIO", "FET", "TRA", "ICR", "ICS", "MCU", "BUZ", "BAH", "VAR") and bool(pn_specs):
+        pn_has_core = True
+    elif pn_specs and any(k in pn_specs for k in ("resistance_str", "capacitance_str", "capacitance_pf", "pin_number", "pitch", "voltage")):
+        pn_has_core = True
+
+    # 3. Priority 2: Text Extraction
+    error_msg = None
+    if pn_has_core:
+        # Fast-Path: when PN decoding already resolved all core specs, bypass slow PDF text extraction
+        text = ""
+        clean_text = ""
+        analyzed_pages = [1]
+        try:
+            reader = PdfReader(io.BytesIO(file_bytes))
+            page_count = len(reader.pages)
+        except Exception:
+            page_count = 1
+        is_catalog = False
+        detected_mpns = [pn] if pn else []
+    else:
+        try:
+            text, page_count, analyzed_pages = extract_pdf_data(file_bytes, part_number=pn)
+        except Exception as exc:
+            text, page_count, analyzed_pages = "", 0, []
+            error_msg = f"PDF okunamadı: {str(exc)}"
+
+        clean_text = text.strip()
+
+        is_catalog = is_catalog_document_name(pn)
+        detected_mpns = extract_part_numbers_from_text(text)
+
+        # If user didn't enter a manual override, and text has a single unique genuine MPN
+        if is_catalog and not part_number and len(detected_mpns) == 1:
+            pn = detected_mpns[0]
+            is_catalog = False
+            if not pn_specs:
+                try:
+                    pn_specs = decode_manufacturer_pn(pn) or {}
+                except Exception:
+                    pn_specs = {}
+
+        # 4. Material Type Classification (fallback to document text if still unknown)
+        if mat_type == "BİLİNMİYOR":
+            mat_type, conf, reason = classify_material_type(text, pn, filename=filename)
+            if mat_type == "BİLİNMİYOR" and pn_specs:
+                if "resistance_str" in pn_specs or "wattage" in pn_specs:
+                    mat_type = "RES"
+                    conf = 0.90
+                    reason = "Parça numarası kod çözümünden direnç olarak tespit edildi."
+                elif "capacitance_str" in pn_specs or "capacitance_pf" in pn_specs:
+                    mat_type = "CAP"
+                    conf = 0.90
+                    reason = "Parça numarası kod çözümünden kapasitör olarak tespit edildi."
+                elif "pitch" in pn_specs or "type_connector" in pn_specs or "pin_number" in pn_specs:
+                    mat_type = "CON"
+                    conf = 0.90
+                    reason = "Parça numarası kod çözümünden konnektör olarak tespit edildi."
+
+        # Re-check pn_has_core if PN was discovered from text
+        if mat_type == "RES" and pn_specs.get("resistance_str"):
+            pn_has_core = True
+        elif mat_type == "CAP" and (pn_specs.get("capacitance_str") or pn_specs.get("capacitance_pf")):
+            pn_has_core = True
+        elif mat_type == "CON" and pn_specs.get("pitch") and pn_specs.get("pin_number"):
+            pn_has_core = True
+        elif mat_type in ("DIO", "FET", "TRA", "ICR", "ICS", "MCU", "BUZ", "BAH", "VAR") and bool(pn_specs):
+            pn_has_core = True
+        elif pn_specs and any(k in pn_specs for k in ("resistance_str", "capacitance_str", "capacitance_pf", "pin_number", "pitch", "voltage")):
+            pn_has_core = True
 
     # Return early if unreadable empty document and unknown
     if mat_type == "BİLİNMİYOR" and error_msg:
@@ -2789,7 +2855,9 @@ def analyze_datasheet(
         }
 
     # Deterministic spec extraction
-    specs = extract_component_specs(mat_type, text, pn, is_catalog=is_catalog, file_bytes=file_bytes)
+    # Fast-Path: when pn_has_core is True, do not pass file_bytes to avoid slow 2D CAD vector table extraction
+    effective_file_bytes = None if pn_has_core else file_bytes
+    specs = extract_component_specs(mat_type, text, pn, is_catalog=is_catalog, file_bytes=effective_file_bytes)
     for k, v in pn_specs.items():
         if k not in specs or specs[k] is None or specs[k] == "":
             specs[k] = v
@@ -2810,7 +2878,7 @@ def analyze_datasheet(
         are_critical_missing = True
 
     used_vision = False
-    if file_bytes and (is_text_empty or are_critical_missing):
+    if file_bytes and not pn_has_core and (is_text_empty or are_critical_missing):
         vlm = client if client is not None else VisionLLMClient()
         try:
             if vlm.is_available():
@@ -2827,10 +2895,13 @@ def analyze_datasheet(
                                 specs[k] = v
 
                         vlm_mat = vlm_res.get("material_type")
-                        if (mat_type == "BİLİNMİYOR" or not mat_type) and vlm_mat:
-                            mat_type = vlm_mat
-                            conf = float(vlm_res.get("confidence", 0.85))
-                            reason = f"Vision AI tarafından tespit edildi ({MATERIAL_TYPE_NAMES.get(mat_type, mat_type)})."
+                        if vlm_mat:
+                            vlm_mat_clean = vlm_mat.strip().upper()
+                            vlm_mat_normalized = NORMALIZE_VLM_TYPE.get(vlm_mat_clean, vlm_mat_clean)
+                            if mat_type == "BİLİNMİYOR" or not mat_type:
+                                mat_type = vlm_mat_normalized
+                                conf = float(vlm_res.get("confidence", 0.85))
+                                reason = f"Vision AI tarafından tespit edildi ({MATERIAL_TYPE_NAMES.get(mat_type, mat_type)})."
                         elif vlm_res.get("confidence"):
                             conf = max(conf, float(vlm_res.get("confidence", 0.0)))
 
@@ -2844,23 +2915,10 @@ def analyze_datasheet(
     # 6. Analysis Method Determination
     if used_vision:
         analysis_method = "hybrid_vision"
+    elif pn_has_core:
+        analysis_method = "fast_path"
     else:
-        pn_has_core = False
-        if mat_type == "RES" and pn_specs.get("resistance_str"):
-            pn_has_core = True
-        elif mat_type == "CAP" and (pn_specs.get("capacitance_str") or pn_specs.get("capacitance_pf")):
-            pn_has_core = True
-        elif mat_type == "CON" and pn_specs.get("pitch") and pn_specs.get("pin_number"):
-            pn_has_core = True
-        elif mat_type in ("DIO", "FET", "TRA", "ICR", "ICS", "MCU", "BUZ", "BAH", "VAR") and bool(pn_specs):
-            pn_has_core = True
-        elif pn_specs and any(k in pn_specs for k in ("resistance_str", "capacitance_str", "capacitance_pf", "pin_number", "pitch", "voltage")):
-            pn_has_core = True
-
-        if pn_has_core:
-            analysis_method = "fast_path"
-        else:
-            analysis_method = "deterministic_text"
+        analysis_method = "deterministic_text"
 
     # 7. ERP Property Mapping & Presentation
     mat_type_name = MATERIAL_TYPE_NAMES.get(mat_type, mat_type)

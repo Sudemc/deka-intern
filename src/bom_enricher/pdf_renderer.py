@@ -93,6 +93,22 @@ def select_target_pages(
     return selected[:max_pages]
 
 
+def _synthesize_blank_page(width: int = 1000, height: int = 1000) -> dict[str, Any]:
+    """Synthesize a blank white page fallback when PDF cannot be opened or has 0 pages."""
+    from PIL import Image
+
+    img = Image.new("RGB", (width, height), (255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return {
+        "page_number": 1,
+        "base64_png": b64,
+        "width": width,
+        "height": height,
+    }
+
+
 def select_and_render_pages(
     pdf_bytes: bytes,
     target_pn: str | None = None,
@@ -122,17 +138,7 @@ def select_and_render_pages(
     except Exception as exc:
         if pdf_bytes.startswith(b"%PDF-") and max_pages > 0:
             try:
-                from PIL import Image
-                img = Image.new("RGB", (595, 842), (255, 255, 255))
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-                return [{
-                    "page_number": 1,
-                    "base64_png": b64,
-                    "width": 595,
-                    "height": 842,
-                }]
+                return [_synthesize_blank_page(width=1000, height=1000)]
             except Exception:
                 pass
         logger.warning("Failed to open PDF with pypdfium2: %s", exc)
@@ -144,17 +150,7 @@ def select_and_render_pages(
         if total_pages == 0:
             if pdf_bytes.startswith(b"%PDF-") and max_pages > 0:
                 try:
-                    from PIL import Image
-                    img = Image.new("RGB", (595, 842), (255, 255, 255))
-                    buf = io.BytesIO()
-                    img.save(buf, format="PNG")
-                    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-                    return [{
-                        "page_number": 1,
-                        "base64_png": b64,
-                        "width": 595,
-                        "height": 842,
-                    }]
+                    return [_synthesize_blank_page(width=1000, height=1000)]
                 except Exception:
                     pass
             return []

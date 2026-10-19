@@ -723,8 +723,50 @@ def test_analyze_datasheet_adopts_vlm_material_type_for_unknown():
         assert result["analysis_method"] == "hybrid_vision"
 
 
+def test_analyze_datasheet_normalizes_vlm_material_type_synonyms():
+    from unittest.mock import patch
+    import io
+    from reportlab.pdfgen import canvas
+    from bom_enricher.datasheet_analyzer import analyze_datasheet, NORMALIZE_VLM_TYPE
+
+    # Direct dictionary verification
+    assert NORMALIZE_VLM_TYPE["DIODE"] == "DIO"
+    assert NORMALIZE_VLM_TYPE["CONNECTOR"] == "CON"
+    assert NORMALIZE_VLM_TYPE["TRANSISTOR"] == "TRA"
+    assert NORMALIZE_VLM_TYPE["RESISTOR"] == "RES"
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.save()
+    empty_pdf = buf.getvalue()
+
+    # Case 1: VLM outputs "DIODE" -> normalized to "DIO"
+    vlm_diode_output = {
+        "material_type": "DIODE",
+        "confidence": 0.88,
+        "specs": {"voltage": "1000V", "current": "1A"},
+    }
+    with patch("bom_enricher.vision_client.VisionLLMClient.is_available", return_value=True), \
+         patch("bom_enricher.vision_client.VisionLLMClient.extract_specs_from_images", return_value=vlm_diode_output):
+        result_diode = analyze_datasheet(empty_pdf, part_number="UNKNOWN-1N4007-CUSTOM")
+        assert result_diode["material_type"] == "DIO"
+        assert result_diode["material_type_name"] == "Diyot (DIO)"
+
+    # Case 2: VLM outputs "connector" (lowercase) -> normalized to "CON"
+    vlm_conn_output = {
+        "material_type": "connector",
+        "confidence": 0.91,
+        "specs": {"pin_number": "4 pin", "pitch": "2.54mm"},
+    }
+    with patch("bom_enricher.vision_client.VisionLLMClient.is_available", return_value=True), \
+         patch("bom_enricher.vision_client.VisionLLMClient.extract_specs_from_images", return_value=vlm_conn_output):
+        result_conn = analyze_datasheet(empty_pdf, part_number="UNKNOWN-HDR-CUSTOM")
+        assert result_conn["material_type"] == "CON"
+        assert result_conn["material_type_name"] == "Konnektör (CON)"
+
+
 @pytest.mark.slow
-def test_real_degson_cad_datasheet_e2e():
+def test_real_degson_cad_datasheet_e2e(rulebook):
     from pathlib import Path
     from bom_enricher.datasheet_analyzer import analyze_datasheet
 
@@ -736,7 +778,7 @@ def test_real_degson_cad_datasheet_e2e():
         file_bytes = f.read()
 
     pn = "DG8HS-1.2-12P-17-100SH/AH"
-    result = analyze_datasheet(file_bytes, part_number=pn)
+    result = analyze_datasheet(file_bytes, part_number=pn, rulebook=rulebook)
 
     # Must be classified as CON
     assert result["material_type"] == "CON"

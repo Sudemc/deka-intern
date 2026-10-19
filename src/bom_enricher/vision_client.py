@@ -31,7 +31,7 @@ class VisionLLMClient:
     def is_available(self) -> bool:
         """Quickly check if the local Ollama server is running and reachable."""
         try:
-            resp = httpx.get(f"{self.base_url}/api/tags", timeout=min(1.5, self.timeout))
+            resp = httpx.get(f"{self.base_url}/api/tags", timeout=max(0.1, min(1.5, self.timeout)))
             return resp.status_code == 200
         except Exception as e:
             logger.debug("Vision LLM service not available at %s: %s", self.base_url, e)
