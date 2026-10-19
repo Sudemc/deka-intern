@@ -577,3 +577,26 @@ def test_battery_holder_kls_extraction(rulebook):
     res = analyze_single_datasheet("L-KLS5-SP-073-R.pdf", b"", rulebook)
     assert res.material_type == "BAH"
     assert res.raw_specs.get("manufacturer") == "Kls"
+
+
+def test_degson_terminal_block_pn_decoding():
+    from bom_enricher.datasheet_analyzer import decode_manufacturer_pn, classify_material_type
+    pn = "DG8HS-1.2-12P-17-100SH/AH"
+    specs = decode_manufacturer_pn(pn)
+    assert specs.get("manufacturer") == "Degson"
+    assert specs.get("pin_number") == "12 pin"
+    assert specs.get("pitch") == "8.2mm"
+    assert specs.get("pin_type") == "Dişi"
+    assert specs.get("type_connector") == "Wire to Wire Klemens"
+    assert specs.get("mounting") == "Cable"
+
+    mat_type, conf, reason = classify_material_type("", pn, "")
+    assert mat_type == "CON"
+
+
+def test_empty_text_does_not_fallback_to_capacitor():
+    from bom_enricher.datasheet_analyzer import classify_material_type
+    mat_type, conf, reason = classify_material_type("", "UNKNOWN-PART-XYZ", "")
+    assert mat_type == "BİLİNMİYOR"
+    assert conf == 0.0
+

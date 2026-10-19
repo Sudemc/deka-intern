@@ -151,6 +151,7 @@ MATERIAL_TYPE_NAMES = {
     "SPR": "Yay / Spring (SPR)",
     "ADP": "Adaptör (ADP)",
     "FLM": "Flash Bellek (FLM)",
+    "BİLİNMİYOR": "Bilinmiyor",
 }
 
 
@@ -424,9 +425,10 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
 ]
 
 
-def classify_material_type(text: str, part_number: str = "") -> tuple[str, float, str]:
+def classify_material_type(text: str, part_number: str = "", filename: str = "") -> tuple[str, float, str]:
     """Determine component material type from Cover Page Title, PN, and weighted document content."""
     pn = part_number.strip().upper()
+    pn_clean = pn
     text_lower = text.casefold()
 
     # ── 1. COVER PAGE / TITLE BLOCK MATCHING (Highest Authority) ──
@@ -483,6 +485,8 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
     # Connector
     if re.match(r"^(?:22-01|0022|2695|5557|JST-|PH-|XH-|VH-|MOLEX|200G|254G|200W|254W|200H|254H|200D|254D|\d{3}[A-Z]\d?-\d{2})", pn):
         return "CON", 0.98, "Part Number standart konnektör/klemens serisine uyuyor."
+    if re.match(r"^DG\d+.*", pn_clean):
+        return "CON", 0.98, "Part Number Degson klemens serisine uyuyor."
     # Fuse
     if re.match(r"^(?:MF-MSMF|MF-R|0451|0452|SMD\d{4}P)", pn):
         return "FUS", 0.95, "Part Number sigorta serisine uyuyor."
@@ -642,7 +646,12 @@ def classify_material_type(text: str, part_number: str = "") -> tuple[str, float
     if any(k in text_lower for k in ("royal ohm", "royalohm")):
         return "RES", 0.85, "Datasheet metnindeki direnç üreticisinden tespit edildi (RES)."
 
-    return "RES" if "ohm" in text_lower else ("CON" if any(w in text_lower for w in ("housing", "connector", "circuits", "molex")) else "CAP"), 0.35, "Malzeme tipi kesin belirlenemedi."
+    if "ohm" in text_lower:
+        return "RES", 0.35, "Datasheet metnindeki 'ohm' ifadesinden direnç olarak tahmin edildi."
+    if any(w in text_lower for w in ("housing", "connector", "circuits", "molex")):
+        return "CON", 0.35, "Datasheet metnindeki konnektör terimlerinden tahmin edildi."
+
+    return "BİLİNMİYOR", 0.0, "Malzeme tipi kesin belirlenemedi."
 
 
 def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
@@ -943,6 +952,24 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
         jst_pitches = {"PH": "2mm", "XH": "2.5mm", "EH": "2.5mm", "VH": "3.96mm"}
         if fam in jst_pitches:
             specs["pitch"] = jst_pitches[fam]
+        return specs
+
+    # 9. Degson Terminal Blocks: e.g. DG8HS-1.2-12P-17-100SH/AH, DG10HS-1.0-02P-17-00AH
+    degson_m = re.match(r"^DG(\d+)HS?-([0-9.]+)-(\d+)P", pn)
+    if degson_m:
+        series_num, pitch_code, pin_count = degson_m.groups()
+        specs["manufacturer"] = "Degson"
+        specs["type_connector"] = "Wire to Wire Klemens"
+        specs["pin_type"] = "Dişi"
+        specs["mounting"] = "Cable"
+        specs["pin_number"] = f"{int(pin_count)} pin"
+        # Pitch code mapping: 1.2 in DG8HS series represents 8.2mm pitch
+        if pitch_code in ("1.2", "8.2"):
+            specs["pitch"] = "8.2mm"
+        elif pitch_code in ("1.0", "10.0"):
+            specs["pitch"] = "10.0mm"
+        elif pitch_code in ("1.5", "15.0"):
+            specs["pitch"] = "15.0mm"
         return specs
 
     return specs
