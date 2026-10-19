@@ -2,8 +2,15 @@ import asyncio
 
 import httpx
 from openpyxl import Workbook, load_workbook
+import pytest
+from starlette.testclient import TestClient
 
 from bom_enricher.web import app
+
+
+@pytest.fixture
+def client():
+    return TestClient(app)
 
 
 def _request(method, url, **kwargs):
@@ -203,5 +210,26 @@ def test_web_datasheet_analyze_rejects_non_pdf(tmp_path):
     response = _request("POST", "/api/datasheet-analyze", files=multipart)
     assert response.status_code == 400
     assert "PDF" in response.json()["detail"]
+
+
+def test_datasheet_analyze_api_returns_analysis_method(client):
+    from reportlab.pdfgen import canvas
+    import io
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "Test Resistor 10k 0805")
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    response = client.post(
+        "/api/datasheet-analyze",
+        files={"file": ("test.pdf", pdf_bytes, "application/pdf")},
+        data={"part_number": "RC0805FR-0710KL", "material_type": "RES"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "analysis_method" in data
+    assert data["material_type"] == "RES"
+
 
 

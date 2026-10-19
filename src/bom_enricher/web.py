@@ -151,12 +151,25 @@ async def compare_uploads(
 
 @app.post("/api/datasheet-analyze", tags=["Datasheet"])
 async def analyze_datasheets(
-    datasheet_files: list[UploadFile] = File(...),
+    datasheet_files: list[UploadFile] = File(default=[]),
+    file: UploadFile | None = File(None),
+    datasheet_file: UploadFile | None = File(None),
     rules_file: UploadFile | None = File(None),
     part_numbers_json: str | None = Form(None),
     material_types_json: str | None = Form(None),
+    part_number: str | None = Form(None),
+    material_type: str | None = Form(None),
 ) -> dict[str, object]:
-    if not datasheet_files:
+    all_datasheet_uploads: list[UploadFile] = []
+    if file is not None and getattr(file, "filename", None):
+        all_datasheet_uploads.append(file)
+    if datasheet_file is not None and getattr(datasheet_file, "filename", None):
+        all_datasheet_uploads.append(datasheet_file)
+    for u in datasheet_files:
+        if getattr(u, "filename", None):
+            all_datasheet_uploads.append(u)
+
+    if not all_datasheet_uploads:
         raise HTTPException(status_code=400, detail="En az bir PDF datasheet dosyası yükleyin.")
 
     job_dir = tempfile.TemporaryDirectory(prefix="datasheet-analysis-")
@@ -172,12 +185,12 @@ async def analyze_datasheets(
                 raise HTTPException(status_code=400, detail="Kurallar dosyası boş.")
             rules_path = Path(job_dir.name) / "rules.xlsx"
             rules_path.write_bytes(content)
+            rulebook = load_rulebook(rules_path)
         elif DEFAULT_RULES_PATH.exists():
             rules_path = DEFAULT_RULES_PATH
+            rulebook = load_rulebook(rules_path)
         else:
-            raise HTTPException(status_code=400, detail="Lütfen Malzeme Tipleri Excel dosyasını yükleyin.")
-
-        rulebook = load_rulebook(rules_path)
+            rulebook = RuleBook()
 
         # Parse part number and material type overrides
         pn_overrides: dict[str, str] = {}
@@ -195,7 +208,7 @@ async def analyze_datasheets(
                 pass
 
         analyses = []
-        for upload in datasheet_files:
+        for upload in all_datasheet_uploads:
             fname = Path(upload.filename or "").name
             if not fname:
                 continue
@@ -204,8 +217,8 @@ async def analyze_datasheets(
             pdf_bytes = await upload.read(_MAX_UPLOAD_BYTES + 1)
             if not pdf_bytes:
                 continue
-            pn_override = pn_overrides.get(fname)
-            mat_override = mat_overrides.get(fname)
+            pn_override = pn_overrides.get(fname) or (part_number.strip() if part_number else None)
+            mat_override = mat_overrides.get(fname) or (material_type.strip() if material_type else None)
             res = analyze_single_datasheet(
                 fname,
                 pdf_bytes,
@@ -225,11 +238,16 @@ async def analyze_datasheets(
         result_id = uuid4().hex
         _store_result(result_id, report_path, job_dir)
 
+        primary = analyses[0].to_dict() if analyses else {}
         return {
+            **primary,
             "result_id": result_id,
             "count": len(analyses),
             "analyses": [a.to_dict() for a in analyses],
             "download_url": f"/api/results/{result_id}/workbook",
+            "analysis_method": primary.get("analysis_method", "deterministic_text"),
+            "material_type": primary.get("material_type", ""),
+            "part_number": primary.get("part_number", ""),
         }
     except HTTPException:
         job_dir.cleanup()
@@ -238,7 +256,7 @@ async def analyze_datasheets(
         job_dir.cleanup()
         raise HTTPException(status_code=422, detail=f"Datasheet analizi hatası: {str(exc)}") from exc
     finally:
-        for upload in datasheet_files:
+        for upload in all_datasheet_uploads:
             await upload.close()
         if rules_file is not None:
             await rules_file.close()

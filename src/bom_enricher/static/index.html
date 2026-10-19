@@ -720,6 +720,33 @@
       color: var(--blue);
       border: 1px solid var(--blue-border);
     }
+    .pill-method-fast {
+      background: #f0fdf4;
+      color: #15803d;
+      border: 1px solid #bbf7d0;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .pill-method-vision {
+      background: #f5f3ff;
+      color: #6d28d9;
+      border: 1px solid #ddd6fe;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .pill-method-text {
+      background: #f1f5f9;
+      color: #475569;
+      border: 1px solid #cbd5e1;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
 
     /* Datasheet Cards Styling */
     .datasheet-cards {
@@ -1201,6 +1228,15 @@
                   </div>
                   <button class="pick" type="button" id="ds-pdf-pick">PDF Seçin</button>
                   <input type="file" id="ds-pdf-input" accept=".pdf" multiple hidden>
+                </div>
+
+                <!-- Hedef Parça Numarası (Opsiyonel) Input -->
+                <div class="target-pn-field" style="background:#ffffff; border:1px solid var(--gray-200); border-radius:10px; padding:12px 16px; margin:4px 0;">
+                  <label for="ds-target-pn" style="display:flex; align-items:center; justify-content:space-between; font-size:13px; font-weight:600; color:var(--gray-700); margin-bottom:6px;">
+                    <span>Hedef Parça Numarası (Opsiyonel) / Target Part Number</span>
+                    <span style="font-size:11px; font-weight:400; color:var(--gray-500);">Hızlı kod çözücü veya tekil parça eşleme için</span>
+                  </label>
+                  <input type="text" id="ds-target-pn" name="part_number" class="pn-input" placeholder="Örn: RC0805FR-0710KL, CL21B104KBCNNNC..." style="width:100%; padding:9px 12px; border:1px solid var(--gray-300); border-radius:6px; font-size:13px;">
                 </div>
 
                 <!-- Selected PDF Items List with Part Number Inputs -->
@@ -1690,7 +1726,7 @@
               <span class="pdf-filename" title="${escapeHtml(f.name)}">${escapeHtml(f.name)} (${sizeMb} MB)</span>
             </div>
             <div class="pn-input-wrap">
-              <span class="pn-label">Part Number:</span>
+              <span class="pn-label">Hedef Parça Numarası (Opsiyonel):</span>
               <input type="text" class="pn-input" data-filename="${escapeHtml(f.name)}" value="${escapeHtml(pnVal)}" placeholder="Örn: RC0805JR-07300RL">
             </div>
             <div class="mat-input-wrap">
@@ -1856,9 +1892,21 @@
         if (fn) dsSelected.matMap[fn] = sel.value;
       });
 
+      const targetPnElem = document.querySelector('#ds-target-pn');
+      const targetPn = targetPnElem ? targetPnElem.value.trim() : '';
+      if (targetPn && dsSelected.pdfs.length === 1) {
+        const fn = dsSelected.pdfs[0].name;
+        if (!dsSelected.pnMap[fn] || isCatalogName(dsSelected.pnMap[fn])) {
+          dsSelected.pnMap[fn] = targetPn;
+        }
+      }
+
       const body = new FormData();
       for (const pdf of dsSelected.pdfs) {
         body.append('datasheet_files', pdf);
+      }
+      if (targetPn) {
+        body.append('part_number', targetPn);
       }
       body.append('rules_file', dsSelected.rulesFile);
       body.append('part_numbers_json', JSON.stringify(dsSelected.pnMap));
@@ -1916,6 +1964,15 @@
         const copyIdRich = `copy-rich-${idx}`;
         const copyIdCode = `copy-code-${idx}`;
 
+        let methodBadge = '';
+        if (item.analysis_method === 'fast_path') {
+          methodBadge = '<span class="pill pill-method-fast" title="Algoritmik Üretici Parça Numarası Kod Çözücü">⚡ Hızlı Kod Çözücü</span>';
+        } else if (item.analysis_method === 'hybrid_vision') {
+          methodBadge = '<span class="pill pill-method-vision" title="Vision Multimodal AI ile Görsel Tablo/Diyagram Analizi">👁️ Vision AI Destekli</span>';
+        } else {
+          methodBadge = '<span class="pill pill-method-text" title="Deterministik Kural ve Metin Motoru">📋 Metin Motoru</span>';
+        }
+
         return `
           <article class="component-card">
             <div class="component-header">
@@ -1924,6 +1981,7 @@
                 <span class="badge-tag pill-blue">${escapeHtml(item.material_type_name)}</span>
               </div>
               <div class="component-badges">
+                ${methodBadge}
                 <span class="badge-tag pill-uygun">%${Math.round(item.confidence * 100)} Güven</span>
                 <span class="badge-tag pill-gray">${escapeHtml(item.inferred_mounting)}</span>
                 <span class="badge-tag pill-gray">${escapeHtml(item.page_count)} Sayfa</span>
@@ -1981,6 +2039,7 @@
                 </div>
                 <div class="erp-box-content" style="margin-top: 4px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                   <code style="font-size: 14px; color: #1e40af; font-weight: 700;">${escapeHtml(item.suggested_erp_code)}</code>
+                  ${methodBadge}
                   ${item.suggested_erp_code.includes('0000XX') ? `
                   <span class="pill" style="background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; font-size: 11px;">
                     ℹ️ <b>0000XX:</b> DEKA ERP dahili sayaç numarasıdır (örn: 000023). Üretici datasheet'inde bulunmaz; ERP veritabanı sıra numarasıdır.
@@ -1988,7 +2047,16 @@
                   ` : ''}
                 </div>
               </div>
-              ` : ''}
+              ` : `
+              <div class="erp-box" style="margin-bottom: 12px;">
+                <div class="erp-box-label">
+                  <span>Analiz Yöntemi</span>
+                </div>
+                <div class="erp-box-content" style="margin-top: 4px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                  ${methodBadge}
+                </div>
+              </div>
+              `}
 
               <!-- Properties Breakdown Table -->
               <div>
