@@ -723,8 +723,8 @@ def test_analyze_datasheet_adopts_vlm_material_type_for_unknown():
         assert result["analysis_method"] == "hybrid_vision"
 
 
+@pytest.mark.slow
 def test_real_degson_cad_datasheet_e2e():
-    import os
     from pathlib import Path
     from bom_enricher.datasheet_analyzer import analyze_datasheet
 
@@ -750,6 +750,7 @@ def test_real_degson_cad_datasheet_e2e():
     assert result.get("erp_code") == "CONCAIB4120000XX-DE"
 
 
+@pytest.mark.slow
 def test_real_cad_pdf_without_pn_does_not_fallback_to_cap():
     from pathlib import Path
     from bom_enricher.datasheet_analyzer import analyze_datasheet
@@ -764,3 +765,4 @@ def test_real_cad_pdf_without_pn_does_not_fallback_to_cap():
     result = analyze_datasheet(file_bytes, part_number=None, filename="datasheet.pdf")
     assert result["material_type"] in ("CON", "BİLİNMİYOR")
     assert result["material_type"] != "CAP"
+
