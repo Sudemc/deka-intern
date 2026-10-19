@@ -723,4 +723,44 @@ def test_analyze_datasheet_adopts_vlm_material_type_for_unknown():
         assert result["analysis_method"] == "hybrid_vision"
 
 
+def test_real_degson_cad_datasheet_e2e():
+    import os
+    from pathlib import Path
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
 
+    pdf_path = Path(r"C:\Users\sudem\Desktop\datasheets\DG8-10-12-15HS-1.2.pdf")
+    if not pdf_path.exists():
+        pytest.skip("Local Degson PDF not found on Desktop")
+
+    with open(pdf_path, "rb") as f:
+        file_bytes = f.read()
+
+    pn = "DG8HS-1.2-12P-17-100SH/AH"
+    result = analyze_datasheet(file_bytes, part_number=pn)
+
+    # Must be classified as CON
+    assert result["material_type"] == "CON"
+    assert result["specs"].get("pin_number") == "12 pin"
+    assert result["specs"].get("pitch") == "8.2mm"
+    assert result["specs"].get("type_connector") == "Wire to Wire Klemens"
+    assert result["specs"].get("pin_type") == "Dişi"
+    assert result["specs"].get("mounting") == "Cable"
+
+    # Deterministic ERP code verification
+    assert result.get("erp_code") == "CONCAIB4120000XX-DE"
+
+
+def test_real_cad_pdf_without_pn_does_not_fallback_to_cap():
+    from pathlib import Path
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+
+    pdf_path = Path(r"C:\Users\sudem\Desktop\datasheets\DG8-10-12-15HS-1.2.pdf")
+    if not pdf_path.exists():
+        pytest.skip("Local Degson PDF not found on Desktop")
+
+    with open(pdf_path, "rb") as f:
+        file_bytes = f.read()
+
+    result = analyze_datasheet(file_bytes, part_number=None, filename="datasheet.pdf")
+    assert result["material_type"] in ("CON", "BİLİNMİYOR")
+    assert result["material_type"] != "CAP"

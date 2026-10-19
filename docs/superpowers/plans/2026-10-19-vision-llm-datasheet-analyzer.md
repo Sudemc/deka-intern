@@ -392,7 +392,7 @@ git commit -m "feat: implement multimodal hybrid fusion in datasheet analyzer"
 - Consumes: `/api/datasheet-analyze` multipart form data.
 - Produces: API response returning `analysis_method` ("fast_path", "hybrid_vision", "deterministic_text") and UI status badge.
 
-- [ ] **Step 1: Write the failing test for Web API**
+- [x] **Step 1: Write the failing test for Web API**
 
 ```python
 # In tests/test_web.py
@@ -416,12 +416,12 @@ def test_datasheet_analyze_api_returns_analysis_method(client):
     assert data["material_type"] == "RES"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_web.py::test_datasheet_analyze_api_returns_analysis_method -v`
 Expected: FAIL (missing `analysis_method`)
 
-- [ ] **Step 3: Update `web.py` and `index.html`**
+- [x] **Step 3: Update `web.py` and `index.html`**
 
 1. In `src/bom_enricher/web.py`:
    - In `/api/datasheet-analyze` route: pass `part_number` and `material_type` to `analyze_datasheet`.
@@ -434,12 +434,12 @@ Expected: FAIL (missing `analysis_method`)
        - `hybrid_vision`: `👁️ Vision AI Destekli` (blue/purple pill)
        - `deterministic_text`: `📋 Metin Motoru` (slate pill)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_web.py::test_datasheet_analyze_api_returns_analysis_method -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bom_enricher/web.py src/bom_enricher/static/index.html tests/test_web.py
@@ -457,7 +457,7 @@ git commit -m "feat: expose analysis method badge and target PN input in UI and 
 - Consumes: `C:\Users\sudem\Desktop\datasheets\DG8-10-12-15HS-1.2.pdf` or test fixture.
 - Produces: Verified end-to-end extraction producing exact ERP code `CONCAIB4120000XX-DE`.
 
-- [ ] **Step 1: Write end-to-end integration test with the actual Degson PDF**
+- [x] **Step 1: Write end-to-end integration test with the actual Degson PDF**
 
 ```python
 # In tests/test_datasheet_analyzer.py
@@ -488,17 +488,17 @@ def test_real_degson_cad_datasheet_e2e():
     assert result.get("erp_code") == "CONCAIB4120000XX-DE"
 ```
 
-- [ ] **Step 2: Run test to verify it passes**
+- [x] **Step 2: Run test to verify it passes**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_real_degson_cad_datasheet_e2e -v`
 Expected: PASS
 
-- [ ] **Step 3: Run the entire test suite**
+- [x] **Step 3: Run the entire test suite**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/ -v`
 Expected: PASS (all 97+ tests pass)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/test_datasheet_analyzer.py
