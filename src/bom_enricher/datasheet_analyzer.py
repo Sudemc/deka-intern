@@ -257,6 +257,7 @@ KNOWN_MANUFACTURERS = [
     ("harting", "Harting", "HAR"),
     ("hirose", "Hirose", "HIR"),
     ("samtec", "Samtec", "SAM"),
+    ("raltron", "Raltron", "RAL"),
 ]
 
 
@@ -1042,6 +1043,23 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
             specs["pitch"] = "15.0mm"
         return specs
 
+    # 10. Raltron Crystals: e.g. RH100-8.000-16-3030-TR-NS1
+    if pn.startswith("RH") or pn.startswith("RALTRON"):
+        specs["manufacturer"] = "Raltron"
+        ral_m = re.match(r"^RH(?:\d+)?-([0-9.]+)-([0-9.]+)", pn)
+        if ral_m:
+            f_val, cl_val = ral_m.groups()
+            if "." in f_val:
+                f_val = f_val.rstrip("0").rstrip(".")
+            specs["frequency_str"] = f"{f_val}MHz"
+            if "." in cl_val:
+                cl_val = cl_val.rstrip("0").rstrip(".")
+            specs["load_capacitance"] = f"{cl_val} pF"
+            specs["mounting"] = "SMD"
+            if pn.startswith("RH100"):
+                specs["package"] = "4-SMD"
+        return specs
+
     return specs
 
 
@@ -1181,6 +1199,16 @@ def extract_component_specs(
     file_bytes: bytes | None = None,
 ) -> dict[str, Any]:
     """Extract physical and electrical specifications from decoded PN + 2D tables + full text."""
+    # Support alternate argument orderings: (text, material_type, part_number) or (text, part_number, material_type)
+    if material_type in MATERIAL_TYPE_NAMES:
+        pass
+    elif text in MATERIAL_TYPE_NAMES:
+        material_type, text = text, material_type
+    elif part_number in MATERIAL_TYPE_NAMES:
+        material_type, text, part_number = part_number, material_type, text
+    elif len(material_type) > len(text) and len(text) <= 4:
+        material_type, text = text, material_type
+
     specs = decode_manufacturer_pn(part_number)
     pn = part_number.strip().upper()
     pn_lower = pn.lower()
@@ -1558,10 +1586,68 @@ def extract_component_specs(
 
     elif material_type == "CRY":
         # Frequency / Value
-        if "frequency_str" not in specs:
+        if "frequency_str" in specs:
+            fm = re.match(r"^(\d+(?:\.\d+)?)\s*(mhz|khz)$", str(specs["frequency_str"]), re.I)
+            if fm:
+                v = fm.group(1)
+                if "." in v:
+                    v = v.rstrip("0").rstrip(".")
+                u = "MHz" if fm.group(2).lower() == "mhz" else "kHz"
+                specs["frequency_str"] = f"{v}{u}"
+        else:
             freq_m = re.search(r"\b(\d+(?:\.\d+)?)\s*(mhz|khz)\b", text_lower)
             if freq_m:
-                specs["frequency_str"] = f"{freq_m.group(1)}{'MHz' if freq_m.group(2) == 'mhz' else 'kHz'}"
+                val_num = freq_m.group(1)
+                if "." in val_num:
+                    val_num = val_num.rstrip("0").rstrip(".")
+                unit = "MHz" if freq_m.group(2) == "mhz" else "kHz"
+                specs["frequency_str"] = f"{val_num}{unit}"
+
+        # Load Capacitance
+        if "load_capacitance" not in specs:
+            cap_m = re.search(r"\b(?:load\s+capacitance|load\s+cap|cl)[:\s=]+(\d+(?:\.\d+)?)\s*pf\b", text_lower)
+            if cap_m:
+                cap_val = cap_m.group(1)
+                if "." in cap_val:
+                    cap_val = cap_val.rstrip("0").rstrip(".")
+                specs["load_capacitance"] = f"{cap_val} pF"
+
+        # ESR (Equivalent Series Resistance)
+        if "esr" not in specs:
+            esr_m = re.search(r"\b(?:equivalent\s+series\s+resistance|esr)[:\s=]+(\d+(?:\.\d+)?)\s*(?:ohm|ω|q|Ω)\b", text_lower)
+            if esr_m:
+                esr_val = esr_m.group(1)
+                if "." in esr_val:
+                    esr_val = esr_val.rstrip("0").rstrip(".")
+                specs["esr"] = f"{esr_val}Ohm"
+
+        # Package
+        if specs.get("package") not in ("4-SMD", "2-SMD", "HC-49/SMD", "HC-49S/SMD", "HC-49/U"):
+            if (
+                any(k in text_lower for k in ("4-smd", "4 smd", "4-pad", "4 pad", "3225", "3.2x2.5", "3.2 x 2.5", "5032", "5.0x3.2", "2016", "2.0x1.6", "7050", "7.0x5.0"))
+                or re.search(r"\b4x1(?:\.\d+)?\b", text_lower)
+                or re.search(r"\b4\s*pins?\b", text_lower)
+                or pn.startswith("RH100")
+            ):
+                specs["package"] = "4-SMD"
+            elif any(k in text_lower for k in ("hc-49/smd", "hc-49smd", "hc-49s/smd", "hc-49us/smd")):
+                specs["package"] = "HC-49/SMD"
+            elif any(k in text_lower for k in ("2-smd", "2 smd", "2-pad", "2 pad")) or re.search(r"\b2\s*pins?\b", text_lower):
+                specs["package"] = "2-SMD"
+            elif any(k in text_lower for k in ("hc-49/u", "hc-49u", "hc-49s", "hc-49us")):
+                specs["package"] = "HC-49/SMD" if specs.get("mounting") == "SMD" else "HC-49/U"
+
+        # Mounting
+        if "mounting" not in specs or specs["mounting"] != "SMD":
+            if any(k in text_lower for k in ("surface mount", "smd", "smt")):
+                specs["mounting"] = "SMD"
+            elif any(k in text_lower for k in ("through hole", "through-hole", "tht")):
+                specs["mounting"] = "TH"
+
+        # Manufacturer
+        if "manufacturer" not in specs:
+            if "raltron" in text_lower or pn.startswith("RH"):
+                specs["manufacturer"] = "Raltron"
 
     elif material_type == "POT":
         # Resistance
@@ -2641,13 +2727,27 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
         return ", ".join(tokens)
 
     elif material_type == "CRY":
-        tokens = ["Quartz Crystal"]
+        mount_pkg_parts = []
+        if specs.get("mounting"):
+            mount_pkg_parts.append(specs["mounting"])
+        if specs.get("package"):
+            if specs["package"] != specs.get("mounting"):
+                mount_pkg_parts.append(specs["package"])
+        mount_pkg_str = " ".join(mount_pkg_parts).strip()
+
+        tokens = []
+        if mount_pkg_str:
+            tokens.append(mount_pkg_str)
         if specs.get("frequency_str"):
             tokens.append(specs["frequency_str"])
-        if specs.get("package"):
-            tokens.append(specs["package"])
+        if specs.get("load_capacitance"):
+            tokens.append(specs["load_capacitance"])
+        if specs.get("esr"):
+            tokens.append(specs["esr"])
         if mfr:
             tokens.append(mfr)
+        if not tokens:
+            tokens.append("Quartz Crystal")
         return ", ".join(tokens)
 
     elif material_type == "BUZ":

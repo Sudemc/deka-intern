@@ -893,4 +893,25 @@ def test_parasitic_filtering_pure_keyword_scoring():
     assert conf >= 0.70
 
 
+def test_crystal_spec_extraction_and_rich_description():
+    from bom_enricher.datasheet_analyzer import extract_component_specs, build_rich_description
+    sample_text = (
+        "SURFACE MOUNT MICROPROCESSOR CRYSTAL\n"
+        "RH100-8.000-16-3030-TR-NS1\n"
+        "RALTRON ELECTRONICS\n"
+        "NOMINAL FREQUENCY 8.000 MHz\n"
+        "LOAD CAPACITANCE 16 pF\n"
+        "EQUIVALENT SERIES RESISTANCE 400 ohm max\n"
+        "SHUNT CAPACITANCE 2 pF max\n"
+        "4x1.0 4x1.4 SOLDERING PATTERN TOP VIEW PIN CONNECTION GND 4 3 2 GND 1 3.2x2.5\n"
+    )
+    specs = extract_component_specs(sample_text, "CRY", "RH100-8.000-16-3030-TR-NS1")
+    assert specs.get("frequency_str") == "8MHz"
+    assert specs.get("load_capacitance") == "16 pF"
+    assert specs.get("esr") in ("400Ohm", "400 ohm")
+    assert specs.get("mounting") == "SMD"
+    assert specs.get("package") == "4-SMD"
+    assert specs.get("manufacturer") == "Raltron"
 
+    desc = build_rich_description("CRY", specs, sample_text)
+    assert desc == "SMD 4-SMD, 8MHz, 16 pF, 400Ohm, Raltron"
