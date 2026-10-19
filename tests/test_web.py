@@ -232,4 +232,28 @@ def test_datasheet_analyze_api_returns_analysis_method(client):
     assert data["material_type"] == "RES"
 
 
+def test_datasheet_analyze_api_works_with_missing_default_rules(client, monkeypatch, tmp_path):
+    from reportlab.pdfgen import canvas
+    import io
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "Test Resistor 10k 0805")
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    monkeypatch.setattr("bom_enricher.web.DEFAULT_RULES_PATH", tmp_path / "nonexistent_rules.xlsx")
+
+    response = client.post(
+        "/api/datasheet-analyze",
+        files={"file": ("test.pdf", pdf_bytes, "application/pdf")},
+        data={"part_number": "   RC0805FR-0710KL   ", "material_type": "   "}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "analysis_method" in data
+    assert data["analysis_method"] == "fast_path"
+    assert data["material_type"] == "RES"
+
+
+
 

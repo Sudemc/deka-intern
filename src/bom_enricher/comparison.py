@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import unicodedata
@@ -92,9 +92,9 @@ class RuleEntry:
 class RuleBook:
     """The source dictionary indexed by material type and attribute name."""
 
-    entries: tuple[RuleEntry, ...]
-    by_type_attribute: dict[str, dict[str, tuple[RuleEntry, ...]]]
-    by_attribute: dict[str, tuple[RuleEntry, ...]]
+    entries: tuple[RuleEntry, ...] = ()
+    by_type_attribute: dict[str, dict[str, tuple[RuleEntry, ...]]] = field(default_factory=dict)
+    by_attribute: dict[str, tuple[RuleEntry, ...]] = field(default_factory=dict)
 
     @property
     def material_types(self) -> set[str]:

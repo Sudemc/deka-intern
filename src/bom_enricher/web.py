@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from openpyxl.utils.exceptions import InvalidFileException
 
-from bom_enricher.comparison import compare_workbooks, load_rulebook
+from bom_enricher.comparison import RuleBook, compare_workbooks, load_rulebook
 from bom_enricher.datasheet_analyzer import (
     analyze_single_datasheet,
     generate_datasheet_excel_report,
@@ -217,8 +217,8 @@ async def analyze_datasheets(
             pdf_bytes = await upload.read(_MAX_UPLOAD_BYTES + 1)
             if not pdf_bytes:
                 continue
-            pn_override = pn_overrides.get(fname) or (part_number.strip() if part_number else None)
-            mat_override = mat_overrides.get(fname) or (material_type.strip() if material_type else None)
+            pn_override = pn_overrides.get(fname) or (part_number.strip() if part_number and part_number.strip() else None)
+            mat_override = mat_overrides.get(fname) or (material_type.strip() if material_type and material_type.strip() else None)
             res = analyze_single_datasheet(
                 fname,
                 pdf_bytes,
