@@ -915,3 +915,48 @@ def test_crystal_spec_extraction_and_rich_description():
 
     desc = build_rich_description("CRY", specs, sample_text)
     assert desc == "SMD 4-SMD, 8MHz, 16 pF, 400Ohm, Raltron"
+
+
+def test_real_raltron_crystal_datasheet_e2e():
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+    from reportlab.pdfgen import canvas
+    import io
+
+    # Synthetic multi-attribute Raltron crystal datasheet
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "SURFACE MOUNT MICROPROCESSOR CRYSTAL")
+    c.drawString(100, 730, "RALTRON ELECTRONICS - RH100-8.000-16-3030-TR-NS1")
+    c.drawString(100, 710, "NOMINAL FREQUENCY: 8.000 MHz")
+    c.drawString(100, 690, "LOAD CAPACITANCE: 16 pF")
+    c.drawString(100, 670, "EQUIVALENT SERIES RESISTANCE: 400 ohm max")
+    c.drawString(100, 650, "MECHANICAL SPECIFICATION: 3.2 x 2.5 mm, 4 PADS, TOP VIEW PIN CONNECTION GND 4, 3, 2 GND, 1")
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    pn = "RH100-8.000-16-3030-TR-NS1"
+    result = analyze_datasheet(pdf_bytes, part_number=pn)
+
+    assert result["material_type"] == "CRY"
+    assert result["specs"].get("frequency_str") == "8MHz"
+    assert result["specs"].get("load_capacitance") == "16 pF"
+    assert result["specs"].get("esr") == "400Ohm"
+    assert result["specs"].get("package") == "4-SMD"
+    assert result["specs"].get("mounting") == "SMD"
+    assert result["specs"].get("manufacturer") == "Raltron"
+
+    assert result["rich_description"] == "SMD 4-SMD, 8MHz, 16 pF, 400Ohm, Raltron"
+    assert result["erp_code"].startswith("CRYSA2")
+    assert result["erp_code"].endswith("-RA")
+    assert result["erp_code"] == "CRYSA20000XX-RA"
+
+    # Also verify when serial_counter="076" is passed
+    result_with_counter = analyze_datasheet(pdf_bytes, part_number=pn, serial_counter="076")
+    assert result_with_counter["erp_code"] == "CRYSA2076-RA"
+
+
+def test_dale_resistor_not_misattributed_to_raltron():
+    from bom_enricher.datasheet_analyzer import decode_manufacturer_pn
+    specs = decode_manufacturer_pn("RH-50")
+    assert specs.get("manufacturer") != "Raltron"
+

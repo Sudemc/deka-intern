@@ -257,7 +257,7 @@ KNOWN_MANUFACTURERS = [
     ("harting", "Harting", "HAR"),
     ("hirose", "Hirose", "HIR"),
     ("samtec", "Samtec", "SAM"),
-    ("raltron", "Raltron", "RAL"),
+    ("raltron", "Raltron", "RA"),
 ]
 
 
@@ -1044,9 +1044,9 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
         return specs
 
     # 10. Raltron Crystals: e.g. RH100-8.000-16-3030-TR-NS1
-    if pn.startswith("RH") or pn.startswith("RALTRON"):
+    ral_m = re.match(r"^RH(?:\d+)?-([0-9.]+)-([0-9.]+)", pn)
+    if ral_m or pn.startswith("RALTRON"):
         specs["manufacturer"] = "Raltron"
-        ral_m = re.match(r"^RH(?:\d+)?-([0-9.]+)-([0-9.]+)", pn)
         if ral_m:
             f_val, cl_val = ral_m.groups()
             if "." in f_val:
@@ -1638,6 +1638,8 @@ def extract_component_specs(
                 specs["package"] = "HC-49/SMD" if specs.get("mounting") == "SMD" else "HC-49/U"
 
         # Mounting
+        if str(specs.get("package", "")).endswith("SMD"):
+            specs.setdefault("mounting", "SMD")
         if "mounting" not in specs or specs["mounting"] != "SMD":
             if any(k in text_lower for k in ("surface mount", "smd", "smt")):
                 specs["mounting"] = "SMD"
@@ -1646,7 +1648,7 @@ def extract_component_specs(
 
         # Manufacturer
         if "manufacturer" not in specs:
-            if "raltron" in text_lower or pn.startswith("RH"):
+            if "raltron" in text_lower or re.match(r"^RH(?:\d+)?-[0-9.]+", pn) or pn.startswith("RALTRON"):
                 specs["manufacturer"] = "Raltron"
 
     elif material_type == "POT":
@@ -2813,6 +2815,7 @@ def analyze_datasheet(
     rulebook: RuleBook | None = None,
     filename: str = "datasheet.pdf",
     client: VisionLLMClient | None = None,
+    serial_counter: str | None = None,
 ) -> dict[str, Any]:
     """Analyze a single datasheet PDF with multimodal hybrid fusion and map to DEKA ERP format."""
     # 1. Normalize stream_or_path
@@ -2985,6 +2988,8 @@ def analyze_datasheet(
     for k, v in pn_specs.items():
         if k not in specs or specs[k] is None or specs[k] == "":
             specs[k] = v
+    if serial_counter is not None:
+        specs["serial_counter"] = serial_counter
 
     # 5. Priority 3: Vision Fusion Trigger
     is_text_empty = len(clean_text) == 0
