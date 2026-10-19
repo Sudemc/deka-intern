@@ -808,3 +808,89 @@ def test_real_cad_pdf_without_pn_does_not_fallback_to_cap():
     assert result["material_type"] in ("CON", "BİLİNMİYOR")
     assert result["material_type"] != "CAP"
 
+
+def test_crystal_with_esr_not_misclassified_as_resistor():
+    from bom_enricher.datasheet_analyzer import classify_material_type
+    sample_text = (
+        "SURFACE MOUNT MICROPROCESSOR CRYSTAL\n"
+        "RH100-8.000-16-3030-TR-NS1\n"
+        "RALTRON ELECTRONICS\n"
+        "NOMINAL FREQUENCY 8.000 MHz\n"
+        "LOAD CAPACITANCE 16 pF\n"
+        "EQUIVALENT SERIES RESISTANCE 400 ohm max\n"
+        "SHUNT CAPACITANCE 2 pF max\n"
+        "INSULATION RESISTANCE 500 Mohm min\n"
+    )
+    mat_type, conf, reason = classify_material_type(sample_text, "RH100-8.000-16-3030-TR-NS1", "")
+    assert mat_type == "CRY"
+    assert conf >= 0.95
+
+
+def test_inductor_with_dcr_not_misclassified_as_resistor():
+    from bom_enricher.datasheet_analyzer import classify_material_type
+    sample_text = (
+        "SMD POWER INDUCTOR\n"
+        "CD54-100MC\n"
+        "INDUCTANCE 10 uH\n"
+        "DC RESISTANCE 0.15 OHM MAX\n"
+        "RATED CURRENT 1.44 A\n"
+    )
+    mat_type, conf, reason = classify_material_type(sample_text, "CD54-100MC", "")
+    assert mat_type == "IND"
+    assert conf >= 0.95
+
+
+def test_diode_with_junction_capacitance_not_misclassified_as_capacitor():
+    from bom_enricher.datasheet_analyzer import classify_material_type
+    sample_text = (
+        "SURFACE MOUNT SCHOTTKY BARRIER RECTIFIER\n"
+        "SS34\n"
+        "FORWARD VOLTAGE 0.5 V\n"
+        "REVERSE LEAKAGE CURRENT 0.5 mA\n"
+        "JUNCTION CAPACITANCE 150 pF\n"
+    )
+    mat_type, conf, reason = classify_material_type(sample_text, "SS34", "")
+    assert mat_type == "DIO"
+    assert conf >= 0.95
+
+
+def test_parasitic_filtering_pure_keyword_scoring():
+    from bom_enricher.datasheet_analyzer import classify_material_type
+    # Crystal with generic PN and no title header
+    text_cry = (
+        "SPECIFICATION\n"
+        "CUSTOM-CRY-999\n"
+        "Crystal Unit\n"
+        "Load Capacitance 18 pF\n"
+        "Equivalent Series Resistance 50 ohm max\n"
+        "Shunt Capacitance 7 pF max\n"
+    )
+    mat_type, conf, reason = classify_material_type(text_cry, "CUSTOM-CRY-999", "")
+    assert mat_type == "CRY"
+    assert conf >= 0.70
+
+    # Inductor with generic PN and no title header
+    text_ind = (
+        "SPECIFICATION\n"
+        "CUSTOM-IND-999\n"
+        "Choke Coil Inductance 22 uH\n"
+        "DC Resistance 0.05 ohm\n"
+    )
+    mat_type, conf, reason = classify_material_type(text_ind, "CUSTOM-IND-999", "")
+    assert mat_type == "IND"
+    assert conf >= 0.70
+
+    # Diode with generic PN and no title header
+    text_dio = (
+        "SPECIFICATION\n"
+        "CUSTOM-DIO-999\n"
+        "Rectifier Diode\n"
+        "Forward Voltage 0.7 V\n"
+        "Junction Capacitance 50 pF\n"
+    )
+    mat_type, conf, reason = classify_material_type(text_dio, "CUSTOM-DIO-999", "")
+    assert mat_type == "DIO"
+    assert conf >= 0.70
+
+
+

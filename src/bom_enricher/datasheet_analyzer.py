@@ -430,7 +430,7 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
     # TRANSISTOR (BJT)
     ("TRA", r"\b(?:bipolar\s+(?:junction\s+)?transistor|npn\s+(?:general\s+purpose\s+)?transistor|pnp\s+(?:general\s+purpose\s+)?transistor|digital\s+transistor|darlington\s+transistor|small\s+signal\s+transistor|general\s+purpose\s+transistor)\b", "Transistör (TRA)"),
     # INDUCTOR
-    ("IND", r"\b(?:power\s+inductor|chip\s+inductor|smd\s+inductor|common\s+mode\s+choke|choke\s+coil|wire-wound\s+inductor|ferrite\s+inductor|shielded\s+power\s+inductor|molded\s+power\s+inductor)\b", "İndüktör / Bobin (IND)"),
+    ("IND", r"\b(?:power\s+choke|choke\s+coil|chip\s+inductor|power\s+inductor|smd\s+inductor|common\s+mode\s+choke|wire-wound\s+inductor|ferrite\s+inductor|shielded\s+power\s+inductor|molded\s+power\s+inductor|inductors?|chokes?)\b", "İndüktör / Bobin (IND)"),
     # VOLTAGE REGULATOR
     ("ICR", r"\b(?:voltage\s+regulator|low\s+dropout\s+(?:linear\s+)?regulator|ldo\s+regulator|linear\s+regulator|voltage\s+reference|shunt\s+regulator)\b", "Voltaj Regülatörü (ICR)"),
     # SMPS / POWER IC
@@ -440,7 +440,7 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
     # OPTOCOUPLER
     ("OPT", r"\b(?:photocoupler|optocoupler|optoisolator|phototransistor\s+optocoupler)\b", "Optokuplör (OPT)"),
     # RELAY
-    ("REL", r"\b(?:power\s+relay|miniature\s+relay|signal\s+relay|solid\s+state\s+relay|automotive\s+relay|pcb\s+relay)\b", "Röle (REL)"),
+    ("REL", r"\b(?:power\s+relay|miniature\s+relay|signal\s+relay|solid\s+state\s+relay|automotive\s+relay|pcb\s+relay|relays?)\b", "Röle (REL)"),
     # FUSE
     ("FUS", r"\b(?:resettable\s+fuse|ptc\s+fuse|smd\s+fuse|miniature\s+fuse|thermal\s+fuse|cartridge\s+fuse)\b", "Sigorta (FUS)"),
     # VARISTOR
@@ -448,9 +448,9 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
     # THERMISTOR
     ("TER", r"\b(?:ntc\s+thermistor|ptc\s+thermistor|thermistor|temperature\s+sensor)\b", "Termistör (TER)"),
     # CRYSTAL / OSCILLATOR
-    ("CRY", r"\b(?:quartz\s+crystal|crystal\s+unit|crystal\s+oscillator|ceramic\s+resonator)\b", "Kristal / Osilatör (CRY)"),
+    ("CRY", r"\b(?:(?:surface\s+mount\s+)?(?:microprocessor\s+)?crystals?|quartz\s+crystals?|crystal\s+units?|crystal\s+oscillators?|ceramic\s+resonators?|tcxo|vcxo|ocxo)\b", "Kristal / Osilatör (CRY)"),
     # SWITCH
-    ("SWT", r"\b(?:tactile\s+switch|tact\s+switch|push\s+button\s+switch|dip\s+switch|slide\s+switch|rocker\s+switch)\b", "Anahtar / Switch (SWT)"),
+    ("SWT", r"\b(?:tactile\s+switch|tact\s+switch|push\s+button\s+switch|dip\s+switch|slide\s+switch|rocker\s+switch|toggle\s+switch|rotary\s+switch|switches?)\b", "Anahtar / Switch (SWT)"),
     # FERRITE BEAD
     ("FER", r"\b(?:ferrite\s+bead|ferrite\s+chip\s+bead|chip\s+bead)\b", "Ferrit Boncuk (FER)"),
     # POTENTIOMETER
@@ -460,7 +460,7 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
     # BATTERY HOLDER / CLIP
     ("BAH", r"\b(?:battery\s+(?:holder|clip|retainer|contact)|coin\s+cell\s+(?:holder|retainer)|pil\s+(?:yuvası|tutucu|klipsi))\b", "Pil Yuvası (BAH)"),
     # TRANSFORMER
-    ("TRF", r"\b(?:current\s+transformer|pulse\s+transformer|isolation\s+transformer|flyback\s+transformer)\b", "Trafo (TRF)"),
+    ("TRF", r"\b(?:current\s+transformer|pulse\s+transformer|isolation\s+transformer|flyback\s+transformer|transformers?)\b", "Trafo (TRF)"),
     # AMPLIFIER
     ("AMP", r"\b(?:operational\s+amplifier|op\s+amp|audio\s+power\s+amplifier|instrumentation\s+amplifier)\b", "Amplifikatör (AMP)"),
     # LED
@@ -543,7 +543,7 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     if re.match(r"^(?:NTC|PTC|MF52|MF58|\d{1,2}D-[579])", pn):
         return "TER", 0.95, "Part Number termistör serisine uyuyor."
     # Crystal
-    if re.match(r"^(?:ABS\d|ABM\d|ECS-|NX\d{4})", pn):
+    if re.match(r"^(?:RH\d{2,3}|ABS\d|ABM\d|ECS-|NX\d{4}|FA-\d|TSX-\d|7M\d|9C\d|CST|SIT\d)", pn):
         return "CRY", 0.95, "Part Number kristal serisine uyuyor."
     # Inductor
     if re.match(r"^(?:NR\d{4}|CD\d{2,3}|MSS\d{4}|SRR\d{4}|IHLP)", pn):
@@ -566,28 +566,52 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
         elif re.search(pattern, text_lower):
             scores[cat] += pts * 1.0
 
+    PARASITIC_RESISTANCE_RE = r"\b(?:coil|contact|thermal|junction|insulation|equivalent\s+series|esr|dc|dcr|series|lead|conductor|winding|ground)\s+resistance\b"
+    PARASITIC_CAPACITANCE_RE = r"\b(?:load|shunt|junction|stray|parasitic|input|output|coupling|feedthrough|case)\s+capacitance\b"
+
+    non_resistor_dominant = bool(
+        re.search(r"\b(?:crystals?|oscillators?|resonators?|inductors?|chokes?|relays?|transformers?)\b", cover_lower)
+        or re.search(r"\b(?:crystals?|oscillators?|resonators?|inductors?|chokes?|relays?|transformers?)\b", text_lower)
+    )
+    non_capacitor_dominant = bool(
+        re.search(r"\b(?:crystals?|oscillators?|resonators?|diodes?|rectifiers?|tvs)\b", cover_lower)
+        or re.search(r"\b(?:crystals?|oscillators?|resonators?|diodes?|rectifiers?|tvs)\b", text_lower)
+    )
+
     # Resistor
     if any(k in text_lower or k in pn.casefold() for k in ("royal ohm", "royalohm", "royal-ohm")):
         scores["RES"] += 30.0
-    if not re.search(r"\b(?:coil|contact|thermal|junction|insulation)\s+resistance\b", text_lower):
-        _score("RES", r"\b(?:resistors?|resistance|thick\s+film|chip\s+resistor|metal\s+film)\b", 12.0)
+    if not non_resistor_dominant:
+        if not re.search(PARASITIC_RESISTANCE_RE, text_lower):
+            _score("RES", r"\b(?:resistors?|resistance|thick\s+film|chip\s+resistor|metal\s+film)\b", 12.0)
+        else:
+            _score("RES", r"\b(?:resistors?|thick\s+film|chip\s+resistor|metal\s+film)\b", 12.0)
+        _score("RES", r"\b(?:kohm|mohm|kω|mω|ohm|ω)\b", 8.0)
     else:
-        _score("RES", r"\b(?:resistors?|thick\s+film|chip\s+resistor|metal\s+film)\b", 12.0)
-    _score("RES", r"\b(?:kohm|mohm|kω|mω|ohm|ω)\b", 8.0)
+        # Non-resistor component dominant (crystal, inductor, relay, etc.):
+        # Suppress bare ohm and bare resistance scoring to avoid parasitic contamination
+        _score("RES", r"\b(?:chip\s+resistors?|metal\s+film\s+resistors?|thick\s+film\s+chip\s+resistors?)\b", 12.0)
+
     _score("RES", r"\b(?:1/16w|1/10w|1/8w|1/4w|1/2w|1w|2w)\b", 6.0)
 
     # Capacitor
-    if not re.search(r"\b(?:junction\s+capacitance|cj\s*\d+)\b", text_lower):
-        _score("CAP", r"\b(?:capacitors?|capacitance|mlcc)\b", 12.0)
+    if not non_capacitor_dominant:
+        if not re.search(PARASITIC_CAPACITANCE_RE, text_lower) and not re.search(r"\bcj\s*\d+", text_lower):
+            _score("CAP", r"\b(?:capacitors?|capacitance|mlcc)\b", 12.0)
+        else:
+            _score("CAP", r"\b(?:capacitors?|mlcc)\b", 12.0)
+        _score("CAP", r"\b(?:dielectric|x7r|c0g|np0|x5r|y5v)\b", 8.0)
+        _score("CAP", r"\b(?:picofarad|nanofarad|microfarad|pf|nf|µf|uf)\b", 6.0)
     else:
-        _score("CAP", r"\b(?:capacitors?|mlcc)\b", 12.0)
-    _score("CAP", r"\b(?:dielectric|x7r|c0g|np0|x5r|y5v)\b", 8.0)
-    _score("CAP", r"\b(?:picofarad|nanofarad|microfarad|pf|nf|µf|uf)\b", 6.0)
+        # Non-capacitor component dominant (crystal, diode, etc.):
+        # Suppress bare capacitance and bare pf/nf/uf scoring to avoid parasitic contamination
+        _score("CAP", r"\b(?:ceramic\s+chip\s+capacitors?|multilayer\s+ceramic\s+capacitors?|mlcc)\b", 12.0)
+        _score("CAP", r"\b(?:dielectric|x7r|c0g|np0|x5r|y5v)\b", 8.0)
 
     # Inductor
-    _score("IND", r"\b(?:inductors?|inductance|choke|choke\s+coil)\b", 15.0)
+    _score("IND", r"\b(?:power\s+inductor|chip\s+inductor|smd\s+inductor|inductors?|inductance|choke|choke\s+coil)\b", 15.0)
     _score("IND", r"\b(?:microhenry|millihenry|µh|uh|nh|mh)\b", 10.0)
-    _score("IND", r"\b(?:isat|irms|dcr|saturation\s+current)\b", 6.0)
+    _score("IND", r"\b(?:isat|irms|dcr|dc\s+resistance|saturation\s+current)\b", 6.0)
 
     # Diode
     _score("DIO", r"\b(?:schottky|zener|rectifiers?|diodes?|surface\s+mount\s+rectifiers?)\b", 15.0)
@@ -636,7 +660,7 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     _score("TER", r"\b(?:thermistor|ntc|ptc|b25/50|b25/85|zero\s+power\s+resistance)\b", 15.0)
 
     # Crystal
-    _score("CRY", r"\b(?:quartz\s+crystal|crystal\s+unit|crystal\s+oscillator|frequency\s+tolerance|load\s+capacitance)\b", 15.0)
+    _score("CRY", r"\b(?:quartz\s+crystal|crystal\s+unit|crystal\s+oscillator|ceramic\s+resonator|crystals?|resonators?|frequency\s+tolerance|load\s+capacitance)\b", 15.0)
 
     # Switch
     _score("SWT", r"\b(?:tactile\s+switch|tact\s+switch|push\s+button|slide\s+switch|dip\s+switch)\b", 15.0)
@@ -692,7 +716,7 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     if any(k in text_lower for k in ("royal ohm", "royalohm")):
         return "RES", 0.85, "Datasheet metnindeki direnç üreticisinden tespit edildi (RES)."
 
-    if "ohm" in text_lower:
+    if "ohm" in text_lower and not non_resistor_dominant and not re.search(PARASITIC_RESISTANCE_RE, text_lower):
         return "RES", 0.35, "Datasheet metnindeki 'ohm' ifadesinden direnç olarak tahmin edildi."
     if any(w in text_lower for w in ("housing", "connector", "circuits", "molex")):
         return "CON", 0.35, "Datasheet metnindeki konnektör terimlerinden tahmin edildi."
