@@ -39,7 +39,7 @@
 - Consumes: `part_number` in `decode_manufacturer_pn` and `classify_material_type`.
 - Produces: `decode_manufacturer_pn` returning connector specs for Degson `DG...HS` series; `classify_material_type` returning `"BİLİNMİYOR"`, 0.0 when text is empty and unclassified instead of `"CAP"`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # In tests/test_datasheet_analyzer.py
@@ -65,12 +65,12 @@ def test_empty_text_does_not_fallback_to_capacitor():
     assert conf == 0.0
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_degson_terminal_block_pn_decoding tests/test_datasheet_analyzer.py::test_empty_text_does_not_fallback_to_capacitor -v`
 Expected: FAIL (specs empty, mat_type == "CAP")
 
-- [ ] **Step 3: Implement Degson decoding and safe fallback in `datasheet_analyzer.py`**
+- [x] **Step 3: Implement Degson decoding and safe fallback in `datasheet_analyzer.py`**
 
 1. In `classify_material_type`:
    - Add `re.match(r"^DG\d+.*", pn_clean)` check to classify as `CON`.
@@ -96,17 +96,17 @@ Expected: FAIL (specs empty, mat_type == "CAP")
          return specs
      ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_degson_terminal_block_pn_decoding tests/test_datasheet_analyzer.py::test_empty_text_does_not_fallback_to_capacitor -v`
 Expected: PASS
 
-- [ ] **Step 5: Run all existing tests to ensure no regressions**
+- [x] **Step 5: Run all existing tests to ensure no regressions**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/ -v`
 Expected: PASS (all 95+ tests pass)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/bom_enricher/datasheet_analyzer.py tests/test_datasheet_analyzer.py
@@ -126,7 +126,7 @@ git commit -m "fix: add Degson PN decoder and replace blind CAP fallback with BI
 - Produces: `select_and_render_pages(pdf_bytes: bytes, target_pn: str | None = None, max_pages: int = 2, scale: float = 2.0) -> list[dict[str, Any]]`:
   Returns list of dicts with keys: `page_number` (int, 1-indexed), `base64_png` (str), `width` (int), `height` (int).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # In tests/test_pdf_renderer.py
@@ -164,12 +164,12 @@ def test_render_pdf_page_to_base64_with_pypdfium2():
     assert rendered[0]["height"] > 0
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_pdf_renderer.py -v`
 Expected: FAIL with "No module named 'bom_enricher.pdf_renderer'"
 
-- [ ] **Step 3: Implement `src/bom_enricher/pdf_renderer.py`**
+- [x] **Step 3: Implement `src/bom_enricher/pdf_renderer.py`**
 
 1. Define `select_target_pages(total_pages: int, page_texts: list[str], target_pn: str | None = None, max_pages: int = 2) -> list[int]`:
    - Page 0 is always included.
@@ -185,12 +185,12 @@ Expected: FAIL with "No module named 'bom_enricher.pdf_renderer'"
    - Save to `io.BytesIO` as PNG and encode as base64 UTF-8 string.
    - Return metadata list.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_pdf_renderer.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bom_enricher/pdf_renderer.py tests/test_pdf_renderer.py
