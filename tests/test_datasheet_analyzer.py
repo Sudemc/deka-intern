@@ -956,7 +956,52 @@ def test_real_raltron_crystal_datasheet_e2e():
 
 
 def test_dale_resistor_not_misattributed_to_raltron():
-    from bom_enricher.datasheet_analyzer import decode_manufacturer_pn
+    from bom_enricher.datasheet_analyzer import decode_manufacturer_pn, extract_component_specs
     specs = decode_manufacturer_pn("RH-50")
     assert specs.get("manufacturer") != "Raltron"
+
+    specs_ext = extract_component_specs("POWER RESISTOR RH-50 50W", "RES", "RH-50")
+    assert specs_ext.get("manufacturer") != "Raltron"
+
+
+def test_standalone_esr_caught_by_parasitic_regex_without_inflating_res():
+    import re
+    from bom_enricher.datasheet_analyzer import PARASITIC_RESISTANCE_RE, classify_material_type
+
+    # 1. Standalone ESR/DCR patterns (without the word 'resistance') match PARASITIC_RESISTANCE_RE
+    assert re.search(PARASITIC_RESISTANCE_RE, "ESR: 400 ohm max", re.IGNORECASE) is not None
+    assert re.search(PARASITIC_RESISTANCE_RE, "DCR: 0.15 ohm max", re.IGNORECASE) is not None
+    assert re.search(PARASITIC_RESISTANCE_RE, "ESR = 25", re.IGNORECASE) is not None
+    assert re.search(PARASITIC_RESISTANCE_RE, "esr(typ) 10", re.IGNORECASE) is not None
+    assert re.search(PARASITIC_RESISTANCE_RE, "DCR <= 0.05", re.IGNORECASE) is not None
+
+    # 2. Text with standalone ESR: 400 ohm max (without the word 'resistance')
+    # and an unrelated resistance mention (e.g. Solder Resistance 260 C)
+    # when non_resistor_dominant is NOT set (e.g. for a varistor or capacitor).
+    # Standalone ESR must trigger parasitic filtering, dropping bare 'resistance' from RES scoring,
+    # so RES does not get inflated (+48 pts) and does not falsely beat the actual component type.
+    text_var = (
+        "DEVICE SPECIFICATION\n"
+        "PART NO: VAR-CUSTOM-99\n"
+        "Clamping Voltage: 50V\n"
+        "ESR: 400 ohm max\n"
+        "Solder Resistance: 260C\n"
+    )
+    mat_type, conf, reason = classify_material_type(text_var, "VAR-CUSTOM-99", "")
+    assert mat_type == "VAR"
+    assert mat_type != "RES"
+
+    # Also test capacitor where non_resistor_dominant is not set:
+    text_cap = (
+        "SPECIFICATION\n"
+        "PART NO: CUST-CAP-01\n"
+        "Capacitance: 100 uF\n"
+        "ESR: 400 ohm max\n"
+        "Solder Resistance: 260C\n"
+    )
+    mat_type, conf, reason = classify_material_type(text_cap, "CUST-CAP-01", "")
+    assert mat_type == "CAP"
+    assert mat_type != "RES"
+
+
 

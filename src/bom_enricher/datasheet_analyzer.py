@@ -39,6 +39,12 @@ from bom_enricher.semantic_parser import (
     _format_ind,
 )
 
+PARASITIC_RESISTANCE_RE = (
+    r"\b(?:(?:coil|contact|thermal|junction|insulation|equivalent\s+series|esr|dc|dcr|series|lead|conductor|winding|ground)\s+resistance"
+    r"|(?:esr|dcr)\b(?:\s*[:=]|\s*\([a-z]+\))?\s*[\d.<≤]+)"
+)
+PARASITIC_CAPACITANCE_RE = r"\b(?:load|shunt|junction|stray|parasitic|input|output|coupling|feedthrough|case)\s+capacitance\b"
+
 _DEFAULT_RULEBOOK: RuleBook | None = None
 
 
@@ -567,17 +573,14 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
         elif re.search(pattern, text_lower):
             scores[cat] += pts * 1.0
 
-    PARASITIC_RESISTANCE_RE = r"\b(?:coil|contact|thermal|junction|insulation|equivalent\s+series|esr|dc|dcr|series|lead|conductor|winding|ground)\s+resistance\b"
+    PARASITIC_RESISTANCE_RE = (
+        r"\b(?:(?:coil|contact|thermal|junction|insulation|equivalent\s+series|esr|dc|dcr|series|lead|conductor|winding|ground)\s+resistance"
+        r"|(?:esr|dcr)\b(?:\s*[:=]|\s*\([a-z]+\))?\s*[\d.<≤]+)"
+    )
     PARASITIC_CAPACITANCE_RE = r"\b(?:load|shunt|junction|stray|parasitic|input|output|coupling|feedthrough|case)\s+capacitance\b"
 
-    non_resistor_dominant = bool(
-        re.search(r"\b(?:crystals?|oscillators?|resonators?|inductors?|chokes?|relays?|transformers?)\b", cover_lower)
-        or re.search(r"\b(?:crystals?|oscillators?|resonators?|inductors?|chokes?|relays?|transformers?)\b", text_lower)
-    )
-    non_capacitor_dominant = bool(
-        re.search(r"\b(?:crystals?|oscillators?|resonators?|diodes?|rectifiers?|tvs)\b", cover_lower)
-        or re.search(r"\b(?:crystals?|oscillators?|resonators?|diodes?|rectifiers?|tvs)\b", text_lower)
-    )
+    non_resistor_dominant = bool(re.search(r"\b(?:crystals?|oscillators?|resonators?|inductors?|chokes?|relays?|transformers?)\b", text_lower))
+    non_capacitor_dominant = bool(re.search(r"\b(?:crystals?|oscillators?|diodes?|rectifiers?|relays?)\b", text_lower))
 
     # Resistor
     if any(k in text_lower or k in pn.casefold() for k in ("royal ohm", "royalohm", "royal-ohm")):
@@ -1648,7 +1651,7 @@ def extract_component_specs(
 
         # Manufacturer
         if "manufacturer" not in specs:
-            if "raltron" in text_lower or re.match(r"^RH(?:\d+)?-[0-9.]+", pn) or pn.startswith("RALTRON"):
+            if "raltron" in text_lower or re.match(r"^RH(?:\d+)?-[0-9.]+-[0-9.]+", pn) or pn.startswith("RALTRON"):
                 specs["manufacturer"] = "Raltron"
 
     elif material_type == "POT":
