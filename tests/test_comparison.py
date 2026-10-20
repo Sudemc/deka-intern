@@ -83,7 +83,7 @@ def test_comparison_reports_missing_conflicting_blank_and_mounting_mismatch(tmp_
     try:
         sheet = workbook.active
         assert [cell.value for cell in sheet[1]] == [
-            "Durum", "Müşteri Part Number", "ERP Part Number", "Müşteri Qty", "ERP Qty", "Müşteri Value", "ERP Description", "Müşteri TH/SMD", "ERP TH/SMD", "Hata/Uyarı Durumu"
+            "Durum", "Müşteri Part Number", "ERP Part Number", "Müşteri Qty", "ERP Qty", "Müşteri Value", "ERP Description", "Müşteri TH/SMD", "ERP TH/SMD", "Kaynak Kart / BOM", "Müşteri Referans", "ERP Referans", "Hata/Uyarı Durumu"
         ]
         assert sheet.max_row == 6
     finally:
@@ -424,6 +424,119 @@ def test_multi_sheet_single_customer_workbook_aggregated(tmp_path):
     assert str(row["Müşteri Qty"]) == "8"
     assert str(row["ERP Qty"]) == "8"
     assert row["Durum"] == "UYGUN"
+
+
+def test_output_headers_include_source_and_references(tmp_path):
+    from bom_enricher.comparison import OUTPUT_HEADERS
+    expected_headers = (
+        "Durum",
+        "Müşteri Part Number",
+        "ERP Part Number",
+        "Müşteri Qty",
+        "ERP Qty",
+        "Müşteri Value",
+        "ERP Description",
+        "Müşteri TH/SMD",
+        "ERP TH/SMD",
+        "Kaynak Kart / BOM",
+        "Müşteri Referans",
+        "ERP Referans",
+        "Hata/Uyarı Durumu",
+    )
+    assert OUTPUT_HEADERS == expected_headers
+
+    customer, erp, _ = _source_files(tmp_path)
+    output = tmp_path / "test_headers_out.xlsx"
+    compare_workbooks(customer, erp, output_path=output)
+
+    wb = load_workbook(output, read_only=True)
+    try:
+        ws = wb.active
+        headers = [cell.value for cell in ws[1]]
+        assert headers == list(expected_headers)
+    finally:
+        wb.close()
+
+
+def test_multi_bom_source_breakdown_and_references(tmp_path):
+    file_a = tmp_path / "BoardA.xlsx"
+    file_b = tmp_path / "BoardB.xlsx"
+    erp_file = tmp_path / "ERP_Combined.xlsx"
+
+    _write_book(file_a, "BOM", ["Part Number", "Value", "Part", "Qty"], [
+        ["RC0603FR-0710KL", "10k 1%", "C1, C2", 2]
+    ])
+    _write_book(file_b, "BOM", ["Part Number", "Value", "Part", "Qty"], [
+        ["RC0603FR-0710KL", "10k 1%", "C3, C4, C5", 3]
+    ])
+    _write_book(erp_file, "ERP", ["Part Number", "Description", "Part", "Qty", "TH/SMD"], [
+        ["RC0603FR-0710KL", "10k 1% 0603 SMD", "C1, C2, C3, C4, C5", 5, "S"]
+    ])
+
+    result = compare_workbooks([file_a, file_b], erp_file)
+    assert len(result.rows) == 1
+    row = result.rows[0]
+
+    assert row["Durum"] == "UYGUN"
+    assert str(row["Müşteri Qty"]) == "5"
+    assert "BoardA.xlsx" in row["Kaynak Kart / BOM"] and "2 adet" in row["Kaynak Kart / BOM"]
+    assert "BoardB.xlsx" in row["Kaynak Kart / BOM"] and "3 adet" in row["Kaynak Kart / BOM"]
+    # Check that references are populated
+    assert "C1" in row["Müşteri Referans"]
+    assert "C5" in row["Müşteri Referans"]
+    assert "C1" in row["ERP Referans"]
+
+
+def test_prefix_delimiter_flexibility_and_unmapped_warning(tmp_path):
+    tr1_file = tmp_path / "TR1.xlsx"
+    unknown_file = tmp_path / "Unknown_Board.xlsx"
+    erp_file = tmp_path / "ERP_Delimiters.xlsx"
+
+    _write_book(tr1_file, "BOM", ["Part Number", "Value", "Part", "Qty"], [
+        ["CAP-TR1", "10uF", "C1, C2", 2]
+    ])
+    _write_book(unknown_file, "BOM", ["Part Number", "Value", "Part", "Qty"], [
+        ["RES-UNK", "1k", "R99", 1]
+    ])
+    _write_book(erp_file, "ERP", ["Part Number", "Description", "Part", "Qty", "TH/SMD"], [
+        ["CAP-TR1", "10uF SMD", "TR1.C1, TR1.C2", 2, "S"],
+        ["RES-UNK", "1k SMD", "ST1_R99, ST1_R100", 2, "S"],
+    ])
+
+    result = compare_workbooks([tr1_file, unknown_file], erp_file)
+
+    # TR1.C1 delimiter dot should be recognized as prefix TR1 and match customer TR1.xlsx C1, C2
+    tr1_row = next(r for r in result.rows if "CAP-TR1" in r["Part Number"])
+    assert tr1_row["Durum"] == "UYGUN"
+    assert "TR1_C1" in tr1_row["Müşteri Referans"]
+    assert "TR1_C2" in tr1_row["Müşteri Referans"]
+    assert "TR1_C1" in tr1_row["ERP Referans"]
+
+    # Unknown_Board.xlsx cannot be mapped to ST1 prefix (neither sheet, file, nor acronym matches)
+    unk_row = next(r for r in result.rows if "RES-UNK" in r["Part Number"])
+    assert "Önek Eşleşemedi" in unk_row["Hata/Uyarı Durumu"]
+
+
+def test_ref_diff_details_in_issue_message(tmp_path):
+    cust_file = tmp_path / "Cust.xlsx"
+    erp_file = tmp_path / "ERP.xlsx"
+
+    _write_book(cust_file, "BOM", ["Part Number", "Value", "Part", "Qty"], [
+        ["RES-DIFF", "10k", "ST1_R28, ST3_R56", 2]
+    ])
+    _write_book(erp_file, "ERP", ["Part Number", "Description", "Part", "Qty", "TH/SMD"], [
+        ["RES-DIFF", "10k SMD", "ST1_R28, ST3_R55", 2, "S"]
+    ])
+
+    result = compare_workbooks(cust_file, erp_file)
+    row = next(r for r in result.rows if "RES-DIFF" in r["Part Number"])
+
+    issue = row["Hata/Uyarı Durumu"]
+    assert "Dizgi/Referans farkı" in issue
+    assert "Fark: Müşteride Farklı/Fazla: ST3_R56 | ERP'de Farklı/Fazla: ST3_R55" in issue
+    assert "Müşteri: " in issue
+    assert "ERP: " in issue
+
 
 
 

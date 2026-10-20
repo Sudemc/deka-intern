@@ -27,6 +27,9 @@ OUTPUT_HEADERS = (
     "ERP Description",
     "Müşteri TH/SMD",
     "ERP TH/SMD",
+    "Kaynak Kart / BOM",
+    "Müşteri Referans",
+    "ERP Referans",
     "Hata/Uyarı Durumu",
 )
 _MAX_SHEET_SCAN_ROWS = 30
@@ -65,6 +68,8 @@ class PartRecord:
     duplicate: bool = False
     source_file: str = ""
     source_sheet: str = ""
+    source_breakdown: str = ""
+    unmapped_prefix: bool = False
 
 
 @dataclass(frozen=True)
@@ -150,17 +155,34 @@ def _split_multi_code(raw: str) -> list[str]:
     return expand_parentheses_variants(raw.strip())
 
 
+def _normalize_ref_token(token: str) -> str:
+    """Normalize delimiter in designator token like TR1.C1 or TR1-C1 to TR1_C1."""
+    tok = token.strip().upper()
+    parts = re.split(r"[_\.\-]", tok, maxsplit=1)
+    if len(parts) == 2 and 2 <= len(parts[0]) <= 10 and re.match(r"^[A-Z]+\d+", parts[1]):
+        return f"{parts[0]}_{parts[1]}"
+    return tok
+
+
+def _normalize_ref_string(s: str) -> str:
+    if not s:
+        return ""
+    tokens = [r.strip() for r in re.split(r"[,;|\s/]+", s) if r.strip()]
+    return ", ".join(_normalize_ref_token(t) for t in tokens)
+
+
 def _split_refs(s: str) -> set[str]:
     """Split reference designators into normalized uppercase tokens."""
-    return {t.strip().upper() for t in re.split(r"[,;|\s/]+", s or "") if t.strip()}
+    return {_normalize_ref_token(t) for t in re.split(r"[,;|\s/]+", s or "") if t.strip()}
 
 
 def _ref_base_component(ref: str) -> tuple[str, str, str]:
     """Return (board_prefix, base_ref, comp_type) from a designator token."""
-    if "_" in ref:
-        prefix, base = ref.split("_", 1)
+    norm = _normalize_ref_token(ref)
+    if "_" in norm:
+        prefix, base = norm.split("_", 1)
     else:
-        prefix, base = "", ref
+        prefix, base = "", norm
     base = base.strip().upper()
     match = re.match(r"^([A-Z]+)\d+", base)
     comp_type = match.group(1) if match else (base[:1] if base else "")
@@ -318,30 +340,46 @@ def _qualify_customer_references(
         if pfx:
             resolved_prefixes[key] = pfx
 
-    if not resolved_prefixes:
-        return customer_records
+    unmapped_keys = {key for key in sheet_refs if key not in resolved_prefixes}
 
     updated: list[PartRecord] = []
     for rec in customer_records:
         key = (rec.source_file, rec.source_sheet)
         pfx = resolved_prefixes.get(key)
+        is_unmapped = bool(unmapped_keys and key in unmapped_keys)
         if not pfx or not rec.reference.strip():
-            updated.append(rec)
+            updated.append(PartRecord(
+                part_number=rec.part_number,
+                description=rec.description,
+                mounting=rec.mounting,
+                reference=_normalize_ref_string(rec.reference),
+                material_type=rec.material_type,
+                qty=rec.qty,
+                manufacturer=rec.manufacturer,
+                package=rec.package,
+                duplicate=rec.duplicate,
+                source_file=rec.source_file,
+                source_sheet=rec.source_sheet,
+                source_breakdown=rec.source_breakdown,
+                unmapped_prefix=is_unmapped,
+            ))
             continue
 
         raw_tokens = re.split(r"([,;|\s/]+)", rec.reference)
         new_tokens: list[str] = []
         erp_bases = erp_refs_by_prefix.get(pfx, set())
         for token in raw_tokens:
-            stripped = token.strip().upper()
+            stripped = _normalize_ref_token(token.strip().upper())
             if stripped and re.match(r"^[A-Z]+\d+", stripped):
                 if not stripped.startswith(f"{pfx}_") and "_" not in stripped:
                     if stripped in erp_bases:
                         new_tokens.append(f"{pfx}_{stripped}")
                     else:
-                        new_tokens.append(token)
+                        new_tokens.append(stripped)
                 else:
-                    new_tokens.append(token)
+                    new_tokens.append(stripped)
+            elif stripped and stripped.startswith(f"{pfx}_"):
+                new_tokens.append(stripped)
             else:
                 new_tokens.append(token)
 
@@ -358,6 +396,8 @@ def _qualify_customer_references(
             duplicate=rec.duplicate,
             source_file=rec.source_file,
             source_sheet=rec.source_sheet,
+            source_breakdown=rec.source_breakdown,
+            unmapped_prefix=False,
         ))
     return updated
 
@@ -386,6 +426,7 @@ def compare_workbooks(
     sibling_groups: list[dict[str, object]] = []   # her grup: primary kod ve grubun tüm normalized kodları
     for rec in erp_raw:
         codes = _split_multi_code(rec.part_number)
+        norm_ref = _normalize_ref_string(rec.reference)
         cleaned_first = clean_part_number(rec.part_number)
         if cleaned_first and cleaned_first not in codes:
             codes.append(cleaned_first)
@@ -396,11 +437,13 @@ def compare_workbooks(
                     part_number=code,
                     description=rec.description,
                     mounting=rec.mounting,
-                    reference=rec.reference,
+                    reference=norm_ref,
                     material_type=rec.material_type,
                     qty=rec.qty,
                     manufacturer=rec.manufacturer,
                     package=rec.package,
+                    source_file=rec.source_file,
+                    source_sheet=rec.source_sheet,
                 ))
                 group.add(_normalize_code(code))
             sibling_groups.append({
@@ -408,7 +451,19 @@ def compare_workbooks(
                 "all": group,
             })
         else:
-            erp.append(rec)
+            erp.append(PartRecord(
+                part_number=rec.part_number,
+                description=rec.description,
+                mounting=rec.mounting,
+                reference=norm_ref,
+                material_type=rec.material_type,
+                qty=rec.qty,
+                manufacturer=rec.manufacturer,
+                package=rec.package,
+                duplicate=rec.duplicate,
+                source_file=rec.source_file,
+                source_sheet=rec.source_sheet,
+            ))
 
     customer_by_code = _unique_records(customer)
     erp_by_code = _unique_records(erp)
@@ -550,6 +605,9 @@ def compare_workbooks(
             issues.append("Müşteri dosyasında yinelenen Part Number")
         if erp_record and erp_record.duplicate:
             issues.append("ERP dosyasında yinelenen Part Number")
+        if customer_record and customer_record.unmapped_prefix:
+            src = customer_record.source_file or "Müşteri dosyası"
+            issues.append(f"Önek Eşleşemedi: ERP kart öneki tespit edilemedi ({src})")
 
         # Part Number eksik uyarısı (müşteri ve ERP eşleşti ama müşteri part number boş)
         if customer_record and erp_record and not c_pn:
@@ -592,7 +650,17 @@ def compare_workbooks(
             c_refs = _split_refs(customer_record.reference)
             e_refs = _split_refs(erp_record.reference)
             if c_refs and e_refs and c_refs != e_refs:
-                issues.append(f"Dizgi/Referans farkı (Müşteri: {customer_record.reference}, ERP: {erp_record.reference})")
+                c_only = sorted(c_refs - e_refs)
+                e_only = sorted(e_refs - c_refs)
+                diff_parts = []
+                if c_only:
+                    diff_parts.append(f"Müşteride Farklı/Fazla: {', '.join(c_only)}")
+                if e_only:
+                    diff_parts.append(f"ERP'de Farklı/Fazla: {', '.join(e_only)}")
+                diff_summary = f"Fark: {' | '.join(diff_parts)}; " if diff_parts else ""
+                issues.append(
+                    f"Dizgi/Referans farkı ({diff_summary}Müşteri: {customer_record.reference}, ERP: {erp_record.reference})"
+                )
 
             # 4. Müşteri Montaj vs ERP Montaj
             if customer_mounting and erp_mounting:
@@ -628,6 +696,13 @@ def compare_workbooks(
 
         customer_pn = c_pn or (customer_record.reference if customer_record else "")
         erp_pn = e_pn
+        source_label = (
+            (customer_record.source_breakdown or customer_record.source_file)
+            if customer_record
+            else ""
+        )
+        cust_reference = customer_record.reference if customer_record else ""
+        erp_reference = erp_record.reference if erp_record else ""
 
         report.append({
             "Durum": durum,
@@ -640,6 +715,9 @@ def compare_workbooks(
             "ERP Description": erp_description,
             "Müşteri TH/SMD": customer_mounting,
             "ERP TH/SMD": erp_mounting,
+            "Kaynak Kart / BOM": source_label,
+            "Müşteri Referans": cust_reference,
+            "ERP Referans": erp_reference,
             "Hata/Uyarı Durumu": issue_str,
         })
 
@@ -859,7 +937,7 @@ def write_comparison_report(rows: list[dict[str, str]], output_path: Path) -> No
                 cell.fill = row_fill
             cell.alignment = Alignment(vertical="top", wrap_text=True)
 
-    widths = (12, 28, 28, 14, 14, 36, 36, 16, 16, 44)
+    widths = (12, 28, 28, 14, 14, 32, 32, 16, 16, 32, 28, 28, 44)
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[get_column_letter(index)].width = width
     sheet.freeze_panes = "A2"
@@ -923,11 +1001,38 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
                     if is_duplicate:
                         break
 
+        # Source breakdown and combined references
+        source_counts: dict[str, int] = defaultdict(int)
+        for item in group:
+            if not item.source_file:
+                continue
+            src_label = f"{item.source_file} ({item.source_sheet})" if item.source_sheet else item.source_file
+            try:
+                source_counts[src_label] += int(float(item.qty)) if item.qty else 1
+            except (ValueError, TypeError):
+                source_counts[src_label] += 1
+
+        if len(source_counts) > 1:
+            source_breakdown = ", ".join(f"{src}: {cnt} adet" for src, cnt in source_counts.items())
+        elif len(source_counts) == 1:
+            source_breakdown = list(source_counts.keys())[0]
+        else:
+            source_breakdown = ""
+
+        all_refs_list: list[str] = []
+        for item in group:
+            for r in _split_refs(item.reference):
+                if r and r not in all_refs_list:
+                    all_refs_list.append(r)
+        combined_ref = ", ".join(all_refs_list) if all_refs_list else " | ".join(references)
+
+        is_unmapped = any(item.unmapped_prefix for item in group)
+
         result[normalized] = PartRecord(
             part_number=group[0].part_number,
             description=" | ".join(descriptions),
             mounting=" | ".join(mountings),
-            reference=" | ".join(references),
+            reference=combined_ref,
             material_type=material_types[0] if len(material_types) == 1 else "",
             qty=qty_str,
             manufacturer=" | ".join(manufacturers),
@@ -935,6 +1040,8 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
             duplicate=is_duplicate,
             source_file=", ".join(dict.fromkeys(item.source_file for item in group if item.source_file)),
             source_sheet=", ".join(dict.fromkeys(item.source_sheet for item in group if item.source_sheet)),
+            source_breakdown=source_breakdown,
+            unmapped_prefix=is_unmapped,
         )
     return result
 
