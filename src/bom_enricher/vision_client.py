@@ -22,7 +22,7 @@ class VisionLLMClient:
         self,
         base_url: str = "http://localhost:11434",
         model: str | None = None,
-        timeout: float = 15.0,
+        timeout: float = 60.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self._configured_model = model
@@ -57,6 +57,36 @@ class VisionLLMClient:
         except Exception as e:
             logger.debug("Vision LLM service not available at %s: %s", self.base_url, e)
             return False
+
+    @staticmethod
+    def _try_repair_json(text: str) -> dict[str, Any] | None:
+        """Attempt to repair truncated or unclosed JSON output from LLM."""
+        try:
+            res = json.loads(text)
+            if isinstance(res, dict):
+                return res
+        except Exception:
+            pass
+
+        # Try backwards recovery at punctuation boundaries
+        for i in range(len(text) - 1, 0, -1):
+            if text[i] in (",", "{", "}", '"'):
+                candidate = text[:i].rstrip(",")
+                # Close unclosed quote if odd count
+                if candidate.count('"') % 2 != 0:
+                    candidate += '"'
+                # Balance braces
+                open_cur = candidate.count("{")
+                close_cur = candidate.count("}")
+                if open_cur > close_cur:
+                    candidate += "}" * (open_cur - close_cur)
+                try:
+                    res = json.loads(candidate)
+                    if isinstance(res, dict):
+                        return res
+                except Exception:
+                    continue
+        return None
 
     def extract_specs_from_images(
         self,
@@ -121,20 +151,24 @@ class VisionLLMClient:
         user_prompt = "\n".join(user_prompt_lines)
 
         active_model = self._resolve_model()
+        is_moondream = "moondream" in active_model.lower()
+
+        messages: list[dict[str, Any]] = []
+        if not is_moondream:
+            messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": user_prompt, "images": images})
+        else:
+            # Moondream works best with direct user prompt without separate system role
+            messages.append({"role": "user", "content": f"{system_prompt}\n\n{user_prompt}", "images": images})
+
         payload = {
             "model": active_model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt,
-                    "images": images,
-                },
-            ],
+            "messages": messages,
             "format": "json",
+            "options": {
+                "temperature": 0.1,
+                "num_predict": 256,
+            },
             "stream": False,
         }
 
@@ -169,23 +203,87 @@ class VisionLLMClient:
             start_idx = cleaned_content.find("{")
             end_idx = cleaned_content.rfind("}")
             if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                cleaned_content = cleaned_content[start_idx : end_idx + 1]
+                json_candidate = cleaned_content[start_idx : end_idx + 1]
+            else:
+                json_candidate = cleaned_content
 
-            parsed = json.loads(cleaned_content)
+            parsed = None
+            try:
+                parsed = json.loads(json_candidate)
+            except Exception:
+                parsed = self._try_repair_json(json_candidate)
+
+            # Heuristic text fallback if JSON parsing failed completely
+            if not isinstance(parsed, dict) or ("material_type" not in parsed and "specs" not in parsed):
+                extracted_specs: dict[str, Any] = {}
+                mat_type = None
+
+                # Detect material type from text
+                m_type = re.search(r"(?:Type|Component|Material(?:\s*Type)?)\s*[:=]\s*([A-Za-z0-9_-]+)", cleaned_content, re.IGNORECASE)
+                if m_type:
+                    cand = m_type.group(1).upper()
+                    if cand in ("CON", "RES", "CAP", "IND", "DIO", "TRA", "CRY", "DSP", "FUS", "REL", "SWI"):
+                        mat_type = cand
+                    elif "CONNECTOR" in cand or "HEADER" in cand or "TERMINAL" in cand:
+                        mat_type = "CON"
+                    elif "RESISTOR" in cand:
+                        mat_type = "RES"
+                    elif "CAPACITOR" in cand:
+                        mat_type = "CAP"
+                    elif "DIODE" in cand:
+                        mat_type = "DIO"
+                    elif "TRANSISTOR" in cand or "MOSFET" in cand:
+                        mat_type = "TRA"
+                    elif "CRYSTAL" in cand or "OSCILLATOR" in cand:
+                        mat_type = "CRY"
+                    elif "DISPLAY" in cand:
+                        mat_type = "DSP"
+
+                # Pitch
+                pitch_m = re.search(r"\b(?:pitch|spacing)\b\s*[:=]?\s*([0-9.]+)\s*(?:mm)?", cleaned_content, re.IGNORECASE)
+                if pitch_m:
+                    extracted_specs["pitch"] = f"{pitch_m.group(1)}mm"
+
+                # Pin count
+                pin_m = re.search(
+                    r"(?:(?:pin(?:s|\s*number|\s*count)?|positions?|poles?)\s*[:=]?\s*(\d+))|(?:\b(\d+)\s*(?:pin|pins|position|positions|pole|poles)\b)",
+                    cleaned_content,
+                    re.IGNORECASE,
+                )
+                if pin_m:
+                    p_val = pin_m.group(1) or pin_m.group(2)
+                    extracted_specs["pin_number"] = f"{p_val} pin"
+
+                # Mounting
+                if re.search(r"\b(?:through[- ]hole|th)\b", cleaned_content, re.IGNORECASE):
+                    extracted_specs["mounting"] = "TH"
+                elif re.search(r"\b(?:surface[- ]mount|smd|smt)\b", cleaned_content, re.IGNORECASE):
+                    extracted_specs["mounting"] = "SMD"
+
+                if mat_type or extracted_specs:
+                    parsed = {
+                        "material_type": mat_type or material_type_hint or "CON",
+                        "confidence": 0.75,
+                        "manufacturer": None,
+                        "specs": extracted_specs,
+                    }
+
             if not isinstance(parsed, dict):
-                logger.warning("Vision LLM response is not a JSON object for %s", clean_pn)
+                logger.warning("Vision LLM response could not be parsed into a dict for %s", clean_pn)
                 return None
 
             # Validate schema
             if "material_type" not in parsed or not isinstance(parsed["material_type"], str):
-                logger.warning("Missing or invalid 'material_type' in Vision LLM response for %s", clean_pn)
-                return None
+                if material_type_hint:
+                    parsed["material_type"] = material_type_hint
+                else:
+                    logger.warning("Missing or invalid 'material_type' in Vision LLM response for %s", clean_pn)
+                    return None
 
             if "specs" not in parsed or not isinstance(parsed["specs"], dict):
-                logger.warning("Missing or invalid 'specs' dict in Vision LLM response for %s", clean_pn)
-                return None
+                parsed["specs"] = {}
 
-            # Normalize property keys to internal schema
+            # Normalize property keys to internal schema & filter out placeholder strings
             raw_specs = parsed.get("specs", {})
             normalized_specs: dict[str, Any] = {}
             key_aliases = {
@@ -211,7 +309,20 @@ class VisionLLMClient:
                 "pkg": "package",
                 "case": "package",
             }
+
+            def _is_valid(val: Any) -> bool:
+                if val is None:
+                    return False
+                s = str(val).strip()
+                if not s or s in ("...", "N/A", "null", "None", "<...>", "—"):
+                    return False
+                if s.startswith("<") and s.endswith(">"):
+                    return False
+                return True
+
             for k, v in raw_specs.items():
+                if not _is_valid(v):
+                    continue
                 normalized_specs[k] = v
                 norm_k = key_aliases.get(k.lower().strip())
                 if norm_k and norm_k != k:
@@ -224,8 +335,11 @@ class VisionLLMClient:
             else:
                 parsed["confidence"] = 0.8
 
-            if "manufacturer" not in parsed or not isinstance(parsed["manufacturer"], (str, type(None))):
+            mfr_val = parsed.get("manufacturer")
+            if not _is_valid(mfr_val):
                 parsed["manufacturer"] = None
+            else:
+                parsed["manufacturer"] = str(mfr_val).strip()
 
             return parsed
 

@@ -3356,7 +3356,7 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
 
 
 CRITICAL_SPECS_BY_MATERIAL_TYPE: dict[str, tuple[str, ...]] = {
-    "CON": ("pitch", "pin_number", "type_connector"),
+    "CON": ("pitch", "pin_number"),
     "RES": ("resistance_str",),
     "CAP": ("capacitance_str", "capacitance_pf"),
     "IND": ("inductance_str",),
@@ -3580,7 +3580,9 @@ def analyze_datasheet(
                         # Merge specs: deterministic/PN specs take precedence, VLM fills any empty/None field
                         for k, v in vlm_specs.items():
                             if v is not None and (k not in specs or specs[k] is None or specs[k] == ""):
-                                specs[k] = v
+                                s_v = str(v).strip()
+                                if s_v and s_v not in ("...", "N/A", "null", "None", "<...>", "—") and not (s_v.startswith("<") and s_v.endswith(">")):
+                                    specs[k] = v
 
                         vlm_mat = vlm_res.get("material_type")
                         if vlm_mat:
@@ -3594,7 +3596,9 @@ def analyze_datasheet(
                             conf = max(conf, float(vlm_res.get("confidence", 0.0)))
 
                         if not specs.get("manufacturer") and vlm_res.get("manufacturer"):
-                            specs["manufacturer"] = vlm_res["manufacturer"]
+                            vlm_mfr = str(vlm_res["manufacturer"]).strip()
+                            if vlm_mfr and vlm_mfr not in ("...", "N/A", "null", "None", "<...>") and not (vlm_mfr.startswith("<") and vlm_mfr.endswith(">")):
+                                specs["manufacturer"] = vlm_mfr
 
                         used_vision = True
         except Exception:

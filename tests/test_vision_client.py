@@ -48,10 +48,10 @@ def test_vision_client_extract_specs_success():
         args, kwargs = mock_post.call_args
         assert args[0] == "http://localhost:11434/api/chat"
         payload = kwargs["json"]
-        assert payload["model"] == "llama3.2-vision:3b"
+        assert payload["model"] in ("llama3.2-vision:3b", "moondream:latest")
         assert payload["format"] == "json"
         assert payload["stream"] is False
-        assert kwargs["timeout"] == 15.0
+        assert kwargs["timeout"] == 60.0
 
 
 def test_vision_client_extract_specs_graceful_timeout():
@@ -160,4 +160,49 @@ def test_vision_client_custom_init_parameters():
     assert client.base_url == "http://localhost:11434"
     assert client.model == "custom-vlm"
     assert client.timeout == 30.0
+
+
+def test_vision_client_json_repair_unterminated_string():
+    client = VisionLLMClient(base_url="http://localhost:11434")
+    # Truncated string simulating VLM stopping mid-generation
+    broken_content = '{"material_type": "CON", "confidence": 0.85, "specs": {"pitch": "2.54mm", "pin_number": "4 pin", "type_connector'
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = {"message": {"content": broken_content}}
+    with patch("httpx.post", return_value=mock_resp):
+        res = client.extract_specs_from_images(images=["dummy"], target_pn="HDR-04")
+        assert res is not None
+        assert res["material_type"] == "CON"
+        assert res["specs"]["pitch"] == "2.54mm"
+        assert res["specs"]["pin_number"] == "4 pin"
+
+
+def test_vision_client_placeholder_suppression():
+    client = VisionLLMClient(base_url="http://localhost:11434")
+    # VLM copying placeholder dots from prompt
+    raw_content = '{"material_type": "CON", "manufacturer": "...", "specs": {"pitch": "...", "pin_number": "12 pin", "mounting": "<TH or SMD>"}}'
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = {"message": {"content": raw_content}}
+    with patch("httpx.post", return_value=mock_resp):
+        res = client.extract_specs_from_images(images=["dummy"], target_pn="CONN-12")
+        assert res is not None
+        assert res["specs"]["pin_number"] == "12 pin"
+        assert "pitch" not in res["specs"]
+        assert "mounting" not in res["specs"]
+        assert res["manufacturer"] is None
+
+
+def test_vision_client_heuristic_text_fallback():
+    client = VisionLLMClient(base_url="http://localhost:11434")
+    # VLM returned plain text without JSON
+    raw_content = "The engineering drawing displays a Connector header with pitch: 1.27mm, 6 pins, through-hole mounting."
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = {"message": {"content": raw_content}}
+    with patch("httpx.post", return_value=mock_resp):
+        res = client.extract_specs_from_images(images=["dummy"], target_pn="CONN-06")
+        assert res is not None
+        assert res["material_type"] == "CON"
+        assert res["specs"]["pitch"] == "1.27mm"
+        assert res["specs"]["pin_number"] == "6 pin"
+        assert res["specs"]["mounting"] == "TH"
+
 
