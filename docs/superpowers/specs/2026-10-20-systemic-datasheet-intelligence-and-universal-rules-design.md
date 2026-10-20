@@ -84,10 +84,12 @@ Implement a truly systemic, data-driven architecture that:
      - Clean `value_description` (strip trailing commas, clean whitespace).
      - Extract normalized search tokens (e.g. `Panjit International Inc.` -> `panjit`, `panjit international`).
      - Remove common company suffixes (`Inc`, `Co., Ltd.`, `Corp`, `Electronics`, `Semiconductor`, `ALT 1`) to generate high-precision regex match patterns.
-     - Sort manufacturer patterns by length descending so specific names match before general substrings.
+     - **Disambiguation & Collision Blacklist (Builder Call):** Generic words that collide with component categories (specifically manufacturer code `DI` described as `"Diodes"`, or words like `"Resistors"`, `"Capacitors"`, `"Connectors"`) are excluded from naked search; they must be qualified with corporate terms (e.g. `"diodes inc"`, `"diodes incorporated"`).
+     - **Authoritative Precedence:** `KNOWN_MANUFACTURERS` acts as an authoritative curated alias layer, checked before or merging with dynamically generated patterns.
+     - Sort manufacturer patterns by length descending so specific multi-word names match before general substrings.
 2. **Datasheet Analyzer Integration (`src/bom_enricher/datasheet_analyzer.py`):**
    - `extract_component_specs` receives `rulebook: RuleBook | None = None`.
-   - When extracting manufacturer, it matches against `rulebook.manufacturers` if available, falling back to `KNOWN_MANUFACTURERS` seed list.
+   - When extracting manufacturer, it matches against the curated alias layer and dynamic registry.
    - Any manufacturer appearing in `rules.xlsx` is recognized automatically across all 67 material categories without writing Python code.
 
 ### Pillar 2: Non-Destructive Fast-Path & Complete Text Awareness
@@ -95,16 +97,19 @@ Implement a truly systemic, data-driven architecture that:
    - In `analyze_datasheet`, eliminate the assignment `text = ""` under `if pn_has_core:`.
    - PDF text extraction via `extract_pdf_data` is ALWAYS performed if `file_bytes` is present.
    - The fast-path optimization is scoped strictly where it belongs: bypassing heavy 2D vector CAD table parsing (`file_bytes=None` passed to table extraction), keeping execution time <150ms while retaining full text searchability.
-2. **Unified Spec Merging:**
-   - Specifications extracted from PDF text are merged with specifications decoded from the part number.
-   - Part number decoding provides ground truth for exact electrical ratings (e.g. `20V`, `500mA`), while document text provides mechanical package (`SOD-123`), manufacturer branding, and mounting notes.
+2. **Merge Precedence (Builder Call):**
+   - Ground-truth precedence: Part number decoding is authoritative for parameters it explicitly decodes (e.g. `0603` package and `10K` resistance on chip resistor PNs; `20V` and `500mA` on `SS0520` diode).
+   - Document text fills all remaining missing fields (e.g. `SOD-123` package and `Panjit` manufacturer for `SS0520`).
+   - Merge rule: `pn_specs` values overwrite text extracted values only for fields present in `pn_specs`, ensuring family datasheets listing multiple packages do not contaminate decoded passive packages.
 
 ### Pillar 3: Null/Default Standard Rule Fallback
-1. **Standard Commercial Fallback in `map_specs_to_erp`:**
-   - Across components (`DIO`, `TRA`, `FET`, `ICS`, etc.), attributes like `Special Definition - ALL` or secondary qualifiers define standard commercial grade as `None` or `0` in `rules.xlsx`.
+1. **Scope & Guardrails (Builder Call):**
+   - Strictly restricted to attributes matching `specialdefinition...` (e.g. `Special Definition - ALL`, `Special Definition - Transistors`, `Special Definition - Capacitors`, `Special Definition - Resistors`).
+   - Core functional attributes (`Package`, `Mounting`, `Wattage`, `Pin Number`, `Pitch`, `Value`) NEVER silently default to zero. If missing, they remain `BULUNAMADI`.
+2. **Zero Formatting & Description Suppression (Builder Call):**
    - When `specs` has no explicit modifier (e.g. no `Automotive AEC-Q...` text found), and a rule entry exists with `value in (0, "0")` or `value_description in (None, "", "Standart", "Standard")`:
-     - Automatically select this entry as the standard commercial default.
-     - If the attribute is a fixed 2-character field (like `Special Definition - ALL` whose other values are `AU`, `AC`, `AE`), format the numeric `0` as `"00"`.
+     - Dynamically inspect peer values for this attribute: if max sibling code length is 2 (e.g. `AU`, `AC`, `AE` in `DIO`), format numeric `0` as `"00"`. If max sibling code length is 1 (e.g. `A` in `TRA`), format as `"0"`.
+     - Standard default qualifiers (`"Standart"`, `"None"`, `"General"`, `""`) are suppressed from description tokens (`suggested_desc` / `rich_description`), preserving clean engineering descriptions without clutter.
      - Mark status as `TAM EŞLEŞTİ` with matched value `"Standart"`.
 
 ---
@@ -127,9 +132,11 @@ Implement a truly systemic, data-driven architecture that:
 
 1. **Universal Manufacturer Tests:**
    - Verify that manufacturers present in `rules.xlsx` but never hardcoded in Python (e.g., `Qualitek` -> `QA`, `Kepo` -> `KE`, `Piher` -> `PI`) are recognized directly from PDF text.
+   - Verify that manufacturer code `DI` does NOT false-match arbitrary diode texts.
 2. **Complete Text Extraction Tests:**
-   - Verify that parts with decoded part numbers (e.g. `SS0520`, `RC0603FR-0710KL`) still extract case/package and manufacturer from PDF text.
+   - Verify that parts with decoded part numbers (e.g. `SS0520`, `RC0603FR-0710KL`) still extract case/package and manufacturer from PDF text without regressing package accuracy.
 3. **Null/Default Fallback Tests:**
-   - Verify that standard commercial diodes and transistors map `Special Definition` to `00` without manual overrides.
+   - Verify that standard commercial diodes map `Special Definition` to `00`, while transistors map to `0`.
 4. **Full Regression Suite:**
    - All 151 existing tests must pass with zero errors.
+
