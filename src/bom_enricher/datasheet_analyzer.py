@@ -264,6 +264,7 @@ KNOWN_MANUFACTURERS = [
     ("hirose", "Hirose", "HIR"),
     ("samtec", "Samtec", "SAM"),
     ("raltron", "Raltron", "RA"),
+    ("foryard", "Foryard", "FO"),
 ]
 
 
@@ -476,6 +477,8 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
     ("CON", r"\b(?:wire-to-board|board-to-board|pin\s+header|terminal\s+block|receptacle\s+housing|pcb\s+connector|crimp\s+housing|wafer\s+connector|box\s+header)\b", "Konnektör (CON)"),
     # ANTENNA
     ("ANT", r"\b(?:triple\s+band\s+(?:embedded\s+)?antenna|embedded\s+antenna|chip\s+antenna|pcb\s+antenna|rf\s+antenna|wifi\s+antenna|patch\s+antenna|dipole\s+antenna|antennas?)\b", "Anten (ANT)"),
+    # DISPLAY
+    ("DSP", r"\b(?:(?:seven|7)[\s-]segment\s+displays?|digits?\s+displays?|character\s+lcd|graphic\s+lcd|tft\s+displays?|oled\s+displays?|dotmatrix\s+displays?)\b", "Display (DSP)"),
 ]
 
 
@@ -555,6 +558,9 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     # Inductor
     if re.match(r"^(?:NR\d{4}|CD\d{2,3}|MSS\d{4}|SRR\d{4}|IHLP)", pn):
         return "IND", 0.95, "Part Number indüktör serisine uyuyor."
+    # Display (DSP): Foryard FYQ-, FYS-, FYD-, FYT-
+    if re.match(r"^FY[QSTD]-\d{4}", pn):
+        return "DSP", 0.98, "Part Number standart Foryard display serisine uyuyor."
 
     # ── 3. WEIGHTED TEXT KEYWORD SCORING (Cover: 4x weight, Rest: 1x weight) ──
     scores: dict[str, float] = {
@@ -563,7 +569,7 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
         "LED": 0.0, "CON": 0.0, "REL": 0.0, "FUS": 0.0, "VAR": 0.0,
         "TER": 0.0, "CRY": 0.0, "SWT": 0.0, "FER": 0.0, "POT": 0.0,
         "BUZ": 0.0, "TRF": 0.0, "TRI": 0.0, "SCR": 0.0, "AMP": 0.0,
-        "FLT": 0.0, "ANT": 0.0, "BAH": 0.0,
+        "FLT": 0.0, "ANT": 0.0, "BAH": 0.0, "DSP": 0.0,
     }
 
     def _score(cat: str, pattern: str, pts: float):
@@ -686,6 +692,9 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
 
     # Amplifier
     _score("AMP", r"\b(?:operational\s+amplifier|op\s+amp|gain\s+bandwidth|slew\s+rate)\b", 15.0)
+
+    # Display (DSP)
+    _score("DSP", r"\b(?:7[\s-]segment|seven\s+segment|digits?\s+display|tft|lcd|oled)\b", 15.0)
 
     best_type = max(scores, key=scores.get)
     best_score = scores[best_type]
@@ -1061,6 +1070,49 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
             specs["mounting"] = "SMD"
             if pn.startswith("RH100"):
                 specs["package"] = "4-SMD"
+        return specs
+
+    # 11. Foryard Displays: e.g. FYQ-5643CUW-21, FYS-5611DUR-11
+    foryard_m = re.match(r"^FY([QSTD])-(\d{2})\d{2}([CD])([A-Z]+)", pn)
+    if foryard_m:
+        digit_code, height_code, pol_code, color_code = foryard_m.groups()
+        specs["manufacturer"] = "Foryard"
+        specs["mounting"] = "TH"
+        specs["type_display"] = "7 Segment Display"
+
+        digit_map = {
+            "Q": "4 Digit",
+            "D": "2 Digit",
+            "T": "3 Digit",
+            "S": "1 Digit",
+        }
+        if digit_code in digit_map:
+            specs["digits"] = digit_map[digit_code]
+
+        if pol_code == "C":
+            specs["polarity"] = "COM-"
+        elif pol_code == "D":
+            specs["polarity"] = "COM+"
+
+        color_map = {
+            "UW": "Beyaz",
+            "W": "Beyaz",
+            "UR": "Kırmızı",
+            "R": "Kırmızı",
+            "UG": "Yeşil",
+            "G": "Yeşil",
+            "UB": "Mavi",
+            "B": "Mavi",
+            "UY": "Sarı",
+            "Y": "Sarı",
+        }
+        if color_code in color_map:
+            specs["color"] = color_map[color_code]
+        elif len(color_code) >= 2 and color_code[:2] in color_map:
+            specs["color"] = color_map[color_code[:2]]
+        elif len(color_code) >= 1 and color_code[:1] in color_map:
+            specs["color"] = color_map[color_code[:1]]
+
         return specs
 
     return specs

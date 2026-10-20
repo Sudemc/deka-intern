@@ -1004,4 +1004,60 @@ def test_standalone_esr_caught_by_parasitic_regex_without_inflating_res():
     assert mat_type != "RES"
 
 
+def test_dsp_classification_from_title_and_pn():
+    from bom_enricher.datasheet_analyzer import classify_material_type
+    sample_text = (
+        "NINGBO FORYARD OPTOELECTRONICS CO.,LTD\n"
+        "PRODUCT SPECIFICATION\n"
+        "Model No.: FYQ-5643C/DX-XX\n"
+        "Descriptions & Features:\n"
+        "0.56Inch (14.20mm) digit height Four Digits Display\n"
+        "Case mold type.\n"
+        "Easy mounting on P.C. board or socket.\n"
+    )
+    mat_type, conf, reason = classify_material_type(sample_text, "FYQ-5643CUW-21", "")
+    assert mat_type == "DSP"
+    assert conf >= 0.95
+
+    # Test PN prefix high-confidence classification without text
+    mat_type_pn, conf_pn, _ = classify_material_type("", "FYQ-5643CUW-21", "")
+    assert mat_type_pn == "DSP"
+    assert conf_pn >= 0.95
+
+
+def test_foryard_pn_decoding():
+    from bom_enricher.datasheet_analyzer import decode_manufacturer_pn
+    # Common Cathode White 4-digit
+    specs = decode_manufacturer_pn("FYQ-5643CUW-21")
+    assert specs.get("manufacturer") == "Foryard"
+    assert specs.get("mounting") == "TH"
+    assert specs.get("type_display") == "7 Segment Display"
+    assert specs.get("color") == "Beyaz"
+    assert specs.get("polarity") == "COM-"
+    assert specs.get("digits") == "4 Digit"
+
+    # Common Anode Red 1-digit
+    specs_anode = decode_manufacturer_pn("FYS-5611DUR-11")
+    assert specs_anode.get("polarity") == "COM+"
+    assert specs_anode.get("color") == "Kırmızı"
+    assert specs_anode.get("digits") == "1 Digit"
+
+    # 2-Digit Green Common Cathode
+    specs_dual = decode_manufacturer_pn("FYD-5621CUG-21")
+    assert specs_dual.get("digits") == "2 Digit"
+    assert specs_dual.get("polarity") == "COM-"
+    assert specs_dual.get("color") == "Yeşil"
+
+    # 3-Digit Blue Common Anode
+    specs_triple = decode_manufacturer_pn("FYT-5631DUB-11")
+    assert specs_triple.get("digits") == "3 Digit"
+    assert specs_triple.get("polarity") == "COM+"
+    assert specs_triple.get("color") == "Mavi"
+
+    # Yellow color
+    specs_yellow = decode_manufacturer_pn("FYD-5621DUY-11")
+    assert specs_yellow.get("color") == "Sarı"
+
+
+
 
