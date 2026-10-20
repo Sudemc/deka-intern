@@ -106,7 +106,7 @@ git commit -m "feat: load dynamic 644-manufacturer registry from rules.xlsx with
 - Consumes: `file_bytes`, `pn`, `pn_specs` in `analyze_datasheet`.
 - Produces: `extract_pdf_data` always called when `file_bytes` is present; table extraction bypassed on fast-path; `pn_specs` merged cleanly without overwriting document-level text fields.
 
-- [ ] **Step 1: Write failing test verifying text extraction is never suppressed on fast-path parts**
+- [x] **Step 1: Write failing test verifying text extraction is never suppressed on fast-path parts**
 
 ```python
 # In tests/test_datasheet_analyzer.py
@@ -130,23 +130,23 @@ def test_fast_path_never_suppresses_pdf_text():
     assert result["specs"].get("manufacturer") == "Panjit"
 ```
 
-- [ ] **Step 2: Run test to verify it passes or fails**
+- [x] **Step 2: Run test to verify it passes or fails**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_fast_path_never_suppresses_pdf_text -v`
 
-- [ ] **Step 3: Refactor `analyze_datasheet` to cleanly separate text extraction from table extraction**
+- [x] **Step 3: Refactor `analyze_datasheet` to cleanly separate text extraction from table extraction**
 
 1. Remove `text = ""` assignment in `analyze_datasheet`.
 2. Always execute `text, page_count, analyzed_pages = extract_pdf_data(file_bytes, part_number=pn)` whenever `file_bytes` is provided.
 3. Keep fast-path speed bypass strictly where it belongs: `effective_file_bytes = None if pn_has_core else file_bytes` passed to `extract_component_specs` (skipping heavy 2D vector CAD table analysis).
 4. Merge precedence: `for k, v in pn_specs.items(): specs[k] = v` ensuring decoded electrical parameters remain authoritative while text supplies missing package and manufacturer.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_fast_path_never_suppresses_pdf_text -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bom_enricher/datasheet_analyzer.py tests/test_datasheet_analyzer.py
