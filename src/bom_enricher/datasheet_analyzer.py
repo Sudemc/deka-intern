@@ -2131,6 +2131,8 @@ def _find_candidate_specs_for_attribute(
 
 def _is_dimension_part_present(part: str, text: str) -> bool:
     """Check if a dimension part (or its synonyms) is present as a token/phrase in text."""
+    part = part.casefold()
+    text = text.casefold()
     p_pat = rf"(?:^|[\s,;/]){re.escape(part)}(?:$|[\s,;/])"
     if re.search(p_pat, text):
         return True
@@ -2187,11 +2189,11 @@ def _match_spec_to_entries(
                 return e, "TAM EŞLEŞTİ"
 
     # Pass 4: Token set overlap
-    v_tokens = set(re.findall(r"[A-Za-z0-9\+\-]+", val_clean))
+    v_tokens = set(re.findall(r"[\w\+\-]+", val_clean))
     if len(v_tokens) >= 2:
         for e in entries:
             desc = (e.value_description or "").strip().rstrip(",").strip().casefold()
-            d_tokens = set(re.findall(r"[A-Za-z0-9\+\-]+", desc))
+            d_tokens = set(re.findall(r"[\w\+\-]+", desc))
             if v_tokens and v_tokens == d_tokens:
                 return e, "TAM EŞLEŞTİ"
 
@@ -3141,7 +3143,7 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
         special_def = specs.get("special_def_display") or specs.get("special_def", "")
         if not special_def and specs.get("digits") and specs.get("polarity"):
             special_def = f"{specs['digits']}, {specs['polarity']}"
-        special_def = str(special_def).strip()
+        special_def = str(special_def).strip().rstrip(",")
 
         first_part = f"{mounting} {type_display}".strip() if mounting else type_display
         parts = [first_part] if first_part else []
