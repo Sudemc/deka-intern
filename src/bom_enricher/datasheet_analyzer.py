@@ -265,6 +265,8 @@ KNOWN_MANUFACTURERS = [
     ("samtec", "Samtec", "SAM"),
     ("raltron", "Raltron", "RA"),
     ("foryard", "Foryard", "FO"),
+    ("panjit semiconductor", "Panjit", "PA"),
+    ("panjit", "Panjit", "PA"),
 ]
 
 
@@ -1115,6 +1117,24 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
 
         return specs
 
+    # 12. Standard Schottky Diodes (SS series: e.g. SS0520, SS0530, SS0540, SS12, SS14, SS24, SS34, SS54, SS110)
+    ss_m = re.match(r"^SS(05|[1-9])(\d{1,2})$", pn)
+    if ss_m:
+        cur_code, volt_code = ss_m.groups()
+        specs["type_diode"] = "Schottky"
+        specs["mounting"] = "SMD"
+        specs["value_diode"] = pn
+        if cur_code == "05":
+            specs["current"] = "500mA"
+        else:
+            specs["current"] = f"{int(cur_code)}A"
+
+        if len(volt_code) == 1:
+            specs["voltage"] = f"{int(volt_code) * 10}V"
+        else:
+            specs["voltage"] = f"{int(volt_code)}V"
+        return specs
+
     return specs
 
 
@@ -1451,6 +1471,53 @@ def extract_component_specs(
         # Diode Value / PN
         if "value_diode" not in specs:
             specs["value_diode"] = part_number.strip()
+
+        # Diode Package
+        if "package" not in specs:
+            pkg_dio_m = re.search(r"\b(?:case|package)?[:\s-]*(sod-?123(?:w|f)?|sod-?323|sod-?523|sma|smb|smc|sot-?23|do-?214(?:ac|aa|ab)|do-?15|melf|minimelf)\b", text_lower)
+            if pkg_dio_m:
+                raw_p = pkg_dio_m.group(1).upper().replace("-", "")
+                specs["package"] = raw_p
+
+        # Diode Voltage
+        if "voltage" not in specs:
+            v_m = re.search(rf"\b{re.escape(pn)}\b.*?(\d+)\s*v\b", text_lower, re.DOTALL)
+            if not v_m:
+                v_m = re.search(r"\b(?:v_?rrm|v_?dc|peak\s+reverse\s+voltage|blocking\s+voltage)[:\s=]+(\d+)\s*v?\b", text_lower)
+            if not v_m:
+                v_range_m = re.search(r"voltage\s+(\d+)\s+to\s+(\d+)\s*volt", text_lower)
+                if v_range_m:
+                    v_low, v_high = v_range_m.groups()
+                    if pn.endswith(v_low):
+                        specs["voltage"] = f"{v_low}V"
+                    elif pn.endswith(v_high):
+                        specs["voltage"] = f"{v_high}V"
+            if v_m and "voltage" not in specs:
+                specs["voltage"] = f"{v_m.group(1)}V"
+
+        # Diode Current
+        if "current" not in specs:
+            cur_m = re.search(r"\b(?:i_?av|forward\s+current|current)[:\s=]+(\d+(?:\.\d+)?)\s*(?:a|ampere|ma)\b", text_lower)
+            if not cur_m:
+                cur_m = re.search(r"\b(\d+(?:\.\d+)?)\s*ampere\b", text_lower)
+            if cur_m:
+                val_c = float(cur_m.group(1))
+                if "ma" in cur_m.group(0).lower():
+                    specs["current"] = f"{int(val_c)}mA"
+                elif val_c < 1.0:
+                    specs["current"] = f"{int(val_c * 1000)}mA"
+                else:
+                    val_str = str(val_c)
+                    if val_str.endswith(".0"):
+                        val_str = val_str[:-2]
+                    specs["current"] = f"{val_str}A"
+
+        # Diode Mounting
+        if "mounting" not in specs:
+            if any(k in text_lower for k in ("smd", "surface mount", "sod", "sot", "sma", "smb", "smc")):
+                specs["mounting"] = "SMD"
+            elif any(k in text_lower for k in ("through hole", "tht", "do-15", "do-41", "leaded")):
+                specs["mounting"] = "TH"
 
         # Automotive AEC-Q101 qualification
         if "aec-q101" in text_lower or "aec q101" in text_lower:
@@ -2475,9 +2542,29 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             extracted_val_str = target_sp
             if target_sp:
                 for e in entries:
-                    if target_sp.casefold() in e.value_description.casefold():
+                    if e.value_description and target_sp.casefold() in e.value_description.casefold():
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
+                        break
+            if not matched_entry and material_type in ("DIO", "TRA"):
+                for e in entries:
+                    if str(e.value) == "0" or e.value == 0:
+                        if material_type == "DIO":
+                            matched_entry = RuleEntry(
+                                material_type=e.material_type,
+                                attribute_code=e.attribute_code,
+                                attribute_name=e.attribute_name,
+                                value="00",
+                                value_description="Standart",
+                                language=e.language,
+                                sort_order=e.sort_order,
+                                prefix=e.prefix,
+                                suffix=e.suffix,
+                            )
+                        else:
+                            matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        extracted_val_str = "Standart"
                         break
 
         # 8. WATTAGE
@@ -3016,26 +3103,37 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
         return ", ".join(tokens)
 
     elif material_type == "DIO":
-        # e.g.: Schottky Barrier Diode, 40V 200mA, SOT-23 SMD, Diodes Inc
-        t_dio = specs.get("type_diode", "Diode")
-        title = f"{t_dio} Diode" if "diode" not in t_dio.lower() else t_dio
-        ratings = []
-        if specs.get("voltage"):
-            ratings.append(specs["voltage"])
-        if specs.get("current"):
-            ratings.append(specs["current"])
-        ratings_str = " ".join(ratings)
-        pkg_str = f"{specs.get('package', '')} {specs.get('mounting', '')}".strip()
-        tokens = [title]
-        if specs.get("value_diode"):
-            tokens.append(specs["value_diode"])
-        if ratings_str:
-            tokens.append(ratings_str)
-        if pkg_str:
-            tokens.append(pkg_str)
+        # e.g.: SMD SOD123, Schottky, 20V, 500mA,, SS0520,  Panjit
+        m_type = specs.get("mounting", "SMD")
+        pkg = specs.get("package", "")
+        pkg_str = f"{m_type} {pkg}".strip() if pkg else m_type
+        t_dio = specs.get("type_diode", "Schottky")
+        volt = specs.get("voltage", "")
+        curr = specs.get("current", "")
+        sp_def = specs.get("special_def") or ""
+        if sp_def in ("General", "Standard", "None", "Standart"):
+            sp_def = ""
+        val = specs.get("value_diode") or specs.get("value_pn") or ""
+
+        tokens = [pkg_str, t_dio]
+        if volt:
+            tokens.append(volt)
+        if curr:
+            tokens.append(curr)
+        if sp_def:
+            tokens.append(sp_def)
+            if val:
+                tokens.append(val)
+            desc_core = ", ".join(tokens)
+        else:
+            if val:
+                desc_core = ", ".join(tokens) + f",, {val}"
+            else:
+                desc_core = ", ".join(tokens)
+
         if mfr:
-            tokens.append(mfr)
-        return ", ".join(tokens)
+            return f"{desc_core},  {mfr}"
+        return desc_core
 
     elif material_type == "CON":
         # e.g.: Wire to Board Konnektör, 2.00mm, 4 Pin, 90°(Yatık), Molex
@@ -3239,15 +3337,15 @@ def analyze_datasheet(
                 reason = "Parça numarası kod çözümünden konnektör olarak tespit edildi."
 
     pn_has_core = False
-    if mat_type == "RES" and pn_specs.get("resistance_str"):
+    if mat_type == "RES" and pn_specs.get("resistance_str") and pn_specs.get("package"):
         pn_has_core = True
-    elif mat_type == "CAP" and (pn_specs.get("capacitance_str") or pn_specs.get("capacitance_pf")):
+    elif mat_type == "CAP" and (pn_specs.get("capacitance_str") or pn_specs.get("capacitance_pf")) and pn_specs.get("package"):
         pn_has_core = True
     elif mat_type == "CON" and pn_specs.get("pitch") and pn_specs.get("pin_number"):
         pn_has_core = True
-    elif mat_type in ("DIO", "FET", "TRA", "ICR", "ICS", "MCU", "BUZ", "BAH", "VAR") and bool(pn_specs):
+    elif mat_type == "DSP" and pn_specs.get("digits") and pn_specs.get("polarity"):
         pn_has_core = True
-    elif pn_specs and any(k in pn_specs for k in ("resistance_str", "capacitance_str", "capacitance_pf", "pin_number", "pitch", "voltage")):
+    elif mat_type in ("DIO", "FET", "TRA", "ICR", "ICS", "MCU", "BUZ", "BAH", "VAR") and bool(pn_specs.get("package")) and bool(pn_specs.get("manufacturer")):
         pn_has_core = True
 
     # 3. Priority 2: Text Extraction
@@ -3304,15 +3402,15 @@ def analyze_datasheet(
                     reason = "Parça numarası kod çözümünden konnektör olarak tespit edildi."
 
         # Re-check pn_has_core if PN was discovered from text
-        if mat_type == "RES" and pn_specs.get("resistance_str"):
+        if mat_type == "RES" and pn_specs.get("resistance_str") and pn_specs.get("package"):
             pn_has_core = True
-        elif mat_type == "CAP" and (pn_specs.get("capacitance_str") or pn_specs.get("capacitance_pf")):
+        elif mat_type == "CAP" and (pn_specs.get("capacitance_str") or pn_specs.get("capacitance_pf")) and pn_specs.get("package"):
             pn_has_core = True
         elif mat_type == "CON" and pn_specs.get("pitch") and pn_specs.get("pin_number"):
             pn_has_core = True
-        elif mat_type in ("DIO", "FET", "TRA", "ICR", "ICS", "MCU", "BUZ", "BAH", "VAR") and bool(pn_specs):
+        elif mat_type == "DSP" and pn_specs.get("digits") and pn_specs.get("polarity"):
             pn_has_core = True
-        elif pn_specs and any(k in pn_specs for k in ("resistance_str", "capacitance_str", "capacitance_pf", "pin_number", "pitch", "voltage")):
+        elif mat_type in ("DIO", "FET", "TRA", "ICR", "ICS", "MCU", "BUZ", "BAH", "VAR") and bool(pn_specs.get("package")) and bool(pn_specs.get("manufacturer")):
             pn_has_core = True
 
     # Return early if unreadable empty document and unknown

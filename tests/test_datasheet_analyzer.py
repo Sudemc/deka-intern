@@ -1202,3 +1202,74 @@ def test_real_foryard_display_datasheet_e2e():
     result_counter = analyze_datasheet(pdf_bytes, part_number=pn, serial_counter="0028")
     assert result_counter["erp_code"] == "DSPTE4BH0028-FO"
 
+
+def test_panjit_schottky_diode_ss0520_pn_decoding():
+    from bom_enricher.datasheet_analyzer import decode_manufacturer_pn
+    # SS0520: 0.5A (500mA), 20V Schottky
+    specs = decode_manufacturer_pn("SS0520")
+    assert specs.get("type_diode") == "Schottky"
+    assert specs.get("mounting") == "SMD"
+    assert specs.get("voltage") == "20V"
+    assert specs.get("current") == "500mA"
+    assert specs.get("value_diode") == "SS0520"
+
+    # SS0540: 0.5A (500mA), 40V
+    specs40 = decode_manufacturer_pn("SS0540")
+    assert specs40.get("voltage") == "40V"
+    assert specs40.get("current") == "500mA"
+
+    # SS34: 3A, 40V
+    specs34 = decode_manufacturer_pn("SS34")
+    assert specs34.get("voltage") == "40V"
+    assert specs34.get("current") == "3A"
+
+
+def test_dio_map_specs_to_erp_and_rich_description():
+    from bom_enricher.datasheet_analyzer import load_rulebook, map_specs_to_erp, build_rich_description
+    rulebook = load_rulebook("data/rules.xlsx")
+    specs = {
+        "mounting": "SMD",
+        "package": "SOD123",
+        "type_diode": "Schottky",
+        "voltage": "20V",
+        "current": "500mA",
+        "value_diode": "SS0520",
+        "manufacturer": "Panjit",
+        "manufacturer_code": "PA",
+    }
+    mappings, desc, erp_code = map_specs_to_erp(rulebook, "DIO", specs)
+    assert erp_code == "DIOSZ41S1000-PA"
+    rich_desc = build_rich_description("DIO", specs, "")
+    assert rich_desc == "SMD SOD123, Schottky, 20V, 500mA,, SS0520,  Panjit"
+
+
+def test_real_panjit_ss0520_datasheet_e2e():
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+    from reportlab.pdfgen import canvas
+    import io
+
+    # Synthetic Panjit SS0520 datasheet
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "PANJIT SEMICONDUCTOR")
+    c.drawString(100, 730, "SS0520~SS0540 SURFACE MOUNT SCHOTTKY BARRIER")
+    c.drawString(100, 710, "VOLTAGE 20 to 40 Volt CURRENT 0.5 Ampere")
+    c.drawString(100, 690, "Case: SOD-123, Plastic")
+    c.drawString(100, 670, "PARAMETER: Maximum Recurrent Peak Reverse Voltage VRRM: SS0520=20V, SS0530=30V, SS0540=40V")
+    c.drawString(100, 650, "Maximum Average Forward Current at TA=75C IAV: 0.5 A")
+    c.drawString(100, 630, "Panjit International Inc.")
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    result = analyze_datasheet(pdf_bytes, part_number="SS0520")
+    assert result["material_type"] == "DIO"
+    assert result["specs"].get("mounting") == "SMD"
+    assert result["specs"].get("package") == "SOD123"
+    assert result["specs"].get("type_diode") == "Schottky"
+    assert result["specs"].get("voltage") == "20V"
+    assert result["specs"].get("current") == "500mA"
+    assert result["specs"].get("manufacturer") == "Panjit"
+    assert result["rich_description"] == "SMD SOD123, Schottky, 20V, 500mA,, SS0520,  Panjit"
+    assert result["erp_code"] == "DIOSZ41S1000-PA"
+
+
