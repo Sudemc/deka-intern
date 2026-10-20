@@ -234,7 +234,7 @@ git commit -m "feat: implement generic default qualifier fallback with peer-leng
 - Consumes: full pipeline across diverse components (`RES`, `CAP`, `DIO`, `CON`, `CRY`, `DSP`).
 - Produces: 100% green test suite across all 151+ tests.
 
-- [ ] **Step 1: Write end-to-end integration tests for newly supported dynamic manufacturers**
+- [x] **Step 1: Write end-to-end integration tests for newly supported dynamic manufacturers**
 
 ```python
 # In tests/test_datasheet_analyzer.py
@@ -254,17 +254,17 @@ def test_diverse_dynamic_manufacturers_from_rules_e2e():
     assert res["erp_code"].endswith("-QA")
 ```
 
-- [ ] **Step 2: Run integration tests**
+- [x] **Step 2: Run integration tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_diverse_dynamic_manufacturers_from_rules_e2e -v`
 Expected: PASS
 
-- [ ] **Step 3: Run full regression test suite**
+- [x] **Step 3: Run full regression test suite**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/ -m "not slow" -v`
 Expected: PASS (all 151+ tests passing with zero failures)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/test_datasheet_analyzer.py
