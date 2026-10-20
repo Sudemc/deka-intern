@@ -538,6 +538,43 @@ def test_ref_diff_details_in_issue_message(tmp_path):
     assert "ERP: " in issue
 
 
+def test_rulebook_manufacturer_registry(tmp_path):
+    rules_file = tmp_path / "Rules.xlsx"
+    _write_book(rules_file, "BİRLEŞTİRİLMİŞ", [
+        "MALZEME TİPİ", "ÖZELLİK (ATTRIBUTE)", "ÖZELLİK AÇIKLAMASI", "VALUE",
+        "VALUE AÇIKLAMASI", "LANGU", "SIRALAMA (SORTNO)", "PREFIX", "SUFFIX",
+    ], [
+        ["CAP", 1, "Mounting", "S", "SMD", "T", 0, "CAP", None],
+        ["CAP", 105, "Package", "S3", "0805 Package,", "T", 10, None, None],
+        ["CAP", 16, "Value Capacitors", "A1", "10uF,", "T", 20, None, None],
+        ["CAP", 10, "Voltage", "C7", "25V,", "T", 30, None, None],
+        ["DIO", 7, "Q", "DI", "Diodes", "T", 80, "-", None],
+        ["DIO", 7, "Q", "CR", "Cree Inc.", "T", 80, "-", None],
+        ["RES", 7, "Q", "QA", "Qualitek Delta,", "T", 80, "-", None],
+        ["RES", 7, "Q", "TWS", "Taiwan Semiconductor", "T", 80, "-", None],
+        ["CON", 7, "Q", "SL", "Sullins Connector", "T", 80, "-", None],
+    ])
+    rulebook = load_rulebook(rules_file)
+    terms = [item[0] for item in rulebook.manufacturers]
+
+    # Curated aliases from KNOWN_MANUFACTURERS present
+    assert "diodes inc" in terms
+    assert "diodes incorporated" in terms
+    # Bare generic 'diodes' must NOT be in terms
+    assert "diodes" not in terms
+    # Country 'taiwan' alone must NOT be in terms
+    assert "taiwan" not in terms
+    assert "taiwan semiconductor" in terms
+    # Stripped suffixes
+    assert "cree" in terms
+    assert "qualitek delta" in terms
+    assert "sullins" in terms
+    # Sorted descending by length
+    lengths = [len(t) for t in terms]
+    assert lengths == sorted(lengths, reverse=True)
+
+
+
 
 
 

@@ -15,6 +15,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from pypdf import PdfReader
 
 from bom_enricher.comparison import (
+    KNOWN_MANUFACTURERS,
     RuleBook,
     RuleEntry,
     _normalize_label,
@@ -208,66 +209,8 @@ NORMALIZE_VLM_TYPE = {
 }
 
 
-KNOWN_MANUFACTURERS = [
-    ("samsung", "Samsung", "SA"),
-    ("yageo", "Yageo", "YA"),
-    ("murata", "Murata", "MU"),
-    ("tdk", "TDK", "TD"),
-    ("kemet", "Kemet", "KE"),
-    ("royal ohm", "Royal Ohm", "RO"),
-    ("royal", "Royal Ohm", "RO"),
-    ("vishay", "Vishay", "VI"),
-    ("panasonic", "Panasonic", "PA"),
-    ("avx", "AVX", "AV"),
-    ("bourns", "Bourns", "BO"),
-    ("diodes inc", "Diodes Inc", "DI"),
-    ("diodes incorporated", "Diodes Inc", "DI"),
-    ("mdd", "MDD", "MD"),
-    ("stmicroelectronics", "ST", "ST"),
-    ("stmicro", "ST", "ST"),
-    ("texas instruments", "TI", "TI"),
-    ("on semiconductor", "On Semi", "ON"),
-    ("onsemi", "On Semi", "ON"),
-    ("infineon", "Infineon", "IN"),
-    ("microchip", "Microchip", "MC"),
-    ("nexperia", "Nexperia", "NX"),
-    ("littelfuse", "Littelfuse", "LF"),
-    ("rohm", "Rohm", "ROH"),
-    ("taiwo yuden", "Taiyo Yuden", "TY"),
-    ("taiyo", "Taiyo Yuden", "TY"),
-    ("wuerth", "Wurth", "WE"),
-    ("würth", "Wurth", "WE"),
-    ("kls", "Kls", "KL"),
-    ("molex", "Molex", "MO"),
-    ("phoenix contact", "Phoenix", "PH"),
-    ("ttaf", "Ttaf", "TT"),
-    ("jst", "JST", "JST"),
-    ("amphenol", "Amphenol", "AM"),
-    ("te connectivity", "TE Connectivity", "TC"),
-    ("tyco electronics", "TE Connectivity", "TC"),
-    ("tyco", "TE Connectivity", "TC"),
-    ("fusheng", "FUET", "FT"),
-    ("fuet", "FUET", "FT"),
-    ("huaneng", "Huaneng", "HUA"),
-    ("huawha", "Huaneng", "HUA"),
-    ("hottech", "Hottech", "HO"),
-    ("cui devices", "Same Sky", "SKY"),
-    ("same sky", "Same Sky", "SKY"),
-    ("cui", "Same Sky", "SKY"),
-    ("yixinzy", "YIXINZY", "YX"),
-    ("epcos", "Epcos", "EP"),
-    ("multicomp pro", "Multicomp Pro", "MCP"),
-    ("multicomp", "Multicomp Pro", "MCP"),
-    ("amtek", "Amtek", "AMT"),
-    ("wago", "Wago", "WAG"),
-    ("harting", "Harting", "HAR"),
-    ("hirose", "Hirose", "HIR"),
-    ("samtec", "Samtec", "SAM"),
-    ("raltron", "Raltron", "RA"),
-    ("foryard", "Foryard", "FO"),
-    ("panjit semiconductor", "Panjit", "PA"),
-    ("panjit", "Panjit", "PA"),
-]
+# Curated manufacturer aliases list (imported from comparison)
+KNOWN_MANUFACTURERS = list(KNOWN_MANUFACTURERS)
 
 
 def extract_pdf_data(stream_or_path: BinaryIO | bytes | Path, part_number: str | None = None) -> tuple[str, int, list[int]]:
@@ -1272,6 +1215,7 @@ def extract_component_specs(
     part_number: str = "",
     is_catalog: bool = False,
     file_bytes: bytes | None = None,
+    rulebook: RuleBook | None = None,
 ) -> dict[str, Any]:
     """Extract physical and electrical specifications from decoded PN + 2D tables + full text."""
     # Support alternate argument orderings: (text, material_type, part_number) or (text, part_number, material_type)
@@ -1345,7 +1289,8 @@ def extract_component_specs(
 
     # Manufacturer
     if "manufacturer" not in specs:
-        for kw, name, code in KNOWN_MANUFACTURERS:
+        mfr_registry = rulebook.manufacturers if (rulebook and rulebook.manufacturers) else KNOWN_MANUFACTURERS
+        for kw, name, code in mfr_registry:
             if re.search(rf"\b{re.escape(kw)}\b", text_lower):
                 specs["manufacturer"] = name
                 specs["manufacturer_code"] = code
@@ -3442,7 +3387,9 @@ def analyze_datasheet(
     # Deterministic spec extraction
     # Fast-Path: when pn_has_core is True, do not pass file_bytes to avoid slow 2D CAD vector table extraction
     effective_file_bytes = None if pn_has_core else file_bytes
-    specs = extract_component_specs(mat_type, text, pn, is_catalog=is_catalog, file_bytes=effective_file_bytes)
+    specs = extract_component_specs(
+        mat_type, text, pn, is_catalog=is_catalog, file_bytes=effective_file_bytes, rulebook=rulebook
+    )
     for k, v in pn_specs.items():
         if k not in specs or specs[k] is None or specs[k] == "":
             specs[k] = v

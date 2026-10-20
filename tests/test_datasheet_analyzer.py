@@ -1273,3 +1273,22 @@ def test_real_panjit_ss0520_datasheet_e2e():
     assert result["erp_code"] == "DIOSZ41S1000-PA"
 
 
+def test_dynamic_manufacturer_loading_from_rules():
+    from bom_enricher.comparison import load_rulebook
+    from bom_enricher.datasheet_analyzer import extract_component_specs
+    rulebook = load_rulebook("data/rules.xlsx")
+    assert len(rulebook.manufacturers) > 100
+
+    # 1. Unlisted manufacturer present in rules.xlsx (e.g. Qualitek -> QA, Kepo -> KE, Piher -> PI)
+    text_qualitek = "Qualitek Delta Solder Wire Specifications"
+    specs_q = extract_component_specs("RES", text_qualitek, "WIRE-01", rulebook=rulebook)
+    assert specs_q.get("manufacturer") == "Qualitek"
+    assert specs_q.get("manufacturer_code") == "QA"
+
+    # 2. Collision test: code DI ('Diodes') must NOT match generic diode description
+    text_generic_diode = "SURFACE MOUNT SCHOTTKY BARRIER DIODES VOLTAGE 40V"
+    specs_dio = extract_component_specs("DIO", text_generic_diode, "GENERIC-01", rulebook=rulebook)
+    assert specs_dio.get("manufacturer") != "Diodes"
+
+
+
