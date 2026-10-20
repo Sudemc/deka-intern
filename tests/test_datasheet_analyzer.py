@@ -1059,5 +1059,74 @@ def test_foryard_pn_decoding():
     assert specs_yellow.get("color") == "Sarı"
 
 
+def test_universal_rule_matcher_dsp_attributes():
+    from bom_enricher.datasheet_analyzer import load_rulebook, map_specs_to_erp
+    rulebook = load_rulebook("data/rules.xlsx")
+    specs = {
+        "mounting": "TH",
+        "type_display": "7 Segment Display",
+        "color": "Beyaz",
+        "special_def_display": "4 Digit, COM-",
+        "serial_counter": "0028",
+        "manufacturer": "Foryard",
+    }
+    mappings, desc, erp_code = map_specs_to_erp(rulebook, "DSP", specs)
+    assert erp_code == "DSPTE4BH0028-FO"
+    attr_map = {m.attribute_name: (m.matched_erp_value, m.erp_code) for m in mappings}
+    assert attr_map["Mounting"][1] == "T"
+    assert attr_map["Type Display"][1] == "E"
+    assert attr_map["Color Display LED"][1] == "4"
+    assert attr_map["Special Definition - Display "][1] == "BH"
+    assert attr_map["Serial Display Number"][1] == "0028"
+    assert attr_map["Q"][1] == "FO"
 
 
+def test_dsp_rich_description():
+    from bom_enricher.datasheet_analyzer import build_rich_description
+    specs = {
+        "mounting": "TH",
+        "type_display": "7 Segment Display",
+        "color": "Beyaz",
+        "special_def_display": "4 Digit, COM-",
+        "manufacturer": "Foryard",
+    }
+    desc = build_rich_description("DSP", specs, "")
+    assert desc == "TH 7 Segment Display, Beyaz, 4 Digit, COM-,  Foryard"
+
+
+def test_dsp_extract_component_specs():
+    from bom_enricher.datasheet_analyzer import extract_component_specs
+    text = (
+        "NINGBO FORYARD OPTOELECTRONICS CO.,LTD\n"
+        "Model No.: FYQ-5643CUW-21\n"
+        "0.56Inch Four Digits Display\n"
+        "Ultra White Common Cathode\n"
+        "Through hole type\n"
+    )
+    specs = extract_component_specs("DSP", text, "FYQ-5643CUW-21")
+    assert specs["mounting"] == "TH"
+    assert specs["type_display"] == "7 Segment Display"
+    assert specs["color"] == "Beyaz"
+    assert specs["digits"] == "4 Digit"
+    assert specs["polarity"] == "COM-"
+    assert specs["special_def_display"] == "4 Digit, COM-"
+    assert specs["manufacturer"] == "Foryard"
+
+
+def test_dsp_multilingual_semantic_matching():
+    from bom_enricher.datasheet_analyzer import load_rulebook, map_specs_to_erp
+    rulebook = load_rulebook("data/rules.xlsx")
+    # Provide English / alternate synonym terms
+    specs = {
+        "mounting": "TH",
+        "type_display": "7-Segment Display",
+        "color": "White",  # Should match Beyaz via MULTILINGUAL_SYNONYMS
+        "special_def_display": "4 Digit, Common Cathode",  # Should match 4 Digit, COM- via synonyms
+        "serial_counter": "0028",
+        "manufacturer": "Foryard",
+    }
+    mappings, desc, erp_code = map_specs_to_erp(rulebook, "DSP", specs)
+    assert erp_code == "DSPTE4BH0028-FO"
+    attr_map = {m.attribute_name: (m.matched_erp_value, m.erp_code) for m in mappings}
+    assert attr_map["Color Display LED"][1] == "4"
+    assert attr_map["Special Definition - Display "][1] == "BH"

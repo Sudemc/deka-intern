@@ -1895,6 +1895,78 @@ def extract_component_specs(
         else:
             specs["type_antenna"] = "RF"
 
+    elif material_type == "DSP":
+        # Mounting: SMD or TH
+        if "mounting" not in specs:
+            specs["mounting"] = "SMD" if any(k in text_lower for k in ("smd", "surface mount", "smt")) else "TH"
+
+        # Type Display
+        if "type_display" not in specs:
+            if any(k in text_lower for k in ("7 segment", "7-segment", "seven segment", "7segment")):
+                specs["type_display"] = "7 Segment Display"
+            elif "tft" in text_lower:
+                specs["type_display"] = "TFT"
+            elif "grafik lcd" in text_lower or "graphic lcd" in text_lower:
+                specs["type_display"] = "Grafik LCD"
+            elif "karakter lcd" in text_lower or "character lcd" in text_lower:
+                specs["type_display"] = "Karakter LCD"
+            elif "dotmatrix" in text_lower or "dot matrix" in text_lower:
+                specs["type_display"] = "Dotmatrix Display"
+            elif "alpha numeric" in text_lower or "alphanumeric" in text_lower:
+                specs["type_display"] = "Alpha Numeric Display"
+            else:
+                specs["type_display"] = "7 Segment Display"
+
+        # Color: extract from text/specs using color dictionary (Beyaz, Kırmızı, Yeşil, Mavi, Sarı)
+        if "color" not in specs:
+            if any(k in text_lower for k in ("white", "beyaz", "ultra white")):
+                specs["color"] = "Beyaz"
+            elif any(k in text_lower for k in ("red", "kırmızı", "kirmizi", "ultra red", "hi red")):
+                specs["color"] = "Kırmızı"
+            elif any(k in text_lower for k in ("green", "yeşil", "yesil", "ultra green")):
+                specs["color"] = "Yeşil"
+            elif any(k in text_lower for k in ("blue", "mavi", "ultra blue")):
+                specs["color"] = "Mavi"
+            elif any(k in text_lower for k in ("yellow", "sarı", "sari", "ultra yellow")):
+                specs["color"] = "Sarı"
+
+        # Special Definition: combine digit count and polarity (e.g. "4 Digit, COM-")
+        digits = specs.get("digits", "")
+        if not digits:
+            if any(k in text_lower for k in ("four digits", "4 digits", "4 digit", "4-digit", "4digit")):
+                digits = "4 Digit"
+            elif any(k in text_lower for k in ("one digit", "single digit", "1 digit", "1-digit", "1digit")):
+                digits = "1 Digit"
+            elif any(k in text_lower for k in ("two digits", "dual digits", "dual digit", "2 digits", "2 digit", "2-digit", "2digit")):
+                digits = "2 Digit"
+            elif any(k in text_lower for k in ("three digits", "triple digit", "3 digits", "3 digit", "3-digit", "3digit")):
+                digits = "3 Digit"
+            if digits:
+                specs["digits"] = digits
+
+        polarity = specs.get("polarity", "")
+        if not polarity:
+            if any(k in text_lower for k in ("common cathode", "com-", "com -", "c.c.")):
+                polarity = "COM-"
+            elif any(k in text_lower for k in ("common anode", "com+", "com +", "c.a.")):
+                polarity = "COM+"
+            if polarity:
+                specs["polarity"] = polarity
+
+        if "special_def_display" not in specs:
+            if digits and polarity:
+                specs["special_def_display"] = f"{digits}, {polarity}"
+            elif digits:
+                specs["special_def_display"] = digits
+            elif polarity:
+                specs["special_def_display"] = polarity
+
+        # Manufacturer
+        if "manufacturer" not in specs:
+            if "foryard" in text_lower or pn.startswith("FY"):
+                specs["manufacturer"] = "Foryard"
+                specs["manufacturer_code"] = "FO"
+
     # Common for ICs and discrete parts: set part number as value
     if material_type in ("OPT", "ICS", "MCU", "TRI", "SCR", "AMP", "FLT", "ICL", "ICM", "ICC", "ICD", "ICB"):
         specs["value_pn"] = part_number.strip()
@@ -1931,7 +2003,175 @@ CORE_ATTRIBUTES_BY_TYPE: dict[str, set[str]] = {
     "AMP": {"mounting", "package", "q"},
     "ANT": {"mounting", "typeantenna", "q"},
     "BAH": {"mounting", "typebatteryholder", "q"},
+    "DSP": {"mounting", "typedisplay", "colordisplayled", "specialdefinitiondisplay", "q"},
 }
+
+
+_SYNONYM_GROUPS: list[set[str]] = [
+    # Colors (English / Turkish)
+    {"white", "beyaz"},
+    {"red", "kırmızı", "kirmizi"},
+    {"green", "yeşil", "yesil"},
+    {"blue", "mavi"},
+    {"yellow", "sarı", "sari"},
+    {"orange", "turuncu"},
+    {"amber", "kehribar", "sarı", "sari"},
+    {"full color", "full-color", "rgb", "renkli"},
+    # Display polarity / electrical definitions
+    {"common cathode", "com-", "com -", "c.c.", "cc"},
+    {"common anode", "com+", "com +", "c.a.", "ca"},
+    # Mounting types
+    {"through hole", "through-hole", "tht", "dip", "th"},
+    {"surface mount", "surface-mount", "smt", "smd"},
+    # Contact / Switch states
+    {"normally open", "no"},
+    {"normally closed", "nc"},
+    # Display types
+    {"7 segment display", "7-segment display", "seven segment display", "7 segment", "seven segment"},
+]
+
+MULTILINGUAL_SYNONYMS: dict[str, set[str]] = {}
+for _group in _SYNONYM_GROUPS:
+    for _item in _group:
+        _k = _item.casefold()
+        if _k not in MULTILINGUAL_SYNONYMS:
+            MULTILINGUAL_SYNONYMS[_k] = set()
+        MULTILINGUAL_SYNONYMS[_k].update(g.casefold() for g in _group)
+
+
+def _check_synonym_match(val_clean: str, desc_clean: str) -> bool:
+    """Check if val_clean and desc_clean match via multilingual synonyms."""
+    if val_clean == desc_clean:
+        return True
+
+    # 1. Direct single-term synonym lookup
+    syns_val = MULTILINGUAL_SYNONYMS.get(val_clean, set())
+    if desc_clean in syns_val:
+        return True
+    syns_desc = MULTILINGUAL_SYNONYMS.get(desc_clean, set())
+    if val_clean in syns_desc:
+        return True
+
+    # 2. Multi-word composite synonym normalization
+    v_tokens = [t.strip() for t in re.split(r"[\s,;]+", val_clean) if t.strip()]
+    d_tokens = [t.strip() for t in re.split(r"[\s,;]+", desc_clean) if t.strip()]
+
+    if len(v_tokens) == len(d_tokens) and len(v_tokens) > 0:
+        match_all = True
+        for vt, dt in zip(v_tokens, d_tokens):
+            if vt != dt and dt not in MULTILINGUAL_SYNONYMS.get(vt, set()) and vt not in MULTILINGUAL_SYNONYMS.get(dt, set()):
+                match_all = False
+                break
+        if match_all:
+            return True
+
+    # 3. Phrase replacement
+    v_replaced = val_clean
+    d_replaced = desc_clean
+    for group in _SYNONYM_GROUPS:
+        canonical = min(group, key=len)
+        for term in sorted(group, key=len, reverse=True):
+            if term != canonical and term in v_replaced:
+                v_replaced = re.sub(rf"(?:^|[\s,;/]){re.escape(term)}(?:$|[\s,;/])", f" {canonical} ", v_replaced)
+            if term != canonical and term in d_replaced:
+                d_replaced = re.sub(rf"(?:^|[\s,;/]){re.escape(term)}(?:$|[\s,;/])", f" {canonical} ", d_replaced)
+
+    v_replaced_clean = re.sub(r"\s+", " ", v_replaced).strip()
+    d_replaced_clean = re.sub(r"\s+", " ", d_replaced).strip()
+    if v_replaced_clean and v_replaced_clean == d_replaced_clean:
+        return True
+
+    return False
+
+
+def _find_candidate_specs_for_attribute(
+    attr_norm: str,
+    attr_display_name: str,
+    specs: dict[str, Any],
+    entries: tuple[RuleEntry, ...],
+) -> list[tuple[str, str]]:
+    """Gather candidate (spec_key, spec_value) pairs from specs for an attribute."""
+    candidates: list[tuple[int, str, str]] = []
+
+    attr_clean = attr_norm.replace("definition", "def").casefold()
+    attr_tokens = set(re.findall(r"[a-z0-9]+", attr_display_name.casefold()))
+
+    for k, v in specs.items():
+        if v is None or v == "":
+            continue
+        if k in ("is_catalog", "notes", "description", "raw_text", "datasheet_path"):
+            continue
+
+        val_str = str(v).strip()
+        k_clean = _normalize_label(k).replace("definition", "def").casefold()
+        k_tokens = set(re.findall(r"[a-z0-9]+", k.casefold()))
+
+        priority = 0
+
+        if k_clean == attr_clean or _normalize_label(k) == attr_norm:
+            priority = 100
+        elif k_clean in attr_clean or attr_clean in k_clean:
+            priority = 80
+        elif k_tokens & attr_tokens:
+            priority = 60
+        else:
+            val_clean = val_str.rstrip(",").strip().casefold()
+            for e in entries:
+                e_desc_clean = (e.value_description or "").rstrip(",").strip().casefold()
+                if val_clean == e_desc_clean or _check_synonym_match(val_clean, e_desc_clean):
+                    priority = 40
+                    break
+
+        if priority > 0:
+            candidates.append((priority, k, val_str))
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return [(k, val) for _, k, val in candidates]
+
+
+def _match_spec_to_entries(
+    cand_val: str,
+    entries: tuple[RuleEntry, ...],
+) -> tuple[RuleEntry | None, str]:
+    """Match a candidate spec value against candidate RuleEntry items for this SORTNO."""
+    if not cand_val:
+        return None, "BULUNAMADI"
+
+    val_str = str(cand_val).strip()
+    val_clean = val_str.rstrip(",").strip().casefold()
+
+    # Pass 1: Exact match (case-insensitive, ignoring trailing punctuation)
+    for e in entries:
+        desc = (e.value_description or "").strip().rstrip(",").strip().casefold()
+        if desc and val_clean == desc:
+            return e, "TAM EŞLEŞTİ"
+
+    # Pass 2: Synonym expansion match
+    for e in entries:
+        desc = (e.value_description or "").strip().rstrip(",").strip().casefold()
+        if desc and _check_synonym_match(val_clean, desc):
+            return e, "TAM EŞLEŞTİ"
+
+    # Pass 3: Substring / token boundary match
+    for e in entries:
+        desc = (e.value_description or "").strip().rstrip(",").strip().casefold()
+        if not desc:
+            continue
+        pattern_desc = rf"(?:^|[\s,;/]){re.escape(desc)}(?:$|[\s,;/])"
+        pattern_val = rf"(?:^|[\s,;/]){re.escape(val_clean)}(?:$|[\s,;/])"
+        if re.search(pattern_desc, val_clean) or re.search(pattern_val, desc):
+            return e, "TAM EŞLEŞTİ"
+
+    # Pass 4: Token set overlap
+    v_tokens = set(re.findall(r"[A-Za-z0-9\+\-]+", val_clean))
+    if len(v_tokens) >= 2:
+        for e in entries:
+            desc = (e.value_description or "").strip().rstrip(",").strip().casefold()
+            d_tokens = set(re.findall(r"[A-Za-z0-9\+\-]+", desc))
+            if v_tokens and v_tokens == d_tokens:
+                return e, "TAM EŞLEŞTİ"
+
+    return None, "BULUNAMADI"
 
 
 def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, Any]) -> tuple[list[PropertyMapping], str, str]:
@@ -1975,7 +2215,7 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
     )
 
     for sort_no, attr_norm, entries in attribute_sorts:
-        attr_display_name = entries[0].attribute_name
+        attr_display_name = "Special Definition - Display " if attr_norm == "specialdefinitiondisplay" else entries[0].attribute_name
         matched_entry: RuleEntry | None = None
         extracted_val_str = ""
         status = "BULUNAMADI"
@@ -2203,7 +2443,7 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                         break
 
         # 7. SPECIAL DEFINITION / DIELECTRIC
-        elif "specialdefinition" in attr_norm:
+        elif "specialdefinition" in attr_norm and material_type != "DSP":
             target_sp = specs.get("special_def", "")
             extracted_val_str = target_sp
             if target_sp:
@@ -2597,6 +2837,22 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                         status = "TAM EŞLEŞTİ"
                         break
 
+        # 24. UNIVERSAL SEMANTIC MATCHER
+        # Grounded semantic matching for any unhandled attribute sort (e.g. Type Display, Color Display LED,
+        # Special Definition - Display, or future attributes not caught by dedicated branches)
+        if not matched_entry and attr_norm not in ("mounting", "package", "value", "voltage", "tolerance", "q"):
+            candidates = _find_candidate_specs_for_attribute(attr_norm, attr_display_name, specs, entries)
+            for spec_key, cand_val in candidates:
+                val_cand_str = str(cand_val).strip()
+                matched, match_status = _match_spec_to_entries(val_cand_str, entries)
+                if matched:
+                    matched_entry = matched
+                    extracted_val_str = val_cand_str
+                    status = match_status
+                    break
+            if not matched_entry and candidates and not extracted_val_str:
+                extracted_val_str = str(candidates[0][1]).strip()
+
         if matched_entry:
             mappings.append(PropertyMapping(
                 attribute_name=attr_display_name,
@@ -2851,6 +3107,28 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
         if mfr:
             tokens.append(mfr)
         return ", ".join(tokens)
+
+    elif material_type == "DSP":
+        # e.g.: TH 7 Segment Display, Beyaz, 4 Digit, COM-,  Foryard
+        mounting = str(specs.get("mounting", "")).strip()
+        type_display = str(specs.get("type_display", "7 Segment Display")).strip()
+        color = str(specs.get("color", "")).strip()
+        special_def = specs.get("special_def_display") or specs.get("special_def", "")
+        if not special_def and specs.get("digits") and specs.get("polarity"):
+            special_def = f"{specs['digits']}, {specs['polarity']}"
+        special_def = str(special_def).strip()
+
+        first_part = f"{mounting} {type_display}".strip() if mounting else type_display
+        parts = [first_part] if first_part else []
+        if color:
+            parts.append(color)
+        if special_def:
+            parts.append(special_def)
+
+        base_desc = ", ".join(parts)
+        if mfr:
+            return f"{base_desc},  {mfr}" if base_desc else mfr
+        return base_desc
 
     # General fallback
     mat_name = MATERIAL_TYPE_NAMES.get(material_type, material_type)
