@@ -41,7 +41,7 @@
 - Consumes: `rules.xlsx` rows with attribute `Q` or `Manufacturer`.
 - Produces: `RuleBook.manufacturers: tuple[tuple[str, str, str], ...]` mapping `(search_term, display_name, erp_code)`; `extract_component_specs` and `analyze_datasheet` matching against dynamic 644-manufacturer registry.
 
-- [ ] **Step 1: Write failing unit tests for dynamic manufacturer loading and collision prevention**
+- [x] **Step 1: Write failing unit tests for dynamic manufacturer loading and collision prevention**
 
 ```python
 # In tests/test_datasheet_analyzer.py
@@ -63,12 +63,12 @@ def test_dynamic_manufacturer_loading_from_rules():
     assert specs_dio.get("manufacturer") != "Diodes"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_dynamic_manufacturer_loading_from_rules -v`
 Expected: FAIL (`RuleBook has no attribute 'manufacturers'` or `specs_q.get('manufacturer') == None`)
 
-- [ ] **Step 3: Implement dynamic manufacturer extraction in `comparison.py` and `datasheet_analyzer.py`**
+- [x] **Step 3: Implement dynamic manufacturer extraction in `comparison.py` and `datasheet_analyzer.py`**
 
 1. In `RuleBook` dataclass in `comparison.py`: add field `manufacturers: tuple[tuple[str, str, str], ...] = ()`.
 2. In `load_rulebook` in `comparison.py`:
@@ -82,12 +82,12 @@ Expected: FAIL (`RuleBook has no attribute 'manufacturers'` or `specs_q.get('man
    - Pass `rulebook` into `extract_component_specs(..., rulebook: RuleBook | None = None)`.
    - In manufacturer detection block (around line 1328), search `rulebook.manufacturers` if available, falling back to `KNOWN_MANUFACTURERS`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_dynamic_manufacturer_loading_from_rules -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bom_enricher/comparison.py src/bom_enricher/datasheet_analyzer.py tests/test_datasheet_analyzer.py
