@@ -40,7 +40,7 @@
 - Consumes: `part_number`, `text` in `classify_material_type` and `decode_manufacturer_pn`.
 - Produces: `classify_material_type` returning `"DSP"`, 0.99 for display cover titles and `FYQ-` prefixes; `decode_manufacturer_pn` returning `mounting="TH"`, `type_display="7 Segment Display"`, `color="Beyaz"`, `digits="4 Digit"`, `polarity="COM-"`, `manufacturer="Foryard"`.
 
-- [ ] **Step 1: Write failing unit tests for Display classification and PN decoding**
+- [x] **Step 1: Write failing unit tests for Display classification and PN decoding**
 
 ```python
 # In tests/test_datasheet_analyzer.py
@@ -78,12 +78,12 @@ def test_foryard_pn_decoding():
     assert specs_anode.get("digits") == "1 Digit"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_dsp_classification_from_title_and_pn tests/test_datasheet_analyzer.py::test_foryard_pn_decoding -v`
 Expected: FAIL (`DSP` unclassified, `decode_manufacturer_pn` returns `{}`)
 
-- [ ] **Step 3: Implement Display classification and Foryard decoder in `datasheet_analyzer.py`**
+- [x] **Step 3: Implement Display classification and Foryard decoder in `datasheet_analyzer.py`**
 
 1. In `KNOWN_MANUFACTURERS`, add: `("foryard", "Foryard", "FO")`.
 2. In `COVER_TITLE_PATTERNS`, add:
@@ -101,12 +101,12 @@ Expected: FAIL (`DSP` unclassified, `decode_manufacturer_pn` returns `{}`)
      - Color map: `{"UW": "Beyaz", "W": "Beyaz", "UR": "Kırmızı", "R": "Kırmızı", "UG": "Yeşil", "G": "Yeşil", "UB": "Mavi", "B": "Mavi", "UY": "Sarı", "Y": "Sarı"}`.
      - Set `type_display="7 Segment Display"`, `mounting="TH"`, `manufacturer="Foryard"`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_dsp_classification_from_title_and_pn tests/test_datasheet_analyzer.py::test_foryard_pn_decoding -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bom_enricher/datasheet_analyzer.py tests/test_datasheet_analyzer.py
@@ -125,7 +125,7 @@ git commit -m "feat: add Display (DSP) root-token title authority, Foryard decod
 - Consumes: rulebook, `specs`, and `material_type` in `map_specs_to_erp`.
 - Produces: `extract_component_specs` extracting display parameters; `build_rich_description` generating `TH 7 Segment Display, Beyaz, 4 Digit, COM-,  Foryard`; `map_specs_to_erp` dynamically matching unhandled attributes via Universal Semantic Matcher.
 
-- [ ] **Step 1: Write failing unit tests for Display spec extraction, rich description, and universal ERP mapping**
+- [x] **Step 1: Write failing unit tests for Display spec extraction, rich description, and universal ERP mapping**
 
 ```python
 # In tests/test_datasheet_analyzer.py
@@ -164,12 +164,12 @@ def test_dsp_rich_description():
     assert desc == "TH 7 Segment Display, Beyaz, 4 Digit, COM-,  Foryard"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_universal_rule_matcher_dsp_attributes tests/test_datasheet_analyzer.py::test_dsp_rich_description -v`
 Expected: FAIL (`erp_code != "DSPTE4BH0028-FO"`, `build_rich_description` does not format DSP)
 
-- [ ] **Step 3: Implement extraction, rich description, and universal semantic matcher in `datasheet_analyzer.py`**
+- [x] **Step 3: Implement extraction, rich description, and universal semantic matcher in `datasheet_analyzer.py`**
 
 1. In `extract_component_specs` under `elif material_type == "DSP":`:
    - Mounting: if `smd` in text, `"SMD"`; else `"TH"`.
@@ -190,12 +190,12 @@ Expected: FAIL (`erp_code != "DSPTE4BH0028-FO"`, `build_rich_description` does n
      - Substring/token overlap with word boundaries.
    - If matched, assign `matched_entry = e`, `status = "TAM EŞLEŞTİ"`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_universal_rule_matcher_dsp_attributes tests/test_datasheet_analyzer.py::test_dsp_rich_description -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bom_enricher/datasheet_analyzer.py tests/test_datasheet_analyzer.py
@@ -214,7 +214,7 @@ git commit -m "feat: implement universal semantic rule matcher and Display spec 
 - Consumes: `analyze_datasheet` end-to-end with synthetic and PDF canvas inputs.
 - Produces: Verified end-to-end result producing `DSPTE4BH0028-FO` and `DSPTE4BH0000XX-FO`.
 
-- [ ] **Step 1: Write end-to-end integration test for Foryard Display datasheet**
+- [x] **Step 1: Write end-to-end integration test for Foryard Display datasheet**
 
 ```python
 # In tests/test_datasheet_analyzer.py
@@ -255,17 +255,17 @@ def test_real_foryard_display_datasheet_e2e():
     assert result_counter["erp_code"] == "DSPTE4BH0028-FO"
 ```
 
-- [ ] **Step 2: Run end-to-end integration test**
+- [x] **Step 2: Run end-to-end integration test**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_real_foryard_display_datasheet_e2e -v`
 Expected: PASS
 
-- [ ] **Step 3: Run full regression test suite**
+- [x] **Step 3: Run full regression test suite**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/ -m "not slow" -v`
 Expected: PASS (all 136+ tests passing with zero failures)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/test_datasheet_analyzer.py
