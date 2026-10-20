@@ -212,6 +212,8 @@ NORMALIZE_VLM_TYPE = {
 # Curated manufacturer aliases list (imported from comparison)
 KNOWN_MANUFACTURERS = list(KNOWN_MANUFACTURERS)
 
+UNICODE_DASH_PATTERN = re.compile(r"[\u2212\u2010\u2011\u2012\u2013\u2014\u00ad]")
+
 
 def extract_pdf_data(stream_or_path: BinaryIO | bytes | Path, part_number: str | None = None) -> tuple[str, int, list[int]]:
     """Extract informative text from a PDF, intelligently filtering long documents."""
@@ -247,7 +249,8 @@ def extract_pdf_data(stream_or_path: BinaryIO | bytes | Path, part_number: str |
                 break
             page_text = ""
             try:
-                page_text = reader.pages[i].extract_text() or ""
+                raw_text = reader.pages[i].extract_text() or ""
+                page_text = UNICODE_DASH_PATTERN.sub("-", raw_text)
             except Exception:
                 continue
             text_lower = page_text.casefold()
@@ -264,8 +267,9 @@ def extract_pdf_data(stream_or_path: BinaryIO | bytes | Path, part_number: str |
         try:
             page_txt = reader.pages[idx].extract_text()
             if page_txt:
-                # Normalize Unicode characters (e.g. non-breaking spaces, symbols) and line breaks
+                # Normalize Unicode characters (e.g. non-breaking spaces, symbols), Unicode dashes, and line breaks
                 clean_txt = unicodedata.normalize("NFKC", page_txt).replace("\r\n", "\n").replace("\r", "\n")
+                clean_txt = UNICODE_DASH_PATTERN.sub("-", clean_txt)
                 extracted_parts.append(f"--- PAGE {idx + 1} ---\n" + clean_txt)
                 analyzed_pages.append(idx + 1)
         except Exception:
@@ -1069,6 +1073,7 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
         specs["value_diode"] = pn
         if cur_code == "05":
             specs["current"] = "500mA"
+            specs["package"] = "SOD123"
         else:
             specs["current"] = f"{int(cur_code)}A"
 
@@ -1076,6 +1081,29 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
             specs["voltage"] = f"{int(volt_code) * 10}V"
         else:
             specs["voltage"] = f"{int(volt_code)}V"
+        return specs
+
+    # 13. MBR / LMBR Series Schottky Diodes (e.g. LMBR0520T1G, MBR0520LT1G, MBR0540, LMBR0540, MBR120, MBR140)
+    mbr_m = re.match(r"^(L)?MBR(05|[1-9])(\d{2})(?:[A-Z0-9]+)?$", pn)
+    if mbr_m:
+        is_lrc, cur_code, volt_code = mbr_m.groups()
+        specs["type_diode"] = "Schottky"
+        specs["mounting"] = "SMD"
+        specs["value_diode"] = pn
+        if is_lrc:
+            specs["manufacturer"] = "LRC"
+            specs["manufacturer_code"] = "L0"
+        else:
+            specs["manufacturer"] = "On Semi"
+            specs["manufacturer_code"] = "ON"
+
+        if cur_code == "05":
+            specs["current"] = "500mA"
+            specs["package"] = "SOD-123"
+        else:
+            specs["current"] = f"{int(cur_code)}A"
+
+        specs["voltage"] = f"{int(volt_code)}V"
         return specs
 
     return specs
@@ -1107,7 +1135,7 @@ def match_part_number_in_tables(file_bytes: bytes | None, part_number: str) -> d
 
     Provides deterministic, coordinate-accurate parameter extraction for multi-variant catalogs.
     """
-    if not file_bytes or not part_number or len(part_number) < 2:
+    if not file_bytes or not part_number or len(part_number) < 2 or is_catalog_document_name(part_number):
         return {}
 
     pn_clean = part_number.strip().upper()
@@ -1418,14 +1446,43 @@ def extract_component_specs(
 
         # Diode Package
         if "package" not in specs:
-            pkg_dio_m = re.search(r"\b(?:case|package)?[:\s-]*(sod-?123(?:w|f)?|sod-?323|sod-?523|sma|smb|smc|sot-?23|do-?214(?:ac|aa|ab)|do-?15|melf|minimelf)\b", text_lower)
+            pkg_text = re.sub(
+                r"\b(?:alternative\s+to(?:\s+the)?|replaces?|instead\s+of|versus|vs\.?)\s+(?:[a-z0-9-]+\s+){0,3}(?:melf|sod-?\d+|sot-?\d+)\b",
+                " ",
+                text_lower,
+            )
+            pkg_dio_m = re.search(r"\b(?:case|package)?[:\s-]*(sod-?123(?:w|f|fl)?|sod-?323|sod-?523|sma|smb|smc|sot-?23|do-?214(?:ac|aa|ab)|do-?15|melf|minimelf)\b", pkg_text)
             if pkg_dio_m:
-                raw_p = pkg_dio_m.group(1).upper().replace("-", "")
-                specs["package"] = raw_p
+                raw_p = pkg_dio_m.group(1).upper()
+                if raw_p in ("SOD-123", "SOD123"):
+                    specs["package"] = "SOD-123"
+                else:
+                    specs["package"] = raw_p.replace("-", "")
+
+        # Headline extraction: e.g. "0.5 AMPERES, 20 VOLTS" or "20 VOLTS, 0.5 AMPERES"
+        hl_m1 = re.search(r"(\d+(?:\.\d+)?)\s*(?:amperes?|amps?|a)\s*,\s*(\d+(?:\.\d+)?)\s*(?:volts?|v)\b", text_lower)
+        if hl_m1:
+            c_val = float(hl_m1.group(1))
+            v_val = hl_m1.group(2)
+            if "current" not in specs:
+                specs["current"] = f"{int(c_val * 1000)}mA" if c_val < 1.0 else f"{int(c_val) if c_val == int(c_val) else c_val}A"
+            if "voltage" not in specs:
+                specs["voltage"] = f"{int(float(v_val)) if float(v_val) == int(float(v_val)) else v_val}V"
+
+        hl_m2 = re.search(r"(\d+(?:\.\d+)?)\s*(?:volts?|v)\s*,\s*(\d+(?:\.\d+)?)\s*(?:amperes?|amps?|a)\b", text_lower)
+        if hl_m2:
+            v_val = hl_m2.group(1)
+            c_val = float(hl_m2.group(2))
+            if "voltage" not in specs:
+                specs["voltage"] = f"{int(float(v_val)) if float(v_val) == int(float(v_val)) else v_val}V"
+            if "current" not in specs:
+                specs["current"] = f"{int(c_val * 1000)}mA" if c_val < 1.0 else f"{int(c_val) if c_val == int(c_val) else c_val}A"
 
         # Diode Voltage
         if "voltage" not in specs:
             v_m = re.search(rf"\b{re.escape(pn)}\b.*?(\d+)\s*v\b", text_lower, re.DOTALL)
+            if not v_m:
+                v_m = re.search(r"\b(?:v_?rrm|v_?rwm|v_?dc|peak\s+reverse\s+voltage|blocking\s+voltage)[\s\S]{1,40}?(\d+)\s*v\b", text_lower)
             if not v_m:
                 v_m = re.search(r"\b(?:v_?rrm|v_?dc|peak\s+reverse\s+voltage|blocking\s+voltage)[:\s=]+(\d+)\s*v?\b", text_lower)
             if not v_m:
@@ -1441,7 +1498,9 @@ def extract_component_specs(
 
         # Diode Current
         if "current" not in specs:
-            cur_m = re.search(r"\b(?:i_?av|forward\s+current|current)[:\s=]+(\d+(?:\.\d+)?)\s*(?:a|ampere|ma)\b", text_lower)
+            cur_m = re.search(r"\b(?:i_?av|forward\s+current|current)[\s\S]{1,40}?(\d+(?:\.\d+)?)\s*(?:a|ampere|ma)\b", text_lower)
+            if not cur_m:
+                cur_m = re.search(r"\b(?:i_?av|forward\s+current|current)[:\s=]+(\d+(?:\.\d+)?)\s*(?:a|ampere|ma)\b", text_lower)
             if not cur_m:
                 cur_m = re.search(r"\b(\d+(?:\.\d+)?)\s*ampere\b", text_lower)
             if cur_m:
@@ -1465,7 +1524,13 @@ def extract_component_specs(
 
         # Automotive AEC-Q101 qualification
         if "aec-q101" in text_lower or "aec q101" in text_lower:
-            specs["special_def"] = "Automotive AEC-Q101"
+            prefix_m = re.search(r"\b([a-z0-9]+)\s+prefix\s+for\s+automotive\b", text_lower)
+            if prefix_m:
+                auto_pfx = prefix_m.group(1).upper()
+                if pn.upper().startswith(auto_pfx) or "aec" in pn.lower() or "auto" in pn.lower():
+                    specs["special_def"] = "Automotive AEC-Q101"
+            else:
+                specs["special_def"] = "Automotive AEC-Q101"
 
     elif material_type in ("FET", "TRA"):
         if material_type == "FET":
@@ -3219,6 +3284,32 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
     return ", ".join(tokens)
 
 
+CRITICAL_SPECS_BY_MATERIAL_TYPE: dict[str, tuple[str, ...]] = {
+    "CON": ("pitch", "pin_number", "type_connector"),
+    "RES": ("resistance_str",),
+    "CAP": ("capacitance_str", "capacitance_pf"),
+    "IND": ("inductance_str",),
+    "DIO": ("voltage", "current"),
+    "TRA": ("vds", "vce", "type_transistor"),
+    "CRY": ("frequency_str",),
+    "DSP": ("type_display", "color"),
+    "FUS": ("current", "voltage"),
+    "REL": ("coil_voltage", "contact_current"),
+    "SWI": ("type_switch",),
+}
+
+
+def is_critical_spec_missing(mat_type: str, specs: dict[str, Any], is_text_empty: bool) -> bool:
+    """Determine whether critical specs are missing, triggering Vision LLM fusion if available."""
+    if is_text_empty or mat_type == "BİLİNMİYOR" or not mat_type:
+        return True
+    req = CRITICAL_SPECS_BY_MATERIAL_TYPE.get(mat_type)
+    if req:
+        return not any(specs.get(k) for k in req)
+    # General fallback for any other material type
+    return not specs.get("package") and len(specs) <= 2
+
+
 def analyze_datasheet(
     stream_or_path: BinaryIO | bytes | Path | str,
     part_number: str | None = None,
@@ -3390,27 +3481,18 @@ def analyze_datasheet(
     )
     for k, v in pn_specs.items():
         if k == "manufacturer" and specs.get("manufacturer") and specs.get("manufacturer") != v:
-            continue
+            if not pn_specs.get("manufacturer_code"):
+                continue
         if k == "manufacturer_code" and specs.get("manufacturer_code") and specs.get("manufacturer") != pn_specs.get("manufacturer"):
-            continue
+            if not pn_specs.get("manufacturer_code"):
+                continue
         specs[k] = v
     if serial_counter is not None:
         specs["serial_counter"] = serial_counter
 
     # 5. Priority 3: Vision Fusion Trigger
     is_text_empty = len(clean_text) == 0
-    are_critical_missing = False
-
-    if mat_type == "CON":
-        are_critical_missing = not (specs.get("pitch") and specs.get("pin_number") and specs.get("type_connector"))
-    elif mat_type == "RES":
-        are_critical_missing = not specs.get("resistance_str")
-    elif mat_type == "CAP":
-        are_critical_missing = not (specs.get("capacitance_str") or specs.get("capacitance_pf"))
-    elif mat_type == "IND":
-        are_critical_missing = not specs.get("inductance_str")
-    elif mat_type == "BİLİNMİYOR":
-        are_critical_missing = True
+    are_critical_missing = is_critical_spec_missing(mat_type, specs, is_text_empty)
 
     used_vision = False
     if file_bytes and not pn_has_core and (is_text_empty or are_critical_missing):

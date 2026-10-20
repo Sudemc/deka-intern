@@ -156,6 +156,39 @@ class VisionLLMClient:
                 logger.warning("Missing or invalid 'specs' dict in Vision LLM response for %s", clean_pn)
                 return None
 
+            # Normalize property keys to internal schema
+            raw_specs = parsed.get("specs", {})
+            normalized_specs: dict[str, Any] = {}
+            key_aliases = {
+                "vrrm": "voltage",
+                "forward_voltage": "voltage",
+                "reverse_voltage": "voltage",
+                "breakdown_voltage": "voltage",
+                "blocking_voltage": "voltage",
+                "rated_voltage": "voltage",
+                "if": "current",
+                "if_av": "current",
+                "forward_current": "current",
+                "rated_current": "current",
+                "average_current": "current",
+                "freq": "frequency_str",
+                "frequency": "frequency_str",
+                "cap": "capacitance_str",
+                "capacitance": "capacitance_str",
+                "res": "resistance_str",
+                "resistance": "resistance_str",
+                "ind": "inductance_str",
+                "inductance": "inductance_str",
+                "pkg": "package",
+                "case": "package",
+            }
+            for k, v in raw_specs.items():
+                normalized_specs[k] = v
+                norm_k = key_aliases.get(k.lower().strip())
+                if norm_k and norm_k != k:
+                    normalized_specs[norm_k] = v
+            parsed["specs"] = normalized_specs
+
             # Normalize confidence if present or set default
             if "confidence" in parsed and isinstance(parsed["confidence"], (int, float)):
                 parsed["confidence"] = float(parsed["confidence"])

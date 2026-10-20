@@ -1386,3 +1386,78 @@ def test_diverse_dynamic_manufacturers_from_rules_e2e():
     assert "Standart" not in res2["suggested_description"]
     assert "None" not in res2["suggested_description"]
 
+
+def test_lmbr_and_mbr_schottky_pn_decoding():
+    from bom_enricher.datasheet_analyzer import decode_manufacturer_pn
+
+    # 1. LMBR0520T1G: LRC, 500mA, 20V, SOD-123
+    specs_l = decode_manufacturer_pn("LMBR0520T1G")
+    assert specs_l.get("manufacturer") == "LRC"
+    assert specs_l.get("manufacturer_code") == "L0"
+    assert specs_l.get("type_diode") == "Schottky"
+    assert specs_l.get("mounting") == "SMD"
+    assert specs_l.get("current") == "500mA"
+    assert specs_l.get("voltage") == "20V"
+    assert specs_l.get("package") == "SOD-123"
+
+    # 2. MBR0520LT1G: On Semi, 500mA, 20V, SOD-123
+    specs_m = decode_manufacturer_pn("MBR0520LT1G")
+    assert specs_m.get("manufacturer") == "On Semi"
+    assert specs_m.get("manufacturer_code") == "ON"
+    assert specs_m.get("type_diode") == "Schottky"
+    assert specs_m.get("current") == "500mA"
+    assert specs_m.get("voltage") == "20V"
+    assert specs_m.get("package") == "SOD-123"
+
+    # 3. LMBR0540: 500mA, 40V
+    specs_40 = decode_manufacturer_pn("LMBR0540")
+    assert specs_40.get("voltage") == "40V"
+    assert specs_40.get("current") == "500mA"
+
+
+def test_unicode_dash_and_negative_context_guard_diode_e2e():
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "0.5 AMPERES, 20 VOLTS")
+    c.drawString(100, 730, "SURFACE MOUNT SCHOTTKY POWER RECTIFIER")
+    # Notice Unicode minus (\u2212) simulating onsemi PDF text
+    c.drawString(100, 710, "Plastic SOD\u2212123 Package")
+    # Notice negative context mentioning MELF as an alternative
+    c.drawString(100, 690, "This package provides an alternative to the leadless 34 MELF style package.")
+    c.save()
+
+    res = analyze_datasheet(buf.getvalue(), part_number="LMBR0520T1G")
+
+    assert res["erp_code"] == "DIOSZ101Z500-L0"
+    assert res["specs"]["package"] == "SOD-123"
+    assert res["specs"]["manufacturer"] == "LRC"
+    assert res["specs"]["manufacturer_code"] == "L0"
+    assert res["specs"]["voltage"] == "20V"
+    assert res["specs"]["current"] == "500mA"
+    assert "MELF" not in res["erp_code"]
+    for expected_token in ["SMD SOD-123", "Schottky", "20V", "500mA", "LMBR0520T1G", "LRC"]:
+        assert expected_token in res["rich_description"]
+
+
+def test_universal_is_critical_spec_missing():
+    from bom_enricher.datasheet_analyzer import is_critical_spec_missing
+
+    # Text empty always triggers
+    assert is_critical_spec_missing("RES", {"resistance_str": "10k"}, is_text_empty=True) is True
+    assert is_critical_spec_missing("BİLİNMİYOR", {}, is_text_empty=False) is True
+
+    # DIO missing voltage/current
+    assert is_critical_spec_missing("DIO", {"package": "SOD-123"}, is_text_empty=False) is True
+    assert is_critical_spec_missing("DIO", {"voltage": "20V"}, is_text_empty=False) is False
+
+    # RES missing resistance_str
+    assert is_critical_spec_missing("RES", {"package": "0805"}, is_text_empty=False) is True
+    assert is_critical_spec_missing("RES", {"resistance_str": "10k"}, is_text_empty=False) is False
+
+    # CON missing pitch/pin_number/type_connector
+    assert is_critical_spec_missing("CON", {"package": "SMD"}, is_text_empty=False) is True
+    assert is_critical_spec_missing("CON", {"pitch": "2.54mm"}, is_text_empty=False) is False
+
