@@ -21,12 +21,33 @@ class VisionLLMClient:
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
-        model: str = "llama3.2-vision:3b",
+        model: str | None = None,
         timeout: float = 15.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.model = model
+        self._configured_model = model
+        self.model = model or "llama3.2-vision:3b"
         self.timeout = float(timeout)
+
+    def _resolve_model(self) -> str:
+        """Resolve available vision model from Ollama, auto-detecting if preferred isn't set."""
+        if self._configured_model:
+            return self._configured_model
+        try:
+            resp = httpx.get(f"{self.base_url}/api/tags", timeout=1.5)
+            if resp.status_code == 200:
+                models = resp.json().get("models", [])
+                names = [m.get("name", "") for m in models]
+                # Check for preferred lightweight vision models in order of CPU efficiency
+                for cand in ("moondream", "llama3.2-vision", "llava", "qwen2-vl", "minicpm-v"):
+                    for n in names:
+                        if cand in n.lower():
+                            return n
+                if names:
+                    return names[0]
+        except Exception:
+            pass
+        return self.model
 
     def is_available(self) -> bool:
         """Quickly check if the local Ollama server is running and reachable."""
@@ -99,8 +120,9 @@ class VisionLLMClient:
         )
         user_prompt = "\n".join(user_prompt_lines)
 
+        active_model = self._resolve_model()
         payload = {
-            "model": self.model,
+            "model": active_model,
             "messages": [
                 {
                     "role": "system",
@@ -122,6 +144,13 @@ class VisionLLMClient:
                 json=payload,
                 timeout=self.timeout,
             )
+            if resp.status_code != 200:
+                payload.pop("format", None)
+                resp = httpx.post(
+                    f"{self.base_url}/api/chat",
+                    json=payload,
+                    timeout=self.timeout,
+                )
             resp.raise_for_status()
             data = resp.json()
 
