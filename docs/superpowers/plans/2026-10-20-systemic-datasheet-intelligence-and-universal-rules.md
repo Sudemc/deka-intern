@@ -165,7 +165,7 @@ git commit -m "refactor: eliminate text-dropping in fast-path and enforce non-de
 - Consumes: rulebook entries for `specialdefinition...` attributes in `map_specs_to_erp`.
 - Produces: deterministic ERP codes with standard `00`/`0` padding; clean rich descriptions without `"Standart"` token pollution.
 
-- [ ] **Step 1: Write failing tests for generic default qualifier fallback and zero padding**
+- [x] **Step 1: Write failing tests for generic default qualifier fallback and zero padding**
 
 ```python
 # In tests/test_datasheet_analyzer.py
@@ -195,11 +195,11 @@ def test_universal_default_special_definition_fallback():
     assert pkg_m.status == "BULUNAMADI"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_universal_default_special_definition_fallback -v`
 
-- [ ] **Step 3: Implement generalized default qualifier fallback in `map_specs_to_erp`**
+- [x] **Step 3: Implement generalized default qualifier fallback in `map_specs_to_erp`**
 
 1. In `map_specs_to_erp` under `specialdefinition`:
    - If `specs.get("special_def")` matches a specific entry, assign `matched_entry`.
@@ -210,12 +210,12 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::tes
 2. In `description_tokens` building:
    - Suppress `"Standart"`, `"Standard"`, `"None"`, `"General"` from `description_tokens` when derived from default empty rules.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_datasheet_analyzer.py::test_universal_default_special_definition_fallback -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bom_enricher/datasheet_analyzer.py tests/test_datasheet_analyzer.py
