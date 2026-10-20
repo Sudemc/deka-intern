@@ -1324,5 +1324,27 @@ def test_fast_path_never_suppresses_pdf_text():
     assert result2["specs"].get("temperature") == "-55°C~+125°C"
 
 
+def test_universal_default_special_definition_fallback():
+    from bom_enricher.datasheet_analyzer import load_rulebook, map_specs_to_erp, build_rich_description
+    rulebook = load_rulebook("data/rules.xlsx")
 
+    # 1. Diode (Special Definition - ALL has 2-char siblings AU, AC, AE -> formats as '00')
+    specs_dio = {
+        "mounting": "SMD",
+        "package": "SOD123",
+        "type_diode": "Schottky",
+        "value_diode": "SS0520",
+        "manufacturer": "Panjit",
+        "manufacturer_code": "PA",
+    }
+    mappings_d, desc_d, code_d = map_specs_to_erp(rulebook, "DIO", specs_dio)
+    assert code_d == "DIOSZ41S1000-PA"
+    assert "Standart" not in desc_d
 
+    # 2. Core attributes (like Package) must NEVER default to zero if unextracted
+    specs_dio_no_pkg = {"mounting": "SMD", "type_diode": "Schottky", "value_diode": "SS0520"}
+    mappings_np, _, code_np = map_specs_to_erp(rulebook, "DIO", specs_dio_no_pkg)
+    pkg_m = next((m for m in mappings_np if m.attribute_name == "Package"), None)
+    assert pkg_m is not None
+    assert pkg_m.erp_code == "—"
+    assert pkg_m.status == "BULUNAMADI"

@@ -2258,6 +2258,7 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
         matched_entry: RuleEntry | None = None
         extracted_val_str = ""
         status = "BULUNAMADI"
+        is_default_rule = False
 
         # Sub-group conditional attributes: skip attributes that do not apply to this component subtype
         if is_ceramic_mlcc and any(k in attr_norm for k in ("loadlife", "pitch", "sizecapacitor")):
@@ -2491,25 +2492,27 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
-            if not matched_entry and material_type in ("DIO", "TRA"):
+            if not matched_entry:
+                # Generalized Null/Default Standard Rule Fallback for Qualifiers
                 for e in entries:
-                    if str(e.value) == "0" or e.value == 0:
-                        if material_type == "DIO":
-                            matched_entry = RuleEntry(
-                                material_type=e.material_type,
-                                attribute_code=e.attribute_code,
-                                attribute_name=e.attribute_name,
-                                value="00",
-                                value_description="Standart",
-                                language=e.language,
-                                sort_order=e.sort_order,
-                                prefix=e.prefix,
-                                suffix=e.suffix,
-                            )
-                        else:
-                            matched_entry = e
+                    val_s = str(e.value).strip() if e.value is not None else ""
+                    desc_s = (e.value_description or "").strip().rstrip(",").strip()
+                    if val_s in ("0", "00") or desc_s in ("", "Standart", "Standard", "None"):
+                        pad2 = max((len(str(x.value).strip()) for x in entries if x.value is not None), default=1) >= 2
+                        matched_entry = RuleEntry(
+                            material_type=e.material_type,
+                            attribute_code=e.attribute_code,
+                            attribute_name=e.attribute_name,
+                            value="00" if pad2 else "0",
+                            value_description="Standart",
+                            language=e.language,
+                            sort_order=e.sort_order,
+                            prefix=e.prefix,
+                            suffix=e.suffix,
+                        )
                         status = "TAM EŞLEŞTİ"
                         extracted_val_str = "Standart"
+                        is_default_rule = True
                         break
 
         # 8. WATTAGE
@@ -2924,7 +2927,13 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             ))
             desc_val = matched_entry.value_description.strip()
             if desc_val:
-                description_tokens.append(desc_val)
+                clean_token = desc_val.rstrip(",").strip()
+                if is_default_rule and clean_token.casefold() in ("standart", "standard", "none", "general"):
+                    pass
+                elif clean_token.casefold() in ("standart", "standard", "none"):
+                    pass
+                else:
+                    description_tokens.append(desc_val)
             code_val = (matched_entry.prefix or "") + (matched_entry.value or "")
             if code_val:
                 code_tokens.append(code_val)
