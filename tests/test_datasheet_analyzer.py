@@ -1076,7 +1076,8 @@ def test_universal_rule_matcher_dsp_attributes():
     assert attr_map["Mounting"][1] == "T"
     assert attr_map["Type Display"][1] == "E"
     assert attr_map["Color Display LED"][1] == "4"
-    assert attr_map["Special Definition - Display "][1] == "BH"
+    sp_def = attr_map.get("Special Definition - Display") or attr_map.get("Special Definition - Display ")
+    assert sp_def is not None and sp_def[1] == "BH"
     assert attr_map["Serial Display Number"][1] == "0028"
     assert attr_map["Q"][1] == "FO"
 
@@ -1129,4 +1130,75 @@ def test_dsp_multilingual_semantic_matching():
     assert erp_code == "DSPTE4BH0028-FO"
     attr_map = {m.attribute_name: (m.matched_erp_value, m.erp_code) for m in mappings}
     assert attr_map["Color Display LED"][1] == "4"
-    assert attr_map["Special Definition - Display "][1] == "BH"
+    sp_def = attr_map.get("Special Definition - Display") or attr_map.get("Special Definition - Display ")
+    assert sp_def is not None and sp_def[1] == "BH"
+
+
+def test_match_spec_to_entries_partial_compound_no_false_match():
+    from bom_enricher.datasheet_analyzer import _match_spec_to_entries, RuleEntry
+    e1 = RuleEntry("DSP", "ATTR", "Special Definition - Display", "BG", "4 Digit, COM+,", "TR", "4", "", "")
+    e2 = RuleEntry("DSP", "ATTR", "Special Definition - Display", "BH", "4 Digit, COM-,", "TR", "4", "", "")
+    entries = (e1, e2)
+
+    # 1. Partial value (digit only) must NOT falsely match first compound entry
+    matched, status = _match_spec_to_entries("4 Digit", entries)
+    assert matched is None
+    assert status == "BULUNAMADI"
+
+    # 2. Partial value (polarity only) must NOT falsely match
+    matched, status = _match_spec_to_entries("Common Cathode", entries)
+    assert matched is None
+    assert status == "BULUNAMADI"
+
+    # 3. Full value with polarity matches correct polarity entry
+    matched_neg, status_neg = _match_spec_to_entries("4 Digit, COM-", entries)
+    assert matched_neg is not None
+    assert matched_neg.value == "BH"
+    assert status_neg == "TAM EŞLEŞTİ"
+
+    # 4. Synonym expansion for full multi-dimensional value
+    matched_syn_neg, _ = _match_spec_to_entries("4 Digit, Common Cathode", entries)
+    assert matched_syn_neg is not None
+    assert matched_syn_neg.value == "BH"
+
+    matched_syn_pos, _ = _match_spec_to_entries("4 Digit, Common Anode", entries)
+    assert matched_syn_pos is not None
+    assert matched_syn_pos.value == "BG"
+
+
+def test_real_foryard_display_datasheet_e2e():
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+    from reportlab.pdfgen import canvas
+    import io
+
+    # Synthetic Foryard 4-Digit Display datasheet
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "NINGBO FORYARD OPTOELECTRONICS CO.,LTD")
+    c.drawString(100, 730, "PRODUCT SPECIFICATION - Model No.: FYQ-5643C/DX-XX")
+    c.drawString(100, 710, "0.56Inch (14.20mm) digit height Four Digits Display")
+    c.drawString(100, 690, "Descriptions & Features: Case mold type. Easy mounting on P.C. board or socket.")
+    c.drawString(100, 670, "Mechanical Dimensions: All pins are Φ0.51mm, 2.54*6=15.24")
+    c.drawString(100, 650, "Internal Circuit Diagrams: FYQ-5643Cx Common Cathode, FYQ-5643Dx Common Anode")
+    c.drawString(100, 630, "Electrical-Optical: UW Ultra White InGaN CCT:9500K Forward Voltage 2.80V")
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    pn = "FYQ-5643CUW-21"
+
+    # 1. Default counter test
+    result = analyze_datasheet(pdf_bytes, part_number=pn)
+    assert result["material_type"] == "DSP"
+    assert result["specs"].get("mounting") == "TH"
+    assert result["specs"].get("type_display") == "7 Segment Display"
+    assert result["specs"].get("color") == "Beyaz"
+    assert result["specs"].get("polarity") == "COM-"
+    assert result["specs"].get("digits") == "4 Digit"
+    assert result["specs"].get("manufacturer") == "Foryard"
+    assert result["rich_description"] == "TH 7 Segment Display, Beyaz, 4 Digit, COM-,  Foryard"
+    assert result["erp_code"] == "DSPTE4BH0000XX-FO"
+
+    # 2. Injected internal counter test (0028)
+    result_counter = analyze_datasheet(pdf_bytes, part_number=pn, serial_counter="0028")
+    assert result_counter["erp_code"] == "DSPTE4BH0028-FO"
+

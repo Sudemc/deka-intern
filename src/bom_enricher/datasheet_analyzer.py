@@ -2129,6 +2129,23 @@ def _find_candidate_specs_for_attribute(
     return [(k, val) for _, k, val in candidates]
 
 
+def _is_dimension_part_present(part: str, text: str) -> bool:
+    """Check if a dimension part (or its synonyms) is present as a token/phrase in text."""
+    p_pat = rf"(?:^|[\s,;/]){re.escape(part)}(?:$|[\s,;/])"
+    if re.search(p_pat, text):
+        return True
+    for syn in MULTILINGUAL_SYNONYMS.get(part, ()):
+        s_pat = rf"(?:^|[\s,;/]){re.escape(syn)}(?:$|[\s,;/])"
+        if re.search(s_pat, text):
+            return True
+    subparts = [p.strip() for p in text.split(",") if p.strip()]
+    if len(subparts) > 1:
+        for sp in subparts:
+            if _check_synonym_match(sp, part):
+                return True
+    return False
+
+
 def _match_spec_to_entries(
     cand_val: str,
     entries: tuple[RuleEntry, ...],
@@ -2157,10 +2174,17 @@ def _match_spec_to_entries(
         desc = (e.value_description or "").strip().rstrip(",").strip().casefold()
         if not desc:
             continue
-        pattern_desc = rf"(?:^|[\s,;/]){re.escape(desc)}(?:$|[\s,;/])"
-        pattern_val = rf"(?:^|[\s,;/]){re.escape(val_clean)}(?:$|[\s,;/])"
-        if re.search(pattern_desc, val_clean) or re.search(pattern_val, desc):
-            return e, "TAM EŞLEŞTİ"
+        desc_parts = [p.strip() for p in desc.split(",") if p.strip()]
+        if len(desc_parts) >= 2:
+            # Multi-dimensional composite attribute (e.g. '4 Digit, COM-,')
+            # Require all core dimension tokens (e.g. both digit count and polarity) to be present in val_clean
+            if all(_is_dimension_part_present(dp, val_clean) for dp in desc_parts):
+                return e, "TAM EŞLEŞTİ"
+        else:
+            pattern_desc = rf"(?:^|[\s,;/]){re.escape(desc)}(?:$|[\s,;/])"
+            pattern_val = rf"(?:^|[\s,;/]){re.escape(val_clean)}(?:$|[\s,;/])"
+            if re.search(pattern_desc, val_clean) or re.search(pattern_val, desc):
+                return e, "TAM EŞLEŞTİ"
 
     # Pass 4: Token set overlap
     v_tokens = set(re.findall(r"[A-Za-z0-9\+\-]+", val_clean))
@@ -2215,7 +2239,8 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
     )
 
     for sort_no, attr_norm, entries in attribute_sorts:
-        attr_display_name = "Special Definition - Display " if attr_norm == "specialdefinitiondisplay" else entries[0].attribute_name
+        raw_name = entries[0].attribute_name if entries else ""
+        attr_display_name = raw_name.strip()
         matched_entry: RuleEntry | None = None
         extracted_val_str = ""
         status = "BULUNAMADI"
