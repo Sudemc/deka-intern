@@ -958,6 +958,44 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
             specs["angle"] = "90°(Yatık)"
         return specs
 
+    # Molex Picoflex: e.g. 90325-0004, 903250004, 0903250004
+    molex_pf = re.match(r"^(?:0)?(90325|90814|90327)[-_]?(\d{4})$", pn)
+    if molex_pf:
+        series_code, item_code = molex_pf.groups()
+        specs["manufacturer"] = "Molex"
+        specs["pitch"] = "1.27mm"
+        circuits = int(item_code) % 100
+        if circuits:
+            specs["pin_number"] = f"{circuits} pin"
+        if series_code == "90325":
+            specs["type_connector"] = "Wire to Board Konnektör"
+            specs["pin_type"] = "Erkek"
+            specs["mounting"] = "TH"
+            specs["angle"] = "180°(Dik)"
+        elif series_code == "90814":
+            specs["type_connector"] = "Wire to Board Konnektör"
+            specs["pin_type"] = "Erkek"
+            specs["mounting"] = "SMD"
+            specs["angle"] = "180°(Dik)"
+        elif series_code == "90327":
+            specs["type_connector"] = "Wire to Board Konnektör"
+            specs["pin_type"] = "Dişi"
+            specs["mounting"] = "Cable"
+        return specs
+
+    # Molex DuraClik: e.g. 502352-0200, 5023520200
+    molex_dc = re.match(r"^502352[-_]?(\d{2})\d{2}$", pn)
+    if molex_dc:
+        circuits = int(molex_dc.group(1))
+        specs["manufacturer"] = "Molex"
+        specs["pitch"] = "2mm"
+        specs["pin_number"] = f"{circuits} pin"
+        specs["type_connector"] = "Wire to Board Konnektör"
+        specs["pin_type"] = "Erkek"
+        specs["mounting"] = "SMD"
+        specs["angle"] = "90°(Yatık)"
+        return specs
+
     # 8. JST Connectors: e.g. B4B-XH-A, S4B-XH-A, XHP-4, B4B-PH-K-S, S4B-PH-K-S, PHR-4
     jst_hdr = re.match(r"^([BS])(\d+)B-(XH|PH|VH|EH)", pn)
     if jst_hdr:
@@ -1567,10 +1605,41 @@ def extract_component_specs(
 
         # Pin Type
         if "pin_type" not in specs:
-            if any(k in text_lower for k in ("receptacle", "housing", "female", "dişi")):
-                specs["pin_type"] = "Dişi"
-            elif any(k in text_lower for k in ("header", "plug", "male", "erkek", "wafer", "pin")):
-                specs["pin_type"] = "Erkek"
+            # 1. Explicit physical gender attribute (highest authority, e.g. "Gender Male", "Gender: Female")
+            explicit_gender = re.search(r"\b(?:contact\s+)?gender[:\s=]+(male|female|erkek|dişi)\b", text_lower)
+            if explicit_gender:
+                g_str = explicit_gender.group(1)
+                specs["pin_type"] = "Erkek" if g_str in ("male", "erkek") else "Dişi"
+            else:
+                # Strip out mating sections so mating part references do not invert gender
+                text_no_mates = re.split(r"\b(?:mates\s+with|mating\s+part|mating\s+connector|use\s+with)\b", text_lower)[0]
+
+                # Check for explicit header/wafer/plug in component type or title
+                is_header = bool(re.search(
+                    r"\b(?:component\s+type[:\s]+pcb\s+header|pcb\s+headers?|pin\s+headers?|box\s+headers?|"
+                    r"shrouded\s+headers?|headers?|wafers?|plugs?|erkek)\b",
+                    text_no_mates
+                ))
+                is_receptacle = bool(re.search(
+                    r"\b(?:receptacles?|sockets?|crimp\s+housing|female|dişi)\b",
+                    text_no_mates
+                ))
+
+                if is_header and not is_receptacle:
+                    specs["pin_type"] = "Erkek"
+                elif is_receptacle and not is_header:
+                    specs["pin_type"] = "Dişi"
+                elif is_header and is_receptacle:
+                    # Category line like "PCB Headers and Receptacles" contains both.
+                    # Look at specific title/headline or component type:
+                    if re.search(r"\b(?:header|wafer|plug)\b", text_no_mates):
+                        specs["pin_type"] = "Erkek"
+                    else:
+                        specs["pin_type"] = "Dişi"
+                elif any(k in text_no_mates for k in ("male", "erkek")):
+                    specs["pin_type"] = "Erkek"
+                elif any(k in text_no_mates for k in ("female", "dişi")):
+                    specs["pin_type"] = "Dişi"
 
         # Pitch
         if "pitch" not in specs:
@@ -3154,17 +3223,19 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
         return desc_core
 
     elif material_type == "CON":
-        # e.g.: Wire to Board Konnektör, 2.00mm, 4 Pin, 90°(Yatık), Molex
+        # e.g.: TH Wire to Board Konnektör, Erkek, 1.27mm, 4 pin, 180°(Dik), Molex
         title = specs.get("type_connector", "Konnektör")
-        tokens = [title]
+        mounting = specs.get("mounting", "")
+        lead = f"{mounting} {title}" if mounting and not title.startswith(mounting) else title
+        tokens = [lead]
+        if specs.get("pin_type"):
+            tokens.append(specs["pin_type"])
         if specs.get("pitch"):
             tokens.append(specs["pitch"])
         if specs.get("pin_number"):
             tokens.append(specs["pin_number"])
         if specs.get("angle"):
             tokens.append(specs["angle"])
-        if specs.get("pin_type"):
-            tokens.append(specs["pin_type"])
         if mfr:
             tokens.append(mfr)
         return ", ".join(tokens)

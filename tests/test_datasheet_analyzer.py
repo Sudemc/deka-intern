@@ -1461,3 +1461,66 @@ def test_universal_is_critical_spec_missing():
     assert is_critical_spec_missing("CON", {"package": "SMD"}, is_text_empty=False) is True
     assert is_critical_spec_missing("CON", {"pitch": "2.54mm"}, is_text_empty=False) is False
 
+
+def test_molex_connector_gender_and_picoflex_decoding(rulebook):
+    from bom_enricher.datasheet_analyzer import decode_manufacturer_pn, map_specs_to_erp, build_rich_description
+
+    # 1. Test PN Decoder for Molex Picoflex 903250004
+    specs = decode_manufacturer_pn("903250004")
+    assert specs["manufacturer"] == "Molex"
+    assert specs["pitch"] == "1.27mm"
+    assert specs["pin_number"] == "4 pin"
+    assert specs["type_connector"] == "Wire to Board Konnektör"
+    assert specs["pin_type"] == "Erkek"
+    assert specs["mounting"] == "TH"
+    assert specs["angle"] == "180°(Dik)"
+
+    # 2. Test ERP Mapping and Descriptions
+    mappings, desc, code = map_specs_to_erp(rulebook, "CON", specs)
+    assert code == "CONTADAO420000XX-MO"
+    assert desc == "TH Wire to Board Konnektör, Erkek, 1.27mm, 4 pin, 180°(Dik), Molex"
+
+    rich_desc = build_rich_description("CON", specs, "")
+    assert rich_desc == "TH Wire to Board Konnektör, Erkek, 1.27mm, 4 pin, 180°(Dik), Molex"
+
+    # 3. Test with injected serial counter
+    specs_injected = {**specs, "serial_counter": "0315"}
+    _, _, code_injected = map_specs_to_erp(rulebook, "CON", specs_injected)
+    assert code_injected == "CONTADAO420315-MO"
+
+    # 4. Test Molex DuraClik 5023520200
+    dc_specs = decode_manufacturer_pn("5023520200")
+    assert dc_specs["manufacturer"] == "Molex"
+    assert dc_specs["pitch"] == "2mm"
+    assert dc_specs["pin_number"] == "2 pin"
+    assert dc_specs["pin_type"] == "Erkek"
+    assert dc_specs["mounting"] == "SMD"
+    assert dc_specs["angle"] == "90°(Yatık)"
+
+
+def test_connector_pdf_mating_receptacle_does_not_override_male_header(rulebook):
+    pdf_bytes = _create_sample_pdf(
+        "Molex Picoflex PF-50 Header, Vertical",
+        "90325-0004",
+        [
+            "Product Category: PCB Headers and Receptacles",
+            "Component Type: PCB Header",
+            "Pitch - Mating Interface 1.27mm",
+            "Circuits: 4",
+            "Gender Male",
+            "Orientation: Vertical",
+            "Termination Interface Style: Through Hole",
+            "Mates with Part(s): Picoflex PF-50 Low Profile IDT Receptacles 90327",
+        ],
+    )
+    result = analyze_single_datasheet("903250004.pdf", pdf_bytes, rulebook, part_number_override="903250004")
+    assert result.material_type == "CON"
+    codes_by_attr = {p.attribute_name: p.erp_code for p in result.properties}
+    assert codes_by_attr["Pin Type of Connector"] == "A"
+    assert codes_by_attr["Pitch Connector"] == "O"
+    assert codes_by_attr["Pin Number"] == "4"
+    assert codes_by_attr["Mounting"] == "T"
+    assert result.suggested_erp_code == "CONTADAO420000XX-MO"
+    assert result.suggested_description == "TH Wire to Board Konnektör, Erkek, 1.27mm, 4 pin, 180°(Dik), Molex"
+    assert result.rich_description == "TH Wire to Board Konnektör, Erkek, 1.27mm, 4 pin, 180°(Dik), Molex"
+
