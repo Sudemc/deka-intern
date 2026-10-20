@@ -909,6 +909,7 @@ _DISALLOWED_MFR_TERMS = {
 
 def _clean_mfr_term(term: str) -> str:
     cleaned = re.sub(r"[\s,.-]+$", "", term).strip()
+    cleaned = re.sub(r"^[\s,.-]+", "", cleaned).strip()
     return re.sub(r"\s+", " ", cleaned)
 
 
@@ -935,7 +936,8 @@ def _build_manufacturer_registry(parsed: list[RuleEntry]) -> tuple[tuple[str, st
 
             display_name = re.sub(r"\s+", " ", raw_desc)
             raw_lower = _clean_mfr_term(display_name.lower())
-            stripped = _CORPORATE_SUFFIX_RE.sub("", display_name).strip()
+            no_parens = re.sub(r"\([^)]*\)", "", display_name).strip()
+            stripped = _CORPORATE_SUFFIX_RE.sub("", no_parens).strip()
             stripped_lower = _clean_mfr_term(stripped.lower())
 
             for term in (raw_lower, stripped_lower):

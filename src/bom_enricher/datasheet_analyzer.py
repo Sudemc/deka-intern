@@ -1290,7 +1290,7 @@ def extract_component_specs(
     # Manufacturer: document text is authoritative when an explicit manufacturer is mentioned
     mfr_registry = rulebook.manufacturers if (rulebook and rulebook.manufacturers) else KNOWN_MANUFACTURERS
     for kw, name, code in mfr_registry:
-        if re.search(rf"\b{re.escape(kw)}\b", text_lower):
+        if re.search(rf"(?:^|(?<=\W)){re.escape(kw)}(?=\W|$)", text_lower):
             specs["manufacturer"] = name
             specs["manufacturer_code"] = code
             break
@@ -3389,7 +3389,9 @@ def analyze_datasheet(
         mat_type, text, pn, is_catalog=is_catalog, file_bytes=effective_file_bytes, rulebook=rulebook
     )
     for k, v in pn_specs.items():
-        if k in ("manufacturer", "manufacturer_code") and specs.get("manufacturer") and specs.get("manufacturer") != v:
+        if k == "manufacturer" and specs.get("manufacturer") and specs.get("manufacturer") != v:
+            continue
+        if k == "manufacturer_code" and specs.get("manufacturer_code") and specs.get("manufacturer") != pn_specs.get("manufacturer"):
             continue
         specs[k] = v
     if serial_counter is not None:
