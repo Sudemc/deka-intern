@@ -1246,11 +1246,17 @@
                 <div class="upload" id="ds-rules-zone">
                   <div class="file-icon">XLSX</div>
                   <div class="upload-copy">
-                    <div class="upload-title">Malzeme Tipleri (Kurallar) Dosyası</div>
-                    <div class="upload-desc">ERP özellik ve kodlama kurallarını içeren Malzeme_Tipleri.xlsx dosyası</div>
+                    <div class="upload-title" style="display:flex;align-items:center;gap:8px;">
+                      <span>Malzeme Tipleri (Kurallar) Dosyası</span>
+                      <span class="pill pill-uygun" style="font-size:10px;font-weight:600;padding:2px 8px;">(Opsiyonel · Varsayılan Kural Seti Yüklü)</span>
+                    </div>
+                    <div class="upload-desc">Boş bırakırsanız sistemdeki DEKA ERP kuralları (data/rules.xlsx) otomatik kullanılır. Yalnızca özel bir Malzeme_Tipleri.xlsx dosyanız varsa seçin.</div>
                     <div class="file-selected" id="ds-rules-name"></div>
                   </div>
-                  <button class="pick" type="button" id="ds-rules-pick">Excel Seçin</button>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <button class="pick" type="button" id="ds-rules-pick">Excel Seçin</button>
+                    <button type="button" id="ds-rules-clear" class="btn-remove-pdf" style="display:none;font-size:16px;cursor:pointer;" title="Kaldır ve varsayılan kural setini kullan">✕</button>
+                  </div>
                   <input type="file" id="ds-rules-input" accept=".xlsx" hidden>
                 </div>
 
@@ -1856,6 +1862,8 @@
       handleRulesFile(files[0]);
     });
 
+    const dsRulesClear = document.querySelector('#ds-rules-clear');
+
     function handleRulesFile(file) {
       if (!file) return;
       if (!file.name.toLowerCase().endsWith('.xlsx')) {
@@ -1868,6 +1876,18 @@
       }
       dsSelected.rulesFile = file;
       dsRulesName.textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB ✓`;
+      if (dsRulesClear) dsRulesClear.style.display = 'inline-block';
+    }
+
+    if (dsRulesClear) {
+      dsRulesClear.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dsSelected.rulesFile = null;
+        dsRulesInput.value = '';
+        dsRulesName.textContent = '';
+        dsRulesClear.style.display = 'none';
+        showToast('Özel kural dosyası kaldırıldı. Sistemdeki varsayılan DEKA kuralları kullanılacak.');
+      });
     }
 
     // Submit Datasheet Analysis
@@ -1875,10 +1895,6 @@
       e.preventDefault();
       if (!dsSelected.pdfs.length) {
         showToast('Lütfen en az bir adet PDF datasheet yükleyin.', true);
-        return;
-      }
-      if (!dsSelected.rulesFile) {
-        showToast('Lütfen Malzeme Tipleri Excel dosyasını (Malzeme_Tipleri.xlsx) yükleyin.', true);
         return;
       }
 
@@ -1908,7 +1924,9 @@
       if (targetPn) {
         body.append('part_number', targetPn);
       }
-      body.append('rules_file', dsSelected.rulesFile);
+      if (dsSelected.rulesFile) {
+        body.append('rules_file', dsSelected.rulesFile);
+      }
       body.append('part_numbers_json', JSON.stringify(dsSelected.pnMap));
       body.append('material_types_json', JSON.stringify(dsSelected.matMap));
 

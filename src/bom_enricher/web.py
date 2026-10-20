@@ -185,7 +185,13 @@ async def analyze_datasheets(
                 raise HTTPException(status_code=400, detail="Kurallar dosyası boş.")
             rules_path = Path(job_dir.name) / "rules.xlsx"
             rules_path.write_bytes(content)
-            rulebook = load_rulebook(rules_path)
+            try:
+                rulebook = load_rulebook(rules_path)
+            except ValueError as ve:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Seçtiğiniz '{filename}' kural dosyasında 'BİRLEŞTİRİLMİŞ' sayfası bulunamadı. Lütfen DEKA Malzeme_Tipleri.xlsx kural dosyasını yükleyin veya sistemdeki varsayılan kuralları kullanmak için kural dosyası alanını boş bırakın."
+                ) from ve
         elif DEFAULT_RULES_PATH.exists():
             rules_path = DEFAULT_RULES_PATH
             rulebook = load_rulebook(rules_path)
