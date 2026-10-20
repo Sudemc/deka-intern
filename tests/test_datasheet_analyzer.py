@@ -1291,4 +1291,38 @@ def test_dynamic_manufacturer_loading_from_rules():
     assert specs_dio.get("manufacturer") != "Diodes"
 
 
+def test_fast_path_never_suppresses_pdf_text():
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+    from reportlab.pdfgen import canvas
+    import io
+
+    # PDF containing package and manufacturer in text, with PN having electrical specs
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "PANJIT SEMICONDUCTOR")
+    c.drawString(100, 730, "SS0520 SURFACE MOUNT SCHOTTKY BARRIER")
+    c.drawString(100, 710, "Case: SOD-123, Plastic")
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    result = analyze_datasheet(pdf_bytes, part_number="SS0520")
+    # Even though SS0520 decoded electrical specs on fast-path, text MUST be read
+    assert result["specs"].get("package") == "SOD123"
+    assert result["specs"].get("manufacturer") == "Panjit"
+
+    # Also verify that parts on fast-path (pn_has_core=True) retain full text extraction
+    buf2 = io.BytesIO()
+    c2 = canvas.Canvas(buf2)
+    c2.drawString(100, 750, "SAMSUNG ELECTRO-MECHANICS")
+    c2.drawString(100, 730, "CL21B104KBCNNNC Multilayer Ceramic Capacitor")
+    c2.drawString(100, 710, "Operating Temperature: -55C to +125C")
+    c2.save()
+    pdf_bytes2 = buf2.getvalue()
+
+    result2 = analyze_datasheet(pdf_bytes2, part_number="CL21B104KBCNNNC")
+    assert result2["analysis_method"] == "fast_path"
+    assert result2["specs"].get("temperature") == "-55°C~+125°C"
+
+
+
 
