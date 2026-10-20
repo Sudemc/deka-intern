@@ -1348,3 +1348,41 @@ def test_universal_default_special_definition_fallback():
     assert pkg_m is not None
     assert pkg_m.erp_code == "—"
     assert pkg_m.status == "BULUNAMADI"
+
+
+def test_diverse_dynamic_manufacturers_from_rules_e2e():
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+    from reportlab.pdfgen import canvas
+    import io
+
+    # Test 1: Qualitek (QA) - PDF canvas with QUALITEK INTERNATIONAL and 10K Resistor SMD 0603, part number RC0603FR-0710KL
+    buf1 = io.BytesIO()
+    c1 = canvas.Canvas(buf1)
+    c1.drawString(100, 750, "QUALITEK INTERNATIONAL")
+    c1.drawString(100, 730, "10K Resistor SMD 0603")
+    c1.save()
+    res1 = analyze_datasheet(buf1.getvalue(), part_number="RC0603FR-0710KL")
+    assert res1["specs"].get("manufacturer") == "Qualitek"
+    assert res1["erp_code"].endswith("-QA")
+
+    # Test 2: Panjit Schottky Diode SS0520 - PDF canvas with PANJIT SEMICONDUCTOR, SURFACE MOUNT SCHOTTKY BARRIER RECTIFIER, SOD-123, Voltage 20V Current 0.5A, part number SS0520
+    buf2 = io.BytesIO()
+    c2 = canvas.Canvas(buf2)
+    c2.drawString(100, 750, "PANJIT SEMICONDUCTOR")
+    c2.drawString(100, 730, "SURFACE MOUNT SCHOTTKY BARRIER RECTIFIER")
+    c2.drawString(100, 710, "SOD-123")
+    c2.drawString(100, 690, "Voltage 20V Current 0.5A")
+    c2.save()
+    res2 = analyze_datasheet(buf2.getvalue(), part_number="SS0520")
+
+    assert res2["erp_code"] == "DIOSZ41S1000-PA"
+    assert res2["specs"]["manufacturer"] == "Panjit"
+    assert res2["specs"]["package"] == "SOD123"
+    for expected_token in ["SMD SOD123", "Schottky", "20V", "500mA", "SS0520", "Panjit"]:
+        assert expected_token in res2["rich_description"]
+    # Ensure "Standart" and "None" are NOT present in rich_description or suggested_description
+    assert "Standart" not in res2["rich_description"]
+    assert "None" not in res2["rich_description"]
+    assert "Standart" not in res2["suggested_description"]
+    assert "None" not in res2["suggested_description"]
+

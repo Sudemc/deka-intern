@@ -1287,14 +1287,13 @@ def extract_component_specs(
             elif "to-92" in text_lower:
                 specs["package"] = "TO-92"
 
-    # Manufacturer
-    if "manufacturer" not in specs:
-        mfr_registry = rulebook.manufacturers if (rulebook and rulebook.manufacturers) else KNOWN_MANUFACTURERS
-        for kw, name, code in mfr_registry:
-            if re.search(rf"\b{re.escape(kw)}\b", text_lower):
-                specs["manufacturer"] = name
-                specs["manufacturer_code"] = code
-                break
+    # Manufacturer: document text is authoritative when an explicit manufacturer is mentioned
+    mfr_registry = rulebook.manufacturers if (rulebook and rulebook.manufacturers) else KNOWN_MANUFACTURERS
+    for kw, name, code in mfr_registry:
+        if re.search(rf"\b{re.escape(kw)}\b", text_lower):
+            specs["manufacturer"] = name
+            specs["manufacturer_code"] = code
+            break
 
     # Material-specific attributes
     if material_type == "CAP":
@@ -2543,24 +2542,24 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             target_mfr_code = specs.get("manufacturer_code", "")
             extracted_val_str = target_mfr
             if target_mfr or target_mfr_code:
-                # Pass 1: exact code match (e.g. 'TC' == e.value)
-                if target_mfr_code:
-                    for e in entries:
-                        if target_mfr_code.upper() == e.value.strip().upper():
-                            matched_entry = e
-                            status = "TAM EŞLEŞTİ"
-                            break
-                # Pass 2: exact description match (e.g. 'TE Connectivity' == 'TE Connectivity')
-                if not matched_entry and target_mfr:
+                # Pass 1: exact description match (e.g. 'TE Connectivity' == 'TE Connectivity' or 'Samsung' == 'Samsung')
+                if target_mfr:
                     for e in entries:
                         if target_mfr.casefold() == e.value_description.strip().rstrip(",").casefold():
                             matched_entry = e
                             status = "TAM EŞLEŞTİ"
                             break
-                # Pass 3: word boundary match (e.g. '\bTE Connectivity\b' or '\bSamsung\b')
+                # Pass 2: word boundary match (e.g. '\bTE Connectivity\b' or '\bSamsung\b')
                 if not matched_entry and target_mfr:
                     for e in entries:
                         if re.search(rf"\b{re.escape(target_mfr)}\b", e.value_description, re.IGNORECASE):
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
+                # Pass 3: exact code match (e.g. 'TC' == e.value or 'QA' == e.value)
+                if not matched_entry and target_mfr_code:
+                    for e in entries:
+                        if target_mfr_code.upper() == e.value.strip().upper():
                             matched_entry = e
                             status = "TAM EŞLEŞTİ"
                             break
@@ -3390,6 +3389,8 @@ def analyze_datasheet(
         mat_type, text, pn, is_catalog=is_catalog, file_bytes=effective_file_bytes, rulebook=rulebook
     )
     for k, v in pn_specs.items():
+        if k in ("manufacturer", "manufacturer_code") and specs.get("manufacturer") and specs.get("manufacturer") != v:
+            continue
         specs[k] = v
     if serial_counter is not None:
         specs["serial_counter"] = serial_counter
