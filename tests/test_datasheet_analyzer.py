@@ -1776,3 +1776,36 @@ def test_real_simsukian_adapter_datasheet_e2e():
     assert res_counter["material_type"] == "ADP"
     assert res_counter["part_number"] == "SK03T-1200200V"
     assert res_counter["erp_code"] == "ADPAA00A301011-SMK"
+
+
+def test_real_ezurio_maf95310_antenna_datasheet_e2e():
+    """Verify real Laird / Ezurio MAF95310 Antenna datasheet produces exact expected ERP code and rich description."""
+    from pathlib import Path
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+    from bom_enricher.comparison import load_rulebook
+
+    pdf_path = Path(r"C:\Users\sudem\.gemini\antigravity\brain\8be84be6-1095-43d5-b848-ce9fe57a8347\.user_uploaded\media_1792578508694_12998fb7.pdf")
+    if not pdf_path.exists():
+        pytest.skip("User uploaded PDF not found at path")
+
+    rule_file = Path("data/rules.xlsx")
+    rulebook = load_rulebook(rule_file) if rule_file.exists() else None
+
+    # 1. Analyze with raw filename (simulating user upload without part number)
+    res_default = analyze_datasheet(pdf_path, filename="media_1792578508694_12998fb7.pdf", rulebook=rulebook)
+    assert res_default["material_type"] == "ANT"
+    assert res_default["part_number"] == "MAF95310"
+    assert res_default["specs"]["manufacturer"] == "Ezurio"
+    assert res_default["specs"]["cable_length"] == "185mm"
+    assert res_default["specs"]["mating_connector"] == "UFL (I-PEX)"
+    assert res_default["specs"]["structure"] == "Flex"
+    assert res_default["rich_description"] == "RF Flex Antenna, WLAN, 185mm UFL Cable (I-PEX), Ezurio"
+    assert res_default["erp_code"] == "ANTT30000XX-EZU"
+
+    # 2. Analyze with serial_counter="21"
+    res_counter = analyze_datasheet(pdf_path, filename="media_1792578508694_12998fb7.pdf", rulebook=rulebook, serial_counter="21")
+    assert res_counter["material_type"] == "ANT"
+    assert res_counter["part_number"] == "MAF95310"
+    assert res_counter["erp_code"] == "ANTT3000021-EZU"
+    assert res_counter["rich_description"] == "RF Flex Antenna, WLAN, 185mm UFL Cable (I-PEX), Ezurio"
+

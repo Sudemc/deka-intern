@@ -383,6 +383,33 @@ def extract_part_numbers_from_text(text: str) -> list[str]:
             seen.add(cand.upper())
             found.append(cand.upper())
 
+    # 1b. Table column header pattern: "Part No Cable ...\nMAF95310 ..."
+    table_header_re = (
+        r"(?:(?:Part|Model|Ordering)\s*(?:No\.?|Number|Code)|P/N)\b[^\n]*\n\s*([A-Za-z0-9_.-]{4,35})\b"
+    )
+    for m in re.finditer(table_header_re, text, flags=re.IGNORECASE):
+        cand = m.group(1).strip().strip(".:：,-_")
+        if cand.upper() in noise_tokens or len(cand) < 4:
+            continue
+        if not any(c.isdigit() for c in cand):
+            continue
+        if is_catalog_document_name(cand):
+            continue
+        if cand.upper() not in seen:
+            seen.add(cand.upper())
+            found.append(cand.upper())
+
+    # 1c. Top-of-page document title pattern (e.g. "MAF95310 Mini NanoBlade Flex" at start of page 1)
+    for line in text.strip().split("\n")[:8]:
+        line_clean = line.strip()
+        m_top = re.match(r"^([A-Z]{2,6}\d{4,8}[A-Za-z0-9_-]*)\b", line_clean, flags=re.IGNORECASE)
+        if m_top:
+            cand = m_top.group(1).strip()
+            if cand.upper() not in noise_tokens and not is_catalog_document_name(cand) and any(c.isdigit() for c in cand):
+                if cand.upper() not in seen:
+                    seen.add(cand.upper())
+                    found.append(cand.upper())
+
     # 2. Known MPN regular expression patterns
     patterns = [
         # Yageo Resistors: RC0805JR-07300RL, RC0402FR-0710KL, AC0805JR-07300RL, etc.
@@ -395,6 +422,9 @@ def extract_part_numbers_from_text(text: str) -> list[str]:
         r"\bGRM\d{2}[A-Z0-9]{6,14}\b",
         # Royal Ohm Chip Resistors: 0805W8F1001T5E, 0603WAF1002T5E
         r"\b\d{4}(?:WG|WA|W8|W4|W2|1W|2W|S4|S8|SA)[A-Z][0-9A-Z]{4}[A-Z0-9]*\b",
+        # Antennas (Laird / Ezurio MAF, TE Connectivity, Molex)
+        r"\bMAF\d{4,6}[A-Z0-9-]*\b",
+        r"\b(?:2108857|2118310|2118309|146153|146187|206994)-\d+\b",
     ]
 
     for pat in patterns:
@@ -1362,24 +1392,35 @@ def _extract_part_variant_table_row(text: str, part_number: str) -> dict[str, An
             after_pn = line_s[m.end():].strip()
             tokens = after_pn.split()
 
-            # Find dimensions / lengths (between 1.0 and 3000.0)
-            dims = []
-            for t in tokens:
-                num_m = re.match(r"^(\d+(?:\.\d+)?)(?:mm)?$", t)
-                if num_m:
-                    val = float(num_m.group(1))
-                    dash_suffix = pn_clean.split("-")[-1] if "-" in pn_clean else ""
-                    if 1.0 <= val <= 3000.0 and (not dash_suffix.isdigit() or val != float(dash_suffix)):
-                        dims.append(val)
+            # 1. Cable Length: check explicit length label first (e.g. Lc = 185±4 mm, L = 50mm, Cable: 100mm)
+            len_m = re.search(r"(?:Lc|L|Length|Cable)\s*[:=]\s*(\d+(?:\.\d+)?)(?:\s*±\s*\d+(?:\.\d+)?)?\s*mm", line_s, re.I)
+            if len_m:
+                c_len = float(len_m.group(1))
+                variant_specs["cable_length"] = f"{int(c_len) if c_len.is_integer() else c_len}mm"
+            else:
+                # Find dimensions / lengths (exclude cable ODs like 0.81, 1.13, 1.32, 1.37, 1.78)
+                dims = []
+                for t in tokens:
+                    num_m = re.match(r"^(\d+(?:\.\d+)?)(?:±\d+)?(?:mm)?$", t)
+                    if num_m:
+                        val = float(num_m.group(1))
+                        dash_suffix = pn_clean.split("-")[-1] if "-" in pn_clean else ""
+                        if val in (0.81, 1.13, 1.32, 1.37, 1.78):
+                            continue
+                        if 10.0 <= val <= 3000.0 and (not dash_suffix.isdigit() or val != float(dash_suffix)):
+                            dims.append(val)
 
-            if dims and "cable_length" not in variant_specs:
-                val = dims[0]
-                variant_specs["cable_length"] = f"{int(val) if val == int(val) else val}mm"
+                if dims and "cable_length" not in variant_specs:
+                    val = dims[0]
+                    variant_specs["cable_length"] = f"{int(val) if val == int(val) else val}mm"
 
-            # Connectors (MHF, MHF4, SMA, U.FL, IPEX, etc.)
-            conn_m = re.search(r"\b(MHF(?:-TYPE|4-TYPE|\s*4)?|SMA|U\.FL|IPEX|MCX|MMCX|Type-C|USB|RJ45|JST|Molex)\b", line_s, re.I)
-            if conn_m and "mating_connector" not in variant_specs:
-                variant_specs["mating_connector"] = conn_m.group(1).upper().replace("-TYPE", "")
+            # Connectors (IPEX MHF, MHF, MHF4, SMA, U.FL, IPEX, etc.)
+            if re.search(r"\b(?:IPEX\s*MHF|IPEX|U\.?FL)\b", line_s, re.I):
+                variant_specs["mating_connector"] = "UFL (I-PEX)"
+            else:
+                conn_m = re.search(r"\b(MHF(?:-TYPE|4-TYPE|\s*4)?|SMA|MCX|MMCX|Type-C|USB|RJ45|JST|Molex)\b", line_s, re.I)
+                if conn_m and "mating_connector" not in variant_specs:
+                    variant_specs["mating_connector"] = conn_m.group(1).upper().replace("-TYPE", "")
 
             # Pin count
             pins_m = re.search(r"\b(\d{1,3})\s*(?:pin|circuits?|pos|poles?|way)\b", line_s, re.I)
@@ -2190,20 +2231,27 @@ def extract_component_specs(
                 specs["type_transformer"] = "Standard Transformer"
 
     elif material_type == "ANT":
-        # Mounting: TH (Board/PCB Antenna), SMD (Chip), Cable (External Cable)
-        if any(k in text_lower for k in ("pcb antenna", "board antenna", "embedded antenna", "adhesive backing on the pcb")):
+        # Mounting: TH (Flex / Board / Embedded Antenna), SMD (Chip), Cable (External Cable)
+        if any(k in text_lower for k in (
+            "flex antenna", "flexible printed circuit", "board type antenna",
+            "embedded wireless antenna", "embedded antenna", "pcb antenna",
+            "board antenna", "adhesive backing on the pcb", "adhesive tape at back side",
+            "through hole", "tht", "dip"
+        )):
             specs["mounting"] = "TH"
         elif any(k in text_lower for k in ("smd", "surface mount", "chip antenna")):
             specs["mounting"] = "SMD"
-        elif any(k in text_lower for k in ("through hole", "tht", "dip")):
-            specs["mounting"] = "TH"
-        elif any(k in text_lower for k in ("cable", "coaxial", "micro-coaxial", "mating connector", "adhesive")):
+        elif any(k in text_lower for k in ("external antenna", "magnetic mount", "whip antenna", "rubber duck")):
             specs["mounting"] = "Cable"
+        elif any(k in text_lower for k in ("cable", "coaxial", "micro-coaxial", "mating connector")):
+            specs["mounting"] = "TH" if any(k in text_lower for k in ("flex", "pcb", "board", "embedded", "internal")) else "Cable"
         else:
             specs["mounting"] = "TH"
 
         # Protocol / Application
-        if "wifi" in text_lower or "wi-fi" in text_lower:
+        if "wlan" in text_lower or "802.11" in text_lower:
+            specs["protocol"] = "WLAN"
+        elif "wifi" in text_lower or "wi-fi" in text_lower:
             specs["protocol"] = "WiFi"
         elif "bluetooth" in text_lower or "zigbee" in text_lower:
             specs["protocol"] = "BLE"
@@ -2219,6 +2267,27 @@ def extract_component_specs(
             specs["type_antenna"] = "Wire"
         else:
             specs["type_antenna"] = "RF"
+
+        # Structure (Flex vs Board)
+        if any(k in text_lower for k in ("flex", "flexible")):
+            specs["structure"] = "Flex"
+
+        # Cable length and mating connector
+        if "cable_length" not in specs or not specs["cable_length"]:
+            m_len = re.search(r"(?:Lc\s*=\s*|cable\s*length\s*[:=]?\s*|length\s*[:=]?\s*)(\d+(?:\.\d+)?)\s*(?:±\s*\d+(?:\.\d+)?)?\s*mm", text, re.I)
+            if not m_len:
+                m_len = re.search(r"\b(\d{2,4})\s*mm\s*(?:coax|cable|ufl|ipex|mhf)\b", text_lower)
+            if m_len:
+                specs["cable_length"] = f"{int(float(m_len.group(1)))}mm"
+
+        if "mating_connector" not in specs or not specs["mating_connector"]:
+            m_conn = re.search(r"\b(IPEX\s*MHF(?:\s*[I|IV|1|4])?|IPEX|MHF(?:\s*4)?|U\.?FL|SMA|RP-SMA|MMCX|MCX)\b", text, re.I)
+            if m_conn:
+                conn_raw = m_conn.group(1).upper()
+                if any(k in conn_raw for k in ("IPEX", "MHF", "U.FL", "UFL")):
+                    specs["mating_connector"] = "UFL (I-PEX)"
+                else:
+                    specs["mating_connector"] = conn_raw
 
     elif material_type == "DSP":
         # Mounting: SMD or TH
@@ -2671,6 +2740,9 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             elif material_type == "ADP":
                 if str(counter_val).isdigit():
                     counter_val = f"{int(counter_val):03d}"
+            elif material_type == "ANT":
+                if str(counter_val).isdigit():
+                    counter_val = f"{int(counter_val):06d}"
             mappings.append(PropertyMapping(
                 attribute_name=attr_display_name,
                 sort_no=sort_no,
@@ -3459,17 +3531,25 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
     text_lower = text.casefold()
 
     if material_type == "ANT":
-        # e.g.: RF Board Antenna, WiFi, 50mm MHF Cable, TE Connectivity
+        # e.g.: RF Flex Antenna, WLAN, 185mm UFL Cable (I-PEX), Ezurio
         type_ant = specs.get("type_antenna", "RF")
-        struct = "Board Antenna" if specs.get("mounting") == "TH" or "pcb" in text_lower or "board" in text_lower else "Antenna"
-        proto = specs.get("protocol") or ("WiFi" if "wifi" in text_lower else "")
+        if "flex" in text_lower or specs.get("structure") == "Flex" or "flexible" in text_lower:
+            struct = "Flex Antenna"
+        elif specs.get("mounting") == "TH" or "pcb" in text_lower or "board" in text_lower:
+            struct = "Board Antenna"
+        else:
+            struct = "Antenna"
+        proto = specs.get("protocol") or ("WLAN" if "wlan" in text_lower or "802.11" in text_lower else ("WiFi" if "wifi" in text_lower else ""))
         cable_parts = []
         if specs.get("cable_length"):
             cable_parts.append(specs["cable_length"])
-        if specs.get("mating_connector"):
-            cable_parts.append(specs["mating_connector"])
-        if cable_parts:
-            cable_parts.append("Cable")
+        conn = specs.get("mating_connector", "")
+        if "ufl" in conn.lower() and "i-pex" in conn.lower():
+            cable_parts.append("UFL Cable (I-PEX)")
+        elif conn:
+            cable_parts.append(f"{conn} Cable")
+        elif specs.get("cable"):
+            cable_parts.append(specs["cable"])
         cable_str = " ".join(cable_parts)
 
         tokens = [f"{type_ant} {struct}".strip()]
@@ -3736,6 +3816,10 @@ CRITICAL_SPECS_BY_MATERIAL_TYPE: dict[str, tuple[str, ...]] = {
     "REL": ("coil_voltage", "contact_current"),
     "SWI": ("type_switch",),
     "ADP": ("voltage_output", "current_output", "voltage_adapter_output", "current_adapter_output", "type_adaptor"),
+    "ANT": ("mounting", "type_antenna"),
+    "BAH": ("type_battery_holder",),
+    "VAR": ("voltage",),
+    "TER": ("resistance_str",),
 }
 
 
@@ -3997,10 +4081,17 @@ def analyze_datasheet(
                                 specs["manufacturer"] = vlm_mfr
 
                         used_vision = True
-            elif is_complex_or_ambiguous or are_critical_missing:
+            elif is_complex_or_ambiguous or are_critical_missing or is_catalog or not pn or pn.startswith("media_"):
                 # Fast text semantic LLM arbitration
                 llm_res = vlm.extract_specs_from_text(clean_text[:4000], target_pn=pn, material_type_hint=mat_type)
                 if llm_res:
+                    # Part number discovery from LLM if missing/generic
+                    llm_pn = str(llm_res.get("part_number") or "").strip()
+                    if llm_pn and llm_pn not in ("...", "N/A", "null", "None", "<...>") and not is_catalog_document_name(llm_pn):
+                        if is_catalog or not part_number or pn.startswith("media_"):
+                            pn = llm_pn
+                            is_catalog = False
+
                     llm_specs = llm_res.get("specs") or {}
                     # 1. Specialized connector category arbitration
                     llm_type_conn = llm_specs.get("type_connector")
@@ -4011,22 +4102,46 @@ def analyze_datasheet(
                     if llm_pin and ("detect" in clean_text.casefold() or "switch" in clean_text.casefold()):
                         if not llm_pin.endswith("pin"):
                             llm_pin = f"{llm_pin} pin"
-                        specs["pin_number"] = llm_pin
+                        curr_digits = re.search(r"\d+", specs.get("pin_number", "0"))
+                        llm_digits = re.search(r"\d+", llm_pin)
+                        curr_count = int(curr_digits.group(0)) if curr_digits else 0
+                        llm_count = int(llm_digits.group(0)) if llm_digits else 0
+                        if llm_count > curr_count or not specs.get("pin_number"):
+                            specs["pin_number"] = llm_pin
                     # 3. Style and angle arbitration
                     if llm_specs.get("style") and not specs.get("style"):
-                        specs["style"] = str(llm_specs["style"]).strip()
+                        cand_style = str(llm_specs["style"]).strip()
+                        if cand_style.casefold() not in ("through hole", "surface mount", "smd", "th", "none", "n/a", "standard"):
+                            specs["style"] = cand_style
                     if llm_specs.get("angle") and not specs.get("angle"):
                         specs["angle"] = str(llm_specs["angle"]).strip()
-                    # 4. Fill any remaining unextracted properties
+                    # 4. Fill any remaining unextracted properties across all material types
                     for k, v in llm_specs.items():
                         if v is not None and (k not in specs or specs[k] is None or specs[k] == ""):
                             s_v = str(v).strip()
                             if s_v and s_v not in ("...", "N/A", "null", "None", "<...>", "—"):
                                 specs[k] = v
+                    # 5. Manufacturer resolution via LLM with rulebook matching
                     if not specs.get("manufacturer") and llm_res.get("manufacturer"):
                         m_cand = str(llm_res["manufacturer"]).strip()
                         if m_cand and m_cand not in ("...", "N/A", "null", "None", "<...>"):
-                            specs["manufacturer"] = m_cand
+                            mfr_lower = m_cand.lower()
+                            matched_mfr, matched_code = None, None
+                            if rulebook and hasattr(rulebook, "manufacturers"):
+                                for s_term, d_name, e_code in rulebook.manufacturers:
+                                    if s_term in mfr_lower:
+                                        matched_mfr, matched_code = d_name, e_code
+                                        break
+                            if not matched_mfr:
+                                for kw, d_name, e_code in KNOWN_MANUFACTURERS:
+                                    if kw in mfr_lower:
+                                        matched_mfr, matched_code = d_name, e_code
+                                        break
+                            if matched_mfr:
+                                specs["manufacturer"] = matched_mfr
+                                specs["manufacturer_code"] = matched_code
+                            else:
+                                specs["manufacturer"] = m_cand
                     used_text_llm = True
         except Exception:
             pass

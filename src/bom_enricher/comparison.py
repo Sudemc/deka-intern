@@ -890,6 +890,11 @@ KNOWN_MANUFACTURERS: tuple[tuple[str, str, str], ...] = (
     ("foryard", "Foryard", "FO"),
     ("panjit semiconductor", "Panjit", "PA"),
     ("panjit", "Panjit", "PA"),
+    ("ezurio", "Ezurio", "EZU"),
+    ("laird connectivity", "Ezurio", "EZU"),
+    ("laird technologies", "Ezurio", "EZU"),
+    ("laird", "Ezurio", "EZU"),
+    ("simsukian", "SIMSUKIAN", "SMK"),
 )
 
 _CORPORATE_SUFFIX_RE = re.compile(

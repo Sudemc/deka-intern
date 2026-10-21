@@ -403,6 +403,12 @@ class VisionLLMClient:
         else:
             parsed["manufacturer"] = str(mfr_val).strip()
 
+        pn_val = parsed.get("part_number")
+        if not _is_valid(pn_val):
+            parsed["part_number"] = None
+        else:
+            parsed["part_number"] = str(pn_val).strip()
+
         return parsed
 
     def extract_specs_from_text(
@@ -452,18 +458,22 @@ class VisionLLMClient:
             "2. Compound Pin Math: For card/modular connectors, calculate total physical pin count by summing contact circuits and any detect/switch pins (e.g. 6 circuits + 2 detect pins = 8 pin).",
             "3. Mounting: 'SMD' (Surface Mount) or 'TH' (Through Hole).",
             "4. Orientation / Angle: Horizontal / front card insertion on surface mount is '90°(Yatık)'. Vertical is '180°(Dik)'.",
-            "5. Style: e.g. 'Push-Push', 'Push-Pull', 'Hinged'.",
-            "6. Manufacturer: Genuine manufacturer name (e.g. Molex, JST, TE Connectivity, Amphenol, Murata, Yageo, Panjit).",
+            "5. Style: e.g. 'Push-Push', 'Push-Pull', 'Hinged' (never use mounting terms like 'Through Hole' or 'Surface Mount' for style).",
+            "6. Manufacturer: Genuine manufacturer name (e.g. Ezurio, Laird, Molex, JST, TE Connectivity, Amphenol, Murata, Yageo, Panjit, Simsukian).",
+            "7. Part Number / Model Number: Extract genuine MPN / model number if present in text/title (e.g. MAF95310, SK03T-1200200V, 475532001).",
+            "8. Antennas (ANT): mounting ('TH' for board/flex/embedded, 'SMD' for chip, 'Cable' for external), type_antenna ('RF', 'Chip', 'Wire'), protocol ('WLAN', 'WiFi', 'BLE', 'Cellular'), cable_length, and mating_connector.",
+            "9. Adapters (ADP): type_adaptor, voltage_adapter_input, voltage_output, current_output, and cable.",
             "",
             "SCHEMA INSTRUCTIONS:",
             "Return ONLY a valid JSON object matching the following structure:",
             "{",
-            '  "material_type": "<e.g. CON, RES, CAP, IND, DIO, TRA, ICR, CRY, DSP>",',
+            '  "material_type": "<e.g. CON, RES, CAP, IND, DIO, TRA, ICR, CRY, DSP, ANT, ADP>",',
+            '  "part_number": "<genuine MPN or model number from text/title, or null>",',
             '  "confidence": <float between 0.0 and 1.0>,',
             '  "manufacturer": "<manufacturer name or null>",',
             '  "specs": {',
             '    "<property_name>": "<property_value>"',
-            "  }",
+            '  }',
             "}",
             "Ensure 'specs' is an object mapping property names to string or numeric values. Do not wrap with explanation or markdown.",
         ])
