@@ -49,6 +49,26 @@ class VisionLLMClient:
             pass
         return self.model
 
+    def _resolve_text_model(self) -> str:
+        """Resolve available text / instruct model from Ollama for fast semantic extraction."""
+        if self._configured_model:
+            return self._configured_model
+        try:
+            resp = httpx.get(f"{self.base_url}/api/tags", timeout=1.5)
+            if resp.status_code == 200:
+                models = resp.json().get("models", [])
+                names = [m.get("name", "") for m in models]
+                # Check for preferred lightweight text instruct models
+                for cand in ("llama3.2:3b", "llama3.2", "qwen2.5:3b", "qwen2.5", "mistral", "phi3", "llama3"):
+                    for n in names:
+                        if cand in n.lower():
+                            return n
+                if names:
+                    return names[0]
+        except Exception:
+            pass
+        return "llama3.2:3b"
+
     def is_available(self) -> bool:
         """Quickly check if the local Ollama server is running and reachable."""
         try:
@@ -287,65 +307,215 @@ class VisionLLMClient:
                 parsed["specs"] = {}
 
             # Normalize property keys to internal schema & filter out placeholder strings
-            raw_specs = parsed.get("specs", {})
-            normalized_specs: dict[str, Any] = {}
-            key_aliases = {
-                "vrrm": "voltage",
-                "forward_voltage": "voltage",
-                "reverse_voltage": "voltage",
-                "breakdown_voltage": "voltage",
-                "blocking_voltage": "voltage",
-                "rated_voltage": "voltage",
-                "if": "current",
-                "if_av": "current",
-                "forward_current": "current",
-                "rated_current": "current",
-                "average_current": "current",
-                "freq": "frequency_str",
-                "frequency": "frequency_str",
-                "cap": "capacitance_str",
-                "capacitance": "capacitance_str",
-                "res": "resistance_str",
-                "resistance": "resistance_str",
-                "ind": "inductance_str",
-                "inductance": "inductance_str",
-                "pkg": "package",
-                "case": "package",
-            }
-
-            def _is_valid(val: Any) -> bool:
-                if val is None:
-                    return False
-                s = str(val).strip()
-                if not s or s in ("...", "N/A", "null", "None", "<...>", "—"):
-                    return False
-                if s.startswith("<") and s.endswith(">"):
-                    return False
-                return True
-
-            for k, v in raw_specs.items():
-                if not _is_valid(v):
-                    continue
-                normalized_specs[k] = v
-                norm_k = key_aliases.get(k.lower().strip())
-                if norm_k and norm_k != k:
-                    normalized_specs[norm_k] = v
-            parsed["specs"] = normalized_specs
-
-            # Normalize confidence if present or set default
-            if "confidence" in parsed and isinstance(parsed["confidence"], (int, float)):
-                parsed["confidence"] = float(parsed["confidence"])
-            else:
-                parsed["confidence"] = 0.8
-
-            mfr_val = parsed.get("manufacturer")
-            if not _is_valid(mfr_val):
-                parsed["manufacturer"] = None
-            else:
-                parsed["manufacturer"] = str(mfr_val).strip()
-
-            return parsed
+            return self._normalize_parsed_response(parsed, clean_pn)
 
         except Exception as e:
             logger.warning("Vision LLM extraction failed for %s: %s", clean_pn, e)
             return None
+
+    def _normalize_parsed_response(self, parsed: dict[str, Any], clean_pn: str) -> dict[str, Any]:
+        """Normalize parsed JSON keys, types, confidence, and aliases into the unified schema."""
+        raw_specs = parsed.get("specs", {})
+        if not isinstance(raw_specs, dict):
+            raw_specs = {}
+
+        normalized_specs: dict[str, Any] = {}
+        key_aliases = {
+            "vrrm": "voltage",
+            "forward_voltage": "voltage",
+            "reverse_voltage": "voltage",
+            "breakdown_voltage": "voltage",
+            "blocking_voltage": "voltage",
+            "rated_voltage": "voltage",
+            "if": "current",
+            "if_av": "current",
+            "forward_current": "current",
+            "rated_current": "current",
+            "average_current": "current",
+            "freq": "frequency_str",
+            "frequency": "frequency_str",
+            "cap": "capacitance_str",
+            "capacitance": "capacitance_str",
+            "res": "resistance_str",
+            "resistance": "resistance_str",
+            "ind": "inductance_str",
+            "inductance": "inductance_str",
+            "pkg": "package",
+            "case": "package",
+            "pins": "pin_number",
+            "pin_count": "pin_number",
+            "circuits": "pin_number",
+            "connector_type": "type_connector",
+            "connector": "type_connector",
+            "mount": "mounting",
+            "orientation": "angle",
+        }
+
+        def _is_valid(val: Any) -> bool:
+            if val is None:
+                return False
+            s = str(val).strip()
+            if not s or s in ("...", "N/A", "null", "None", "<...>", "—"):
+                return False
+            if s.startswith("<") and s.endswith(">"):
+                return False
+            return True
+
+        for k, v in raw_specs.items():
+            if not _is_valid(v):
+                continue
+            normalized_specs[k] = v
+            norm_k = key_aliases.get(k.lower().strip())
+            if norm_k and norm_k != k:
+                normalized_specs[norm_k] = v
+
+        # Normalize pin_number string format (strip whitespace)
+        if "pin_number" in normalized_specs:
+            normalized_specs["pin_number"] = str(normalized_specs["pin_number"]).strip()
+
+        # Normalize mounting (e.g. "Surface Mount" -> "SMD", "Through Hole" -> "TH")
+        if "mounting" in normalized_specs:
+            m_s = str(normalized_specs["mounting"]).casefold()
+            if any(x in m_s for x in ("smd", "smt", "surface")):
+                normalized_specs["mounting"] = "SMD"
+            elif any(x in m_s for x in ("th", "through", "tht", "dip")):
+                normalized_specs["mounting"] = "TH"
+
+        # Normalize angle (e.g. "90" -> "90°(Yatık)", "180" -> "180°(Dik)")
+        if "angle" in normalized_specs:
+            ang_s = str(normalized_specs["angle"]).casefold()
+            if "90" in ang_s or "right" in ang_s or "horizontal" in ang_s or "yatık" in ang_s:
+                normalized_specs["angle"] = "90°(Yatık)"
+            elif "180" in ang_s or "vertical" in ang_s or "straight" in ang_s or "dik" in ang_s:
+                normalized_specs["angle"] = "180°(Dik)"
+
+        parsed["specs"] = normalized_specs
+
+        # Normalize confidence if present or set default
+        if "confidence" in parsed and isinstance(parsed["confidence"], (int, float)):
+            parsed["confidence"] = float(parsed["confidence"])
+        else:
+            parsed["confidence"] = 0.85
+
+        mfr_val = parsed.get("manufacturer")
+        if not _is_valid(mfr_val):
+            parsed["manufacturer"] = None
+        else:
+            parsed["manufacturer"] = str(mfr_val).strip()
+
+        return parsed
+
+    def extract_specs_from_text(
+        self,
+        text: str,
+        target_pn: str = "",
+        material_type_hint: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Extract structured component specifications from datasheet text using local LLM.
+
+        Args:
+            text: Extracted text from PDF (first pages summary).
+            target_pn: Target manufacturer part number.
+            material_type_hint: Optional material type hint (e.g. "CON", "RES", "CAP", "DIO").
+
+        Returns:
+            Dictionary matching the unified schema or None if extraction fails or times out.
+        """
+        clean_text = text.strip() if text else ""
+        if not clean_text:
+            return None
+
+        clean_pn = target_pn.strip() if target_pn else ""
+        active_model = self._resolve_text_model()
+
+        system_prompt = (
+            "You are an expert electronics component engineer analyzing component datasheets. "
+            "Extract structured engineering specifications for the Target Part Number. "
+            "Follow strict domain rules for component categorization and compound pin math."
+        )
+
+        user_prompt_lines = [
+            f"Target Part Number: {clean_pn or 'From Document'}",
+        ]
+        if material_type_hint and material_type_hint.strip() and material_type_hint != "BİLİNMİYOR":
+            user_prompt_lines.append(f"Material Type Hint: {material_type_hint.strip()}")
+
+        user_prompt_lines.extend([
+            "",
+            "Document Text (First Pages Summary):",
+            clean_text[:4000],
+            "",
+            "DOMAIN EXTRACTION GUIDELINES:",
+            "1. Accurately classify component category and subtype:",
+            "   - Connectors: 'SIM Card', 'MicroSIM Card', 'MicroSD Card', 'Memory Connectors', 'USB C Type', 'USB-microB', 'USB A Type', 'FFC/FPC Konnektör', 'D-Sub', 'DC Power Jack', 'Modular Jack', 'Wire to Board Konnektör', 'Wire to Board Kilitli Konnektör', 'Pin Header', 'PCB Klemens'.",
+            "   - Sockets/Holders: If the title/category indicates SIM Card or Memory Card, do NOT classify as wire-to-board even if 'housing height' is mentioned in the text.",
+            "2. Compound Pin Math: For card/modular connectors, calculate total physical pin count by summing contact circuits and any detect/switch pins (e.g. 6 circuits + 2 detect pins = 8 pin).",
+            "3. Mounting: 'SMD' (Surface Mount) or 'TH' (Through Hole).",
+            "4. Orientation / Angle: Horizontal / front card insertion on surface mount is '90°(Yatık)'. Vertical is '180°(Dik)'.",
+            "5. Style: e.g. 'Push-Push', 'Push-Pull', 'Hinged'.",
+            "6. Manufacturer: Genuine manufacturer name (e.g. Molex, JST, TE Connectivity, Amphenol, Murata, Yageo, Panjit).",
+            "",
+            "SCHEMA INSTRUCTIONS:",
+            "Return ONLY a valid JSON object matching the following structure:",
+            "{",
+            '  "material_type": "<e.g. CON, RES, CAP, IND, DIO, TRA, ICR, CRY, DSP>",',
+            '  "confidence": <float between 0.0 and 1.0>,',
+            '  "manufacturer": "<manufacturer name or null>",',
+            '  "specs": {',
+            '    "<property_name>": "<property_value>"',
+            "  }",
+            "}",
+            "Ensure 'specs' is an object mapping property names to string or numeric values. Do not wrap with explanation or markdown.",
+        ])
+
+        user_prompt = "\n".join(user_prompt_lines)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        payload = {
+            "model": active_model,
+            "messages": messages,
+            "format": "json",
+            "options": {
+                "temperature": 0.1,
+                "num_predict": 300,
+            },
+            "stream": False,
+        }
+
+        try:
+            resp = httpx.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
+            if resp.status_code != 200:
+                payload.pop("format", None)
+                resp = httpx.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
+            resp.raise_for_status()
+            data = resp.json()
+            raw_content = data.get("message", {}).get("content", "")
+            if not raw_content or not isinstance(raw_content, str):
+                return None
+
+            cleaned_content = raw_content.strip()
+            if cleaned_content.startswith("```"):
+                cleaned_content = re.sub(r"^```(?:json)?\s*", "", cleaned_content, flags=re.IGNORECASE)
+                cleaned_content = re.sub(r"\s*```$", "", cleaned_content)
+
+            start_idx = cleaned_content.find("{")
+            end_idx = cleaned_content.rfind("}")
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                json_candidate = cleaned_content[start_idx : end_idx + 1]
+            else:
+                json_candidate = cleaned_content
+
+            parsed = None
+            try:
+                parsed = json.loads(json_candidate)
+            except Exception:
+                parsed = self._try_repair_json(json_candidate)
+
+            if isinstance(parsed, dict):
+                return self._normalize_parsed_response(parsed, clean_pn)
+        except Exception as e:
+            logger.debug("Local text LLM extraction failed: %s", e)
+        return None

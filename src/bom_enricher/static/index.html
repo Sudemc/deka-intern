@@ -1987,6 +1987,8 @@
           methodBadge = '<span class="pill pill-method-fast" title="Algoritmik Üretici Parça Numarası Kod Çözücü">⚡ Hızlı Kod Çözücü</span>';
         } else if (item.analysis_method === 'hybrid_vision') {
           methodBadge = '<span class="pill pill-method-vision" title="Vision Multimodal AI ile Görsel Tablo/Diyagram Analizi">👁️ Vision AI Destekli</span>';
+        } else if (item.analysis_method === 'hybrid_llm') {
+          methodBadge = '<span class="pill pill-method-vision" style="background:#e0e7ff; color:#3730a3; border-color:#c7d2fe;" title="Derin Hibrit Semantik LLM Zekası ile Metin ve Tablo Doğrulama">🧠 Hibrit LLM Destekli</span>';
         } else {
           methodBadge = '<span class="pill pill-method-text" title="Deterministik Kural ve Metin Motoru">📋 Metin Motoru</span>';
         }

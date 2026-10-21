@@ -3721,15 +3721,24 @@ def analyze_datasheet(
     if serial_counter is not None:
         specs["serial_counter"] = serial_counter
 
-    # 5. Priority 3: Vision Fusion Trigger
+    # 5. Deep Hybrid Semantic Intelligence & Fusion
+    # Automatically engages when local LLM is available:
+    # 1. Scanned / empty text -> Vision LLM extracts from page renders
+    # 2. Digital text with ambiguity, missing specs, or complex component -> Text LLM semantic arbitrator
     is_text_empty = len(clean_text) == 0
     are_critical_missing = is_critical_spec_missing(mat_type, specs, is_text_empty)
+    is_complex_or_ambiguous = (
+        mat_type in ("CON", "ICR", "ICS", "BİLİNMİYOR")
+        or any(k in clean_text.casefold() for k in ("detect pin", "detection switch", "sim card", "microsd", "memory card"))
+        or conf < 0.95
+    )
 
     used_vision = False
-    if file_bytes and not pn_has_core and (is_text_empty or are_critical_missing):
-        vlm = client if client is not None else VisionLLMClient()
+    used_text_llm = False
+    vlm = client if client is not None else VisionLLMClient()
+    if file_bytes and vlm.is_available():
         try:
-            if vlm.is_available():
+            if is_text_empty:
                 rendered = select_and_render_pages(file_bytes, target_pn=pn, max_pages=2)
                 images = [p["base64_png"] for p in rendered if "base64_png" in p]
                 if images:
@@ -3761,12 +3770,45 @@ def analyze_datasheet(
                                 specs["manufacturer"] = vlm_mfr
 
                         used_vision = True
+            elif is_complex_or_ambiguous or are_critical_missing:
+                # Fast text semantic LLM arbitration
+                llm_res = vlm.extract_specs_from_text(clean_text[:4000], target_pn=pn, material_type_hint=mat_type)
+                if llm_res:
+                    llm_specs = llm_res.get("specs") or {}
+                    # 1. Specialized connector category arbitration
+                    llm_type_conn = llm_specs.get("type_connector")
+                    if llm_type_conn and llm_type_conn in CARD_OR_INTERFACE_CONNECTORS:
+                        specs["type_connector"] = llm_type_conn
+                    # 2. Compound pin count arbitration (e.g. 8 pin vs 6 pin)
+                    llm_pin = str(llm_specs.get("pin_number") or "").strip()
+                    if llm_pin and ("detect" in clean_text.casefold() or "switch" in clean_text.casefold()):
+                        if not llm_pin.endswith("pin"):
+                            llm_pin = f"{llm_pin} pin"
+                        specs["pin_number"] = llm_pin
+                    # 3. Style and angle arbitration
+                    if llm_specs.get("style") and not specs.get("style"):
+                        specs["style"] = str(llm_specs["style"]).strip()
+                    if llm_specs.get("angle") and not specs.get("angle"):
+                        specs["angle"] = str(llm_specs["angle"]).strip()
+                    # 4. Fill any remaining unextracted properties
+                    for k, v in llm_specs.items():
+                        if v is not None and (k not in specs or specs[k] is None or specs[k] == ""):
+                            s_v = str(v).strip()
+                            if s_v and s_v not in ("...", "N/A", "null", "None", "<...>", "—"):
+                                specs[k] = v
+                    if not specs.get("manufacturer") and llm_res.get("manufacturer"):
+                        m_cand = str(llm_res["manufacturer"]).strip()
+                        if m_cand and m_cand not in ("...", "N/A", "null", "None", "<...>"):
+                            specs["manufacturer"] = m_cand
+                    used_text_llm = True
         except Exception:
             pass
 
     # 6. Analysis Method Determination
     if used_vision:
         analysis_method = "hybrid_vision"
+    elif used_text_llm:
+        analysis_method = "hybrid_llm"
     elif pn_has_core:
         analysis_method = "fast_path"
     else:
