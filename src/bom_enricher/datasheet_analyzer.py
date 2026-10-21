@@ -561,12 +561,12 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
     ("AMP", r"\b(?:operational\s+amplifier|op\s+amp|audio\s+power\s+amplifier|instrumentation\s+amplifier)\b", "Amplifikatör (AMP)"),
     # LED
     ("LED", r"\b(?:surface\s+mount\s+led|light\s+emitting\s+diode|chip\s+led|smd\s+led)\b", "LED"),
-    # CONNECTOR
-    ("CON", r"\b(?:wire-to-board|board-to-board|wire-to-wire|pin\s+header|terminal\s+block|receptacle\s+housing|pcb\s+connector|crimp\s+housing|wafer\s+connector|box\s+header|sim\s+card\s+(?:holder|connector|socket)|memory\s+card\s+connector|microsd\s+connector|modular\s+jack|usb\s+(?:type[- ]c|connector|receptacle)|d-sub\s+connector)\b", "Konnektör (CON)"),
-    # ANTENNA
-    ("ANT", r"\b(?:triple\s+band\s+(?:embedded\s+)?antenna|embedded\s+antenna|chip\s+antenna|pcb\s+antenna|rf\s+antenna|wifi\s+antenna|patch\s+antenna|dipole\s+antenna|antennas?)\b", "Anten (ANT)"),
     # DISPLAY
     ("DSP", r"\b(?:(?:seven|7)[\s-]segment\s+displays?|digits?\s+displays?|character\s+lcd|graphic\s+lcd|tft\s+displays?|oled\s+displays?|dotmatrix\s+displays?)\b", "Display (DSP)"),
+    # ANTENNA
+    ("ANT", r"\b(?:triple\s+band\s+(?:embedded\s+)?antenna|embedded\s+antenna|chip\s+antenna|pcb\s+antenna|rf\s+antenna|wifi\s+antenna|patch\s+antenna|dipole\s+antenna|antennas?)\b", "Anten (ANT)"),
+    # CONNECTOR
+    ("CON", r"\b(?:wire[\s-]to[\s-]board|board[\s-]to[\s-]board|wire[\s-]to[\s-]wire|pin\s+header|terminal\s+block|klemens(?:ler)?|konnekt[öo]r(?:ler)?|receptacles?|(?:(?:smd|pcb|pin|ic|dip|sip)\s+sockets?|socket\s+(?:connectors?|headers?)|soket(?:ler)?)|crimp\s+housing|wafer\s+connector|box\s+header|ffc[/ -]?fpc(?:\s+konnekt[öo]r)?|modular\s+jack|usb\s+(?:microb?|mini|type[- ]c|connector|receptacle)|sim\s+card\s+(?:holder|connector|socket)|memory\s+card\s+connector|microsd\s+connector|d-sub\s+connector)\b", "Konnektör (CON)"),
     # ADAPTER / POWER SUPPLY
     ("ADP", r"\b(?:ac/dc\s+adapter|power\s+adapter|switching\s+power(?:\s+supply)?|switching\s+adapter|电源适配器|开关电源|wall\s+mount\s+adapter|desktop\s+adapter)\b", "Adaptör (ADP)"),
 ]
@@ -651,10 +651,10 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     if re.match(r"^(?:HF\d|G5Q|SRD|G2R)", pn):
         return "REL", 0.95, "Part Number röle kodlamasına uyuyor."
     # Connector
-    if re.match(r"^(?:22-01|0022|2695|5557|JST-|PH-|XH-|VH-|MOLEX|200G|254G|200W|254W|200H|254H|200D|254D|\d{3}[A-Z]\d?-\d{2})", pn):
-        return "CON", 0.98, "Part Number standart konnektör/klemens serisine uyuyor."
-    if re.match(r"^DG\d+.*", pn):
-        return "CON", 0.98, "Part Number Degson klemens serisine uyuyor."
+    con_prefix_pat = r"^(?:22-01|0022|2695|5557|JST-|PH-|XH-|VH-|MOLEX|200G|254G|200W|254W|200H|254H|200D|254D|\d{3}[A-Z]\d?-\d{2}|TLB-\d+|DG\d+.*|L-KLS\d*|DS10\d{2}|CON-MFMP|2060-\d+|89898-\d+|502250|504754|2566-[A-Z0-9]+|FH\d+[A-Z]?-\d+|FFC\d+[A-Z0-9-]+|SFV\d+R|CR-HM-004|FPC-\d+|62684-\d+|6871\d+|0?54132|0?54104|505110|10131758|6861\d+|0?52207|52207-\d+|F3311|IMSA-10112|690367|0?53309|HM0064|0?43743|610004|CLP-\d+)"
+    for p in pns_to_check:
+        if re.match(con_prefix_pat, p):
+            return "CON", 0.98, "Part Number standart konnektör/klemens serisine uyuyor."
     # Fuse
     if re.match(r"^(?:MF-MSMF|MF-R|0451|0452|SMD\d{4}P)", pn):
         return "FUS", 0.95, "Part Number sigorta serisine uyuyor."
@@ -776,8 +776,8 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
 
     # Connector
     if not re.search(r"\b(?:antenna|relay|transformer|optocoupler)\b", cover_lower):
-        _score("CON", r"\b(?:connectors?|pin\s+header|box\s+header|pcb\s+header|receptacle\s+housing|crimp\s+housing|crimp\s+terminal|terminal\s+block|wire-to-board|board-to-board|wire-to-wire|sim\s+card|microsd|memory\s+card|modular\s+jack|rj45|d-sub)\b", 15.0)
-        if any(w in text_lower for w in ("molex", "jst", "phoenix contact", "wago", "ttaf", "amtek")):
+        _score("CON", r"\b(?:connectors?|konnekt[öo]r(?:ler)?|pin\s+header|box\s+header|pcb\s+header|receptacles?|sockets?|crimp\s+housing|crimp\s+terminal|terminal\s+block|klemens(?:ler)?|wire[\s-]to[\s-]board|board[\s-]to[\s-]board|wire[\s-]to[\s-]wire|ffc[/ -]?fpc|sim\s+card|microsd|memory\s+card|modular\s+jack|rj45|d-sub)\b", 15.0)
+        if any(w in text_lower for w in ("molex", "jst", "phoenix contact", "wago", "ttaf", "amtek", "gaosong", "degson", "tianli", "connfly", "oupiin", "gct", "xunpu", "samtec", "stocko", "iriso", "on shore")):
             scores["CON"] += 12.0
 
     # Antenna
@@ -2059,6 +2059,7 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
     m_te_ant = re.match(r"^2108857-(\d+)", pn)
     if m_te_ant:
         specs["manufacturer"] = "TE Connectivity"
+        specs["manufacturer_code"] = "TC"
         specs["mounting"] = "TH"
         specs["type_antenna"] = "RF"
         specs["structure"] = "Board Antenna"
@@ -2295,10 +2296,14 @@ def extract_component_specs(
     # Mounting
     if "mounting" not in specs:
         if material_type == "CON":
-            if re.search(r"\b(?:surface[\s-]mount|smd|smt)\b", text_lower):
+            if "cable" in text_lower or text_lower.startswith("cable"):
+                specs["mounting"] = "Cable"
+            elif re.search(r"\b(?:surface[\s-]mount|smd|smt)\b", text_lower):
                 specs["mounting"] = "SMD"
-            else:
+            elif re.search(r"\b(?:through[\s-]hole|tht|dip|radial|leaded|wave\s+soldering|terminal\s+pins)\b", text_lower):
                 specs["mounting"] = "TH"
+            else:
+                specs["mounting"] = "SMD"
         elif re.search(r"\b(?:through[\s-]hole|tht|dip|radial|leaded|wave\s+soldering|terminal\s+pins)\b", text_lower):
             specs["mounting"] = "TH"
         elif re.search(r"\b(?:surface[\s-]mount|smd|smt|chip\s+(?:resistor|capacitor|inductor|fuse))\b", text_lower):
@@ -2334,11 +2339,22 @@ def extract_component_specs(
 
     # Manufacturer: document text is authoritative when an explicit manufacturer is mentioned
     mfr_registry = rulebook.manufacturers if (rulebook and rulebook.manufacturers) else KNOWN_MANUFACTURERS
-    for kw, name, code in mfr_registry:
-        if re.search(rf"(?:^|(?<=\W)){re.escape(kw)}(?=\W|$)", text_lower):
-            specs["manufacturer"] = name
-            specs["manufacturer_code"] = code
-            break
+    outer_company_m = re.search(r"\b([A-Za-z0-9İıŞşĞğÇçÖöÜü\s-]{3,30})\s*\(([^)]+)\)", text)
+    found_outer = False
+    if outer_company_m:
+        cand_outer = outer_company_m.group(1).strip().casefold()
+        for kw, name, code in mfr_registry:
+            if kw == cand_outer or re.search(rf"\b{re.escape(kw)}\b", cand_outer):
+                specs["manufacturer"] = name
+                specs["manufacturer_code"] = code
+                found_outer = True
+                break
+    if not found_outer:
+        for kw, name, code in mfr_registry:
+            if re.search(rf"(?:^|(?<=\W)){re.escape(kw)}(?=\W|$)", text_lower):
+                specs["manufacturer"] = name
+                specs["manufacturer_code"] = code
+                break
 
     # Material-specific attributes
     if material_type == "CAP":
@@ -2582,7 +2598,9 @@ def extract_component_specs(
         ))
         if "type_connector" not in specs:
             # 1. Specialized Memory, Card, USB, Interface connectors (Highest priority over generic sub-words)
-            if re.search(r"\b(?:microsim|micro[- ]sim)\b", text_lower):
+            if "wire to wire klemens" in text_lower:
+                specs["type_connector"] = "Wire to Wire Klemens"
+            elif re.search(r"\b(?:microsim|micro[- ]sim)\b", text_lower):
                 specs["type_connector"] = "MicroSIM Card"
             elif re.search(r"\b(?:sim\s*card(?:\s*(?:holder|connector|socket|tray))?|mini[- ]sim|nano[- ]sim)\b", text_lower):
                 specs["type_connector"] = "SIM Card"
@@ -2594,7 +2612,7 @@ def extract_component_specs(
                 specs["type_connector"] = "USB C Type"
             elif re.search(r"\b(?:micro[- ]?usb|usb[- ]?micro[- ]?b)\b", text_lower):
                 specs["type_connector"] = "USB-microB"
-            elif re.search(r"\b(?:mini[- ]?usb|usb[- ]?mini)\b", text_lower):
+            elif re.search(r"\b(?:mini[- ]?usb|usb[- ]?mini(?:\s*b)?)\b", text_lower):
                 specs["type_connector"] = "USB MINI B Type"
             elif re.search(r"\b(?:usb[- ]?a(?:[- ]?type)?)\b", text_lower):
                 specs["type_connector"] = "USB A Type"
@@ -2606,12 +2624,18 @@ def extract_component_specs(
                 specs["type_connector"] = "DC Power Jack"
             elif re.search(r"\b(?:modular\s*jack|rj45|rj[- ]?45|rj11)\b", text_lower):
                 specs["type_connector"] = "Modular Jack"
+            elif re.search(r"\b(?:idc\s*(?:konnektör|connector)?)\b", text_lower):
+                specs["type_connector"] = "IDC Konnektör"
             elif any(k in text_lower for k in ("wire to board", "wire-to-board", "crimp housing", "wire-to-board housing")):
                 specs["type_connector"] = "Wire to Board Kilitli Konnektör" if is_locked else "Wire to Board Konnektör"
             elif any(k in text_lower for k in ("wire to wire", "wire-to-wire")):
                 specs["type_connector"] = "Wire to Wire Kilitli Konnektör" if is_locked else "Wire to Wire Konnektör"
             elif any(k in text_lower for k in ("board to board", "board-to-board")):
                 specs["type_connector"] = "Board to Board Konnektör"
+            elif re.search(r"\b(?:receptacles?)\b", text_lower):
+                specs["type_connector"] = "Receptacles"
+            elif re.search(r"\b(?:sockets?)\b", text_lower) and not any(k in text_lower for k in ("ic socket", "ic-socket")):
+                specs["type_connector"] = "Socket"
             elif re.search(r"\b(?:terminal\s+block|klemens|screw\s+terminal)\b", text_lower):
                 specs["type_connector"] = "PCB Klemens"
             elif re.search(r"\b(?:box\s+header)\b", text_lower):
@@ -2634,70 +2658,89 @@ def extract_component_specs(
 
         # Pin Type
         if "pin_type" not in specs:
-            # 1. Explicit physical gender attribute (highest authority, e.g. "Gender Male", "Gender: Female")
-            explicit_gender = re.search(r"\b(?:contact\s+)?gender[:\s=]+(male|female|erkek|dişi)\b", text_lower)
-            if explicit_gender:
-                g_str = explicit_gender.group(1)
-                specs["pin_type"] = "Erkek" if g_str in ("male", "erkek") else "Dişi"
+            # 0. Standalone gender specification in description text (e.g. "SMD Pin Header, Dişi", "Box Header, Dişi")
+            if re.search(r"\b(?:dişi|female)\b", text_lower) and not re.search(r"\b(?:erkek|male)\b", text_lower):
+                specs["pin_type"] = "Dişi"
+            elif re.search(r"\b(?:erkek|male)\b", text_lower) and not re.search(r"\b(?:dişi|female)\b", text_lower):
+                specs["pin_type"] = "Erkek"
             else:
-                # Strip out mating sections so mating part references do not invert gender
-                text_no_mates = re.split(r"\b(?:mates\s+with|mating\s+part|mating\s+connector|use\s+with)\b", text_lower)[0]
+                explicit_gender = re.search(r"\b(?:contact\s+)?gender[:\s=]+(male|female|erkek|dişi)\b", text_lower)
+                if explicit_gender:
+                    g_str = explicit_gender.group(1)
+                    specs["pin_type"] = "Erkek" if g_str in ("male", "erkek") else "Dişi"
+                else:
+                    # Strip out mating sections so mating part references do not invert gender
+                    text_no_mates = re.split(r"\b(?:mates\s+with|mating\s+part|mating\s+connector|use\s+with)\b", text_lower)[0]
 
-                # Check for explicit header/wafer/plug in component type or title
-                is_header = bool(re.search(
-                    r"\b(?:component\s+type[:\s]+pcb\s+header|pcb\s+headers?|pin\s+headers?|box\s+headers?|"
-                    r"shrouded\s+headers?|headers?|wafers?|plugs?|erkek)\b",
-                    text_no_mates
-                ))
-                is_receptacle = bool(re.search(
-                    r"\b(?:receptacles?|sockets?|crimp\s+housing|female|dişi)\b",
-                    text_no_mates
-                ))
+                    # Check for explicit header/wafer/plug in component type or title
+                    is_header = bool(re.search(
+                        r"\b(?:component\s+type[:\s]+pcb\s+header|pcb\s+headers?|pin\s+headers?|box\s+headers?|"
+                        r"shrouded\s+headers?|headers?|wafers?|plugs?|erkek)\b",
+                        text_no_mates
+                    ))
+                    is_receptacle = bool(re.search(
+                        r"\b(?:receptacles?|sockets?|crimp\s+housing|female|dişi)\b",
+                        text_no_mates
+                    ))
 
-                if is_header and not is_receptacle:
-                    specs["pin_type"] = "Erkek"
-                elif is_receptacle and not is_header:
-                    specs["pin_type"] = "Dişi"
-                elif is_header and is_receptacle:
-                    # Category line like "PCB Headers and Receptacles" contains both.
-                    # Look at specific title/headline or component type:
-                    if re.search(r"\b(?:header|wafer|plug)\b", text_no_mates):
+                    if is_header and not is_receptacle:
                         specs["pin_type"] = "Erkek"
-                    else:
+                    elif is_receptacle and not is_header:
                         specs["pin_type"] = "Dişi"
-                elif any(k in text_no_mates for k in ("male", "erkek")):
-                    specs["pin_type"] = "Erkek"
-                elif any(k in text_no_mates for k in ("female", "dişi")):
-                    specs["pin_type"] = "Dişi"
+                    elif is_header and is_receptacle:
+                        # Category line like "PCB Headers and Receptacles" contains both.
+                        # Look at specific title/headline or component type:
+                        if re.search(r"\b(?:header|wafer|plug)\b", text_no_mates):
+                            specs["pin_type"] = "Erkek"
+                        else:
+                            specs["pin_type"] = "Dişi"
+                    elif any(k in text_no_mates for k in ("male", "erkek")):
+                        specs["pin_type"] = "Erkek"
+                    elif any(k in text_no_mates for k in ("female", "dişi")):
+                        specs["pin_type"] = "Dişi"
 
         # Pitch
         if "pitch" not in specs:
             pitch_m = re.search(r"(?:pitch|adım|spacing|grid)[:\s=]+(\d+(?:\.\d+)?)\s*mm\b", text_lower)
             if not pitch_m:
-                pitch_m = re.search(r"\b(1\.00?|1\.25|1\.27|1\.50?|2\.00?|2\.50?|2\.54|3\.00?|3\.81|3\.96|4\.20?|5\.00?|5\.08)\s*mm\b", text_lower)
+                pitch_m = re.search(r"\b(0\.30?|0\.50?|0\.80?|1\.00?|1\.25|1\.27|1\.50?|2\.00?|2\.50?|2\.54|3\.00?|3\.81|3\.96|4\.00?|4\.20?|5\.00?|5\.08|8\.00?|8\.20?)\s*mm\b", text_lower)
             if not pitch_m:
                 pitch_m = re.search(r"(\d+(?:\.\d+)?)\s*mm\b", text_lower)
             if pitch_m:
-                val = float(pitch_m.group(1))
-                specs["pitch"] = f"{int(val) if val == int(val) else val}mm"
+                p_raw = pitch_m.group(1)
+                if p_raw == "0.50":
+                    specs["pitch"] = "0.50mm"
+                elif p_raw == "0.80":
+                    specs["pitch"] = "0.80mm"
+                elif p_raw == "0.3":
+                    specs["pitch"] = "0.3mm"
+                else:
+                    val = float(p_raw)
+                    specs["pitch"] = f"{int(val) if val == int(val) else val}mm"
 
         # Pin Number
         if "pin_number" not in specs:
-            # Check for combined circuits + detect pins (e.g. "with 2 Detect Pins, 6 Circuits", "6 Circuits, 2 Detect Pins")
-            circuits_m = re.search(r"\b(\d+)\s*(?:circuits?|contacts?|ways?|positions?|pos\.?|pins?)\b", text_lower)
-            detect_m = re.search(r"\b(\d+)\s*(?:detect\s*pins?|detection\s*pins?|switch\s*pins?)\b", text_lower)
-            if circuits_m and detect_m:
-                total_pins = int(circuits_m.group(1)) + int(detect_m.group(1))
-                specs["pin_number"] = f"{total_pins} pin"
-            elif circuits_m and ("detect pin" in text_lower or "detection switch" in text_lower):
-                total_pins = int(circuits_m.group(1)) + 2
-                specs["pin_number"] = f"{total_pins} pin"
+            multi_m = re.search(r"\b(\d+x\d+)\s*pin\b", text_lower)
+            p_c_m = re.search(r"\b(\d+P\d+C)\b", text, re.I)
+            if multi_m:
+                specs["pin_number"] = f"{multi_m.group(1)} pin"
+            elif p_c_m:
+                specs["pin_number"] = p_c_m.group(1).upper()
             else:
-                pins_m = re.search(r"(?:circuits?|pins?|positions?|poles?|kutup|pin sayısı)[:\s=]+(\d+)\b", text_lower)
-                if not pins_m:
-                    pins_m = re.search(r"\b(\d+)\s*(?:circuits?|pins?|pos|poles?|ways?|kutup)\b", text_lower)
-                if pins_m:
-                    specs["pin_number"] = f"{pins_m.group(1)} pin"
+                circuits_m = re.search(r"\b(\d+)\s*(?:circuits?|contacts?|ways?|positions?|pos\.?|pins?)\b", text_lower)
+                detect_m = re.search(r"\b(\d+)\s*(?:detect\s*pins?|detection\s*pins?|switch\s*pins?)\b", text_lower)
+                if circuits_m and detect_m:
+                    total_pins = int(circuits_m.group(1)) + int(detect_m.group(1))
+                    specs["pin_number"] = f"{total_pins} pin"
+                elif circuits_m and ("detect pin" in text_lower or "detection switch" in text_lower):
+                    total_pins = int(circuits_m.group(1)) + 2
+                    specs["pin_number"] = f"{total_pins} pin"
+                else:
+                    pins_m = re.search(r"(?:circuits?|pins?|positions?|poles?|kutup|pin sayısı)[:\s=]+(\d+)\b", text_lower)
+                    if not pins_m:
+                        pins_m = re.search(r"\b(\d+)\s*(?:circuits?|pins?|pos|poles?|ways?|kutup)\b", text_lower)
+                    if pins_m:
+                        specs["pin_number"] = f"{pins_m.group(1)} pin"
 
         # Angle
         if "angle" not in specs:
@@ -4008,35 +4051,34 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                         status = "TAM EŞLEŞTİ"
                         break
         elif "pintype" in attr_norm:
-            tc = specs.get("type_connector", "")
-            if tc in CARD_OR_INTERFACE_CONNECTORS:
-                # Card sockets, USB, and Jacks have no pin gender; map to unassigned rule entry '0'
+            pt = specs.get("pin_type", "")
+            extracted_val_str = pt
+            if pt:
                 for e in entries:
-                    if str(e.value).strip() in ("0", "00", ""):
+                    if pt.casefold() in e.value_description.casefold():
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
-            else:
-                pt = specs.get("pin_type", "")
-                extracted_val_str = pt
-                if pt:
+            if not matched_entry:
+                tc = specs.get("type_connector", "")
+                if tc in CARD_OR_INTERFACE_CONNECTORS:
+                    # Card sockets, USB, and Jacks have no pin gender by default; map to unassigned rule entry '0'
                     for e in entries:
-                        if pt.casefold() in e.value_description.casefold():
+                        if str(e.value).strip() in ("0", "00", ""):
                             matched_entry = e
                             status = "TAM EŞLEŞTİ"
                             break
         elif "pitch" in attr_norm:
             tc = specs.get("type_connector", "")
-            if tc in CARD_OR_INTERFACE_CONNECTORS:
-                # Card sockets, USB, and Jacks do not use board pitch in DEKA ERP; map to unassigned rule entry '0' (padded to '00')
-                pad2 = any(len(str(x.value)) >= 2 for x in entries)
+            if tc in ("SIM Card", "MicroSIM Card", "MicroSD Card", "Memory Connectors"):
+                # SIM and Memory card sockets have fixed unassigned pitch '00' in DEKA ERP
                 for e in entries:
-                    if str(e.value).strip() in ("0", "00", ""):
+                    if str(e.value).strip() in ("00", "0", ""):
                         matched_entry = RuleEntry(
                             material_type=e.material_type,
                             attribute_code=e.attribute_code,
                             attribute_name=e.attribute_name,
-                            value="00" if pad2 else "0",
+                            value="00",
                             value_description="",
                             language=e.language,
                             sort_order=e.sort_order,
@@ -4049,16 +4091,27 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                 p_val = specs.get("pitch", "")
                 extracted_val_str = p_val
                 if p_val:
-                    target_pitch_m = re.search(r"(\d+(?:\.\d+)?)", p_val)
-                    target_pitch_num = float(target_pitch_m.group(1)) if target_pitch_m else None
+                    # 1. Exact string match first (preserves '0.50mm' -> 'Z0' vs '0.5mm' -> '5', '0.80mm' -> 'E', etc.)
                     for e in entries:
-                        em = re.search(r"(\d+(?:\.\d+)?)\s*mm", e.value_description.casefold())
-                        if em and target_pitch_num is not None:
-                            if abs(float(em.group(1)) - target_pitch_num) < 0.001:
-                                matched_entry = e
-                                status = "TAM EŞLEŞTİ"
-                                break
-                        elif p_val.casefold() == e.value_description.strip().rstrip(",").casefold():
+                        if p_val.strip().casefold() == e.value_description.strip().rstrip(",").casefold():
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
+                    # 2. Float numeric tolerance match if no exact string match
+                    if not matched_entry:
+                        target_pitch_m = re.search(r"(\d+(?:\.\d+)?)", p_val)
+                        target_pitch_num = float(target_pitch_m.group(1)) if target_pitch_m else None
+                        if target_pitch_num is not None:
+                            for e in entries:
+                                em = re.search(r"(\d+(?:\.\d+)?)\s*mm", e.value_description.casefold())
+                                if em and abs(float(em.group(1)) - target_pitch_num) < 0.001:
+                                    matched_entry = e
+                                    status = "TAM EŞLEŞTİ"
+                                    break
+                if not matched_entry and not p_val:
+                    # Unspecified pitch in connector schema defaults to rule entry '0'
+                    for e in entries:
+                        if str(e.value).strip() in ("0", ""):
                             matched_entry = e
                             status = "TAM EŞLEŞTİ"
                             break
@@ -4066,14 +4119,24 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             pn_val = specs.get("pin_number", "")
             extracted_val_str = pn_val
             if pn_val:
-                t_m = re.search(r"(\d+)", pn_val)
-                target_pin_count = int(t_m.group(1)) if t_m else None
+                # 1. Exact description string match first (preserves multi-row/notations: '2x6 pin' -> '0E', '2x5 pin' -> '0D', '6P6C' -> '2A', '35 pin' -> '25', '40 pin' -> '23', '67 pin' -> '34')
                 for e in entries:
                     desc_clean = e.value_description.strip().rstrip(",").casefold()
-                    if desc_clean == f"{target_pin_count} pin" or desc_clean == pn_val.strip().casefold():
+                    if desc_clean == pn_val.strip().casefold():
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
+                # 2. Pin count match (e.g. '2 pin', '3 pin')
+                if not matched_entry:
+                    t_m = re.search(r"^(\d+)\s*pin", pn_val.strip().casefold())
+                    target_pin_count = int(t_m.group(1)) if t_m else None
+                    if target_pin_count is not None:
+                        for e in entries:
+                            desc_clean = e.value_description.strip().rstrip(",").casefold()
+                            if desc_clean == f"{target_pin_count} pin":
+                                matched_entry = e
+                                status = "TAM EŞLEŞTİ"
+                                break
                 if not matched_entry and target_pin_count is not None:
                     for e in entries:
                         em = re.search(r"^(\d+)\s*pin", e.value_description.strip().casefold())
@@ -4091,6 +4154,12 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                     ) or (
                         "180" in ang and "180" in e.value_description
                     ):
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+            if not matched_entry and not ang:
+                for e in entries:
+                    if str(e.value).strip() in ("0", ""):
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
@@ -4415,6 +4484,7 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
+
 
         # 25. UNIVERSAL SEMANTIC MATCHER
         # Grounded semantic matching for any unhandled attribute sort (e.g. Type Display, Color Display LED,
@@ -5100,12 +5170,8 @@ def analyze_datasheet(
         mat_type, text, pn, is_catalog=is_catalog, file_bytes=effective_file_bytes, rulebook=rulebook
     )
     for k, v in pn_specs.items():
-        if k == "manufacturer" and specs.get("manufacturer") and specs.get("manufacturer") != v:
-            if not pn_specs.get("manufacturer_code"):
-                continue
-        if k == "manufacturer_code" and specs.get("manufacturer_code") and specs.get("manufacturer") != pn_specs.get("manufacturer"):
-            if not pn_specs.get("manufacturer_code"):
-                continue
+        if k in ("manufacturer", "manufacturer_code") and specs.get("manufacturer"):
+            continue
         specs[k] = v
     if serial_counter is not None:
         specs["serial_counter"] = serial_counter

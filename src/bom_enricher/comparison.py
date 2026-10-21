@@ -896,6 +896,23 @@ KNOWN_MANUFACTURERS: tuple[tuple[str, str, str], ...] = (
     ("simsukian", "SIMSUKIAN", "SMK"),
     ("connfly", "Connfly", "CF"),
     ("eemb", "Eemb", "EM"),
+    ("stocko", "Stocko", "SC"),
+    ("gaosong", "Gaosong", "GA"),
+    ("hirose electric", "Hirose Electric", "HRE"),
+    ("gct", "GCT", "ZZ6"),
+    ("xunpu", "XUNPU", "XUN"),
+    ("iriso", "IRISO", "IR"),
+    ("tianli", "Tianli", "TL"),
+    ("oupiin", "Oupiin", "OP"),
+    ("on shore", "On Shore", "MIK"),
+    ("ismak", "İsmak", "ISM"),
+    ("i\u0307smak", "İsmak", "ISM"),
+    ("core", "CORE", "COR"),
+    ("dtsis", "DTSİS", "DTS"),
+    ("dts", "DTSİS", "DTS"),
+    ("mikrodev", "Mikrodev", "MIK"),
+    ("enervon", "Enervon", "ENV"),
+    ("isipark", "Isipark", "ISP"),
 )
 
 _CORPORATE_SUFFIX_RE = re.compile(
@@ -954,6 +971,8 @@ def _build_manufacturer_registry(parsed: list[RuleEntry]) -> tuple[tuple[str, st
                 if code.upper() == "DI" and term in ("diode", "diodes"):
                     continue
                 if term not in registry:
+                    registry[term] = (term, display_name, code)
+                elif "alt" in registry[term][1].lower() and "alt" not in display_name.lower():
                     registry[term] = (term, display_name, code)
 
     # Sort manufacturer match entries by search term length descending
