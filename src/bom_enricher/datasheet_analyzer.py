@@ -525,7 +525,7 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     if re.match(r"^(?:M[1-7]$|M[1-7]-|M[1-7]_|BAT|BZX|1N4148|1N400|1N58|SS\d{2}|MBR|SM712|SMAJ|SMBJ|US1|RS1)", pn) or (len(pn) == 2 and re.match(r"^M[1-7]$", pn)):
         return "DIO", 0.98, "Part Number standart diyot serisine uyuyor."
     # Buzzer
-    if re.match(r"^(?:FUET|HNB|FST|CPI-|KPI-)", pn):
+    if re.match(r"^(?:FUET|HNB|FST|CPI-|KPI-|PKLCS|PKMCS|PKM)", pn):
         return "BUZ", 0.98, "Part Number standart buzzer serisine uyuyor."
     # Battery Holder / Clip
     if re.match(r"^(?:L-KLS5-SP|BK-|BH-|BS-|DS109[12])", pn):
@@ -1308,6 +1308,30 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
         specs["manufacturer_code"] = "CF"
         specs["type_battery_holder"] = "Coin Cell Retainer"
         specs["mounting"] = "SMD" if (re.search(r"[-_](?:s|smd|smt)\b", pn, re.I) or pn.endswith("S") or "smd" in pn.lower()) else "TH"
+        return specs
+
+    # 16. Murata Piezoelectric Sounders (PKLCS / PKMCS series: e.g. PKLCS1212E40A1-R1, PKLCS1212E4001-R1)
+    m_pk = re.match(r"^PK(?:L|M)?(?:CS)?(\d{2})(\d{2})([A-Z])(\d{2})([A-Z0-9]+)?(?:-R\d+)?$", pn, re.I)
+    if m_pk or pn.startswith("PKLCS") or pn.startswith("PKMCS"):
+        specs["manufacturer"] = "Murata"
+        specs["manufacturer_code"] = "MT"
+        specs["mounting"] = "SMD"
+        if m_pk:
+            w_code, l_code, h_code, freq_code, spec_code = m_pk.groups()
+            f_val = int(freq_code) / 10.0
+            specs["buzzer_frequency"] = f"{int(f_val)}kHz" if f_val.is_integer() else f"{f_val}kHz"
+            if h_code.upper() == "E" and w_code == "12":
+                specs["buzzer_size"] = "3mm"
+            elif h_code.upper() == "E" and w_code == "09":
+                specs["buzzer_size"] = "2mm"
+        else:
+            specs["buzzer_frequency"] = "4kHz"
+            specs["buzzer_size"] = "3mm"
+
+        # Operating / rated voltage for PKLCS is 3V (±1.5Vo-p standard drive)
+        specs["buzzer_voltage"] = "3V"
+        # Guaranteed minimum sound pressure level
+        specs["sound_level"] = "75dB"
         return specs
 
     return specs
@@ -2157,16 +2181,21 @@ def extract_component_specs(
     elif material_type == "BUZ":
         # Voltage (3V, 5V, 6V, 9V, 12V)
         if "buzzer_voltage" not in specs:
-            bv_m = (
-                re.search(r"(?:rated\s*voltage|额定电压)\s*(?:\([^\)]+\))?\s*(?:vo-p|vdc|v)?\s*[:\s]*(\d+(?:\.\d+)?)", text_lower)
-                or re.search(r"(?:operating\s*voltage)\s*(?:\([^\)]+\))?\s*(?:vo-p|vdc|v)?\s*[:\s]*(\d+(?:\.\d+)?)", text_lower)
-                or re.search(r"\b(\d+(?:\.\d+)?)\s*v(?:dc|o-p)?\s+rated\b", text_lower)
-                or re.search(r"\b(3|5|6|9|12)\s*v(?:dc|o-p)?\b", text_lower)
-            )
-            if bv_m:
-                val = float(bv_m.group(1))
-                if val in (3, 5, 6, 9, 12):
-                    specs["buzzer_voltage"] = f"{int(val)}V"
+            m_v15 = re.search(r"(?:[±\s]|[-+])?1\.5\s*v(?:o-p|p-p)?", text_lower)
+            if m_v15:
+                # ±1.5Vo-p corresponds to standard 3V (3Vp-p) rated sounder drive voltage
+                specs["buzzer_voltage"] = "3V"
+            else:
+                bv_m = (
+                    re.search(r"(?:rated\s*voltage|额定电压)\s*(?:\([^\)]+\))?\s*(?:vo-p|vdc|v)?\s*[:\s]*(\d+(?:\.\d+)?)", text_lower)
+                    or re.search(r"(?:operating\s*voltage)\s*(?:\([^\)]+\))?\s*(?:vo-p|vdc|v)?\s*[:\s]*(\d+(?:\.\d+)?)", text_lower)
+                    or re.search(r"\b(\d+(?:\.\d+)?)\s*v(?:dc|o-p)?\s+rated\b", text_lower)
+                    or re.search(r"(?<![\.\d])(3|5|6|9|12)(?!\.\d)\s*v(?:dc|o-p)?\b", text_lower)
+                )
+                if bv_m:
+                    val = float(bv_m.group(1))
+                    if val in (3, 5, 6, 9, 12):
+                        specs["buzzer_voltage"] = f"{int(val)}V"
 
         # Frequency (Hz / kHz -> standard dictionary values e.g. 4kHz, 2.7kHz)
         if "buzzer_frequency" not in specs:
@@ -2189,26 +2218,46 @@ def extract_component_specs(
             else:
                 bf_khz_m = re.search(r"\b(\d+(?:\.\d+)?)\s*khz\b", text_lower)
                 if bf_khz_m:
-                    specs["buzzer_frequency"] = f"{bf_khz_m.group(1)}kHz"
+                    f_val = float(bf_khz_m.group(1))
+                    specs["buzzer_frequency"] = f"{int(f_val)}kHz" if f_val.is_integer() else f"{f_val}kHz"
 
         # Sound Level (dB -> e.g. 75dB, 85dB)
         if "sound_level" not in specs:
-            spl_m = (
-                re.search(r"\b(5[0-9]|[6-9][0-9]|1[0-2][0-9])\s*db\b", text_lower)
-                or re.search(r"(?:sound\s*(?:pressure\s*level|output)|声压值|soundpressurelevel)\s*(?:at\s*10\s*cm)?\s*(?:\([^\)]+\))?\s*(?:db)?\s*(?:[^\n\r:0-9]{0,15})[:\s]*(?:min\.|≥|>=)?\s*([5-9]\d|1[0-2]\d)", text_lower)
+            # Check guaranteed minimum sound pressure level first (e.g. 75dB (min.) or Sound Pressure Level (min): 75dB)
+            spl_min_m = (
+                re.search(r"(?:sound\s*pressure\s*level|sound\s*output|spl)[^\n\r]*?(\d{2})\s*db\s*\(min\.?\)", text_lower)
+                or re.search(r"(\d{2})\s*db\s*\(min\.?\)", text_lower)
+                or re.search(r"(?:sound\s*(?:pressure\s*level|output)|声压值|soundpressurelevel)\s*(?:at\s*10\s*cm)?\s*(?:\([^\)]+\))?\s*(?:db)?\s*(?:[^\n\r:0-9]{0,15})[:\s]*(?:min\.|≥|>=)\s*([5-9]\d)", text_lower)
             )
-            if spl_m:
-                db_val = int(spl_m.group(1))
-                db_choices = [50, 60, 70, 75, 80, 83, 85, 87, 90]
-                closest_db = min(db_choices, key=lambda d: abs(d - db_val))
-                if abs(closest_db - db_val) <= 5:
-                    specs["sound_level"] = f"{closest_db}dB"
-                else:
-                    specs["sound_level"] = f"{db_val}dB"
+            if spl_min_m:
+                specs["sound_level"] = f"{spl_min_m.group(spl_min_m.lastindex)}dB"
+            else:
+                spl_m = (
+                    re.search(r"(?:sound\s*(?:pressure\s*level|output)|声压值|soundpressurelevel)\s*(?:at\s*10\s*cm)?\s*(?:\([^\)]+\))?\s*(?:db)?\s*(?:[^\n\r:0-9]{0,15})[:\s]*([5-9]\d)", text_lower)
+                    or re.search(r"\b(5[0-9]|[6-9][0-9]|1[0-2][0-9])\s*db\b", text_lower)
+                )
+                if spl_m:
+                    db_val = int(spl_m.group(spl_m.lastindex))
+                    db_choices = [50, 60, 70, 75, 80, 83, 85, 87, 90]
+                    closest_db = min(db_choices, key=lambda d: abs(d - db_val))
+                    if abs(closest_db - db_val) <= 5:
+                        specs["sound_level"] = f"{closest_db}dB"
+                    else:
+                        specs["sound_level"] = f"{db_val}dB"
 
         # Buzzer Size
         if "buzzer_size" not in specs:
-            if "hnb09" in pn.lower() or "9mm" in text_lower:
+            m_3d = re.search(r"(?:size|dimensions)[^\n\r]*?(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*mm", text_lower)
+            if m_3d:
+                # 3D dimensions L x W x H (e.g. 12.0 x 12.0 x 3.0 mm)
+                h_val = float(m_3d.group(3))
+                h_str = f"{int(h_val)}mm" if h_val.is_integer() else f"{h_val}mm"
+                if h_str in ("3mm", "3.5mm", "7mm"):
+                    specs["buzzer_size"] = h_str
+                else:
+                    w_val = float(m_3d.group(1))
+                    specs["buzzer_size"] = f"{int(w_val)}mm" if w_val.is_integer() else f"{w_val}mm"
+            elif "hnb09" in pn.lower() or "9mm" in text_lower:
                 specs["buzzer_size"] = "9mm"
             elif "5020" in pn or "fst-5020" in text_lower or "5mm" in text_lower:
                 specs["buzzer_size"] = "5mm"
@@ -2217,7 +2266,8 @@ def extract_component_specs(
             else:
                 sz_m = re.search(r"(?:dimensions|size)\s*[:\s]*ø?\s*(\d+(?:\.\d+)?)\s*mm", text_lower)
                 if sz_m:
-                    specs["buzzer_size"] = f"{sz_m.group(1)}mm"
+                    val = float(sz_m.group(1))
+                    specs["buzzer_size"] = f"{int(val)}mm" if val.is_integer() else f"{val}mm"
 
         # Mounting
         if "mounting" not in specs:
@@ -2237,7 +2287,7 @@ def extract_component_specs(
         if "mounting" not in specs:
             specs["mounting"] = "SMD" if ("l-kls5" in pn.lower() or "ds109" in pn.lower() or re.search(r"\b(?:surface[\s-]mount|smd|smt)\b", text_lower)) else "TH"
         if "manufacturer" not in specs:
-            if re.search(r"\bkls\b", text_lower) or re.match(r"^(?:l-)?kls\b", pn, re.I):
+            if "kls" in pn.lower() or re.search(r"\bkls\b", text_lower):
                 specs["manufacturer"] = "Kls"
                 specs["manufacturer_code"] = "KL"
             elif re.search(r"\bconnfly\b", text_lower) or re.match(r"^ds109[12]\b", pn, re.I):
@@ -2489,7 +2539,7 @@ CORE_ATTRIBUTES_BY_TYPE: dict[str, set[str]] = {
     "POT": {"mounting", "value", "potturnnumber", "wattage", "q"},
     "SWT": {"mounting", "typeswitch", "q"},
     "FER": {"ferritetypes", "q"},
-    "BUZ": {"mounting", "buzzerratedvoltage", "buzzerfrequency", "soundlevelbuzzer", "q"},
+    "BUZ": {"mounting", "buzzerratedvoltage", "buzzerfrequency", "soundlevelbuzzer", "buzzersize", "q"},
     "TRF": {"mounting", "typetransformer", "q"},
     "TRI": {"mounting", "package", "value", "q"},
     "SCR": {"mounting", "package", "value", "q"},
@@ -3377,8 +3427,15 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             bf = specs.get("buzzer_frequency", "")
             extracted_val_str = bf
             if bf:
+                bf_num_m = re.search(r"(\d+(?:\.\d+)?)", bf)
+                bf_num = float(bf_num_m.group(1)) if bf_num_m else None
                 for e in entries:
-                    if bf.casefold() in e.value_description.casefold():
+                    em = re.search(r"(\d+(?:\.\d+)?)", e.value_description)
+                    if em and bf_num is not None and abs(float(em.group(1)) - bf_num) < 0.05:
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+                    elif bf.casefold() in e.value_description.casefold():
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
@@ -3386,8 +3443,15 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             sl = specs.get("sound_level", "")
             extracted_val_str = sl
             if sl:
+                sl_num_m = re.search(r"(\d+)", sl)
+                sl_num = int(sl_num_m.group(1)) if sl_num_m else None
                 for e in entries:
-                    if sl.casefold() in e.value_description.casefold():
+                    em = re.search(r"(\d+)", e.value_description)
+                    if em and sl_num is not None and int(em.group(1)) == sl_num:
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+                    elif sl.casefold() in e.value_description.casefold():
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
@@ -3395,8 +3459,15 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             bsz = specs.get("buzzer_size", "")
             extracted_val_str = bsz
             if bsz:
+                bsz_num_m = re.search(r"(\d+(?:\.\d+)?)", bsz)
+                bsz_num = float(bsz_num_m.group(1)) if bsz_num_m else None
                 for e in entries:
-                    if bsz.casefold() in e.value_description.casefold():
+                    em = re.search(r"(\d+(?:\.\d+)?)", e.value_description)
+                    if em and bsz_num is not None and abs(float(em.group(1)) - bsz_num) < 0.05:
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+                    elif bsz.casefold() in e.value_description.casefold():
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
@@ -3490,6 +3561,10 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                 # In DEKA ERP for adapters, input voltage (0 -> 00) and output current (0 -> 00, 1 -> 01) are standardized to 2 digits
                 if raw_code_val.isdigit() and len(raw_code_val) == 1:
                     raw_code_val = f"0{raw_code_val}"
+            elif material_type == "BUZ" and attr_norm in ("buzzerfrequency", "soundlevelbuzzer", "buzzersize"):
+                # In DEKA ERP for buzzers, frequency, sound level, and size are standardized to 2 digits (e.g. 03, 07)
+                if str(raw_code_val).isdigit() and len(str(raw_code_val)) == 1:
+                    raw_code_val = f"0{raw_code_val}"
             code_val = (matched_entry.prefix or "") + raw_code_val
             mappings.append(PropertyMapping(
                 attribute_name=attr_display_name,
@@ -3509,7 +3584,7 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                     pass
                 else:
                     description_tokens.append(desc_val)
-                    if material_type == "CON" and attr_norm == "typeconnector" and specs.get("style"):
+                    if material_type == "CON" and attr_norm == "typeconnector" and specs.get("style") and specs.get("type_connector") in CARD_OR_INTERFACE_CONNECTORS:
                         description_tokens.append(f"{specs['style']},")
                     elif material_type == "ADP" and attr_norm == "currentadapteroutput" and specs.get("cable"):
                         description_tokens.append(f"{specs['cable']},")

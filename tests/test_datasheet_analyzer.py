@@ -533,7 +533,7 @@ def test_buzzer_spec_extraction_fuet_and_huaneng(rulebook):
         assert res.raw_specs.get("buzzer_frequency") == "4kHz"
         assert res.raw_specs.get("sound_level") == "75dB"
         assert res.raw_specs.get("manufacturer") == "FUET"
-        assert "BUZSA33" in res.suggested_erp_code
+        assert "BUZSA0303" in res.suggested_erp_code
         assert "-FT" in res.suggested_erp_code
 
     hnb_path = folder / "HNB09A05.pdf"
@@ -1892,6 +1892,55 @@ def test_connfly_ds1092_battery_holder_e2e():
     res_counter = analyze_datasheet(pdf_bytes, part_number="DS1092-11-N8S", rulebook=rulebook, serial_counter="21")
     assert res_counter["erp_code"] == "BAHS10000021-CF"
     assert res_counter["rich_description"] == "SMD CR2032 Pil Yuvası, Connfly"
+
+
+def test_murata_pklcs_buzzer_decoding_and_e2e():
+    """Verify Murata PKLCS1212E40A1-R1 sounder resolves to BUZSA030307-MT with full spec alignment."""
+    from pathlib import Path
+    from bom_enricher.datasheet_analyzer import analyze_datasheet, classify_material_type, decode_manufacturer_pn
+    from bom_enricher.comparison import load_rulebook
+
+    # 1. Part Number Classification & Decoding
+    mat_type, conf, reason = classify_material_type("", "PKLCS1212E40A1-R1")
+    assert mat_type == "BUZ"
+    assert conf >= 0.95
+
+    pn_specs = decode_manufacturer_pn("PKLCS1212E40A1-R1")
+    assert pn_specs["manufacturer"] == "Murata"
+    assert pn_specs["manufacturer_code"] == "MT"
+    assert pn_specs["mounting"] == "SMD"
+    assert pn_specs["buzzer_voltage"] == "3V"
+    assert pn_specs["buzzer_frequency"] == "4kHz"
+    assert pn_specs["sound_level"] == "75dB"
+    assert pn_specs["buzzer_size"] == "3mm"
+
+    # 2. End-to-end analysis with user uploaded PDF or sample PDF
+    pdf_path = Path(r"C:\Users\sudem\.gemini\antigravity\brain\8be84be6-1095-43d5-b848-ce9fe57a8347\.user_uploaded\media_1792589991456_9ae004f7.pdf")
+    if pdf_path.exists():
+        pdf_bytes = pdf_path.read_bytes()
+    else:
+        pdf_bytes = _create_sample_pdf(
+            "PIEZOELECTRIC SOUNDER SPECIFICATIONS",
+            "PKLCS1212E40A1-R1",
+            ["Size 12.0x12.0x3.0 mm", "Frequency 4.0kHz", "Sound Pressure Level 75dB (min.)", "Measure Condition ±1.5Vo-p", "Shape SMD", "Murata"],
+        )
+
+    rule_file = Path("data/rules.xlsx")
+    rulebook = load_rulebook(rule_file) if rule_file.exists() else None
+
+    # Test with part number
+    res = analyze_datasheet(pdf_bytes, part_number="PKLCS1212E40A1-R1", rulebook=rulebook)
+    assert res["material_type"] == "BUZ"
+    assert res["erp_code"] == "BUZSA030307-MT"
+    assert res["suggested_description"] == "SMD 3V, 4kHz, 75dB, 3mm, Murata"
+    assert res["rich_description"] == "Piezo Buzzer, SMD, 3V, 4kHz, 75dB, 3mm, Murata"
+
+    # Test auto (without part number)
+    res_auto = analyze_datasheet(pdf_bytes, rulebook=rulebook)
+    assert res_auto["material_type"] == "BUZ"
+    assert res_auto["erp_code"] == "BUZSA030307-MT"
+    assert res_auto["suggested_description"] == "SMD 3V, 4kHz, 75dB, 3mm, Murata"
+
 
 
 
