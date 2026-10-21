@@ -46,6 +46,83 @@ PARASITIC_RESISTANCE_RE = (
 )
 PARASITIC_CAPACITANCE_RE = r"\b(?:load|shunt|junction|stray|parasitic|input|output|coupling|feedthrough|case)\s+capacitance\b"
 
+
+def _extract_frequency_hz(text: str) -> float | None:
+    """Extract frequency in Hertz from a string or part number."""
+    if not text:
+        return None
+    # 0. 32.768kHz watch crystal check (universal standard tuning fork)
+    if "32.768" in text or "32768" in text or ".327" in text:
+        return 32768.0
+
+    # 1. Standard number + unit (GHz, MHz, kHz, Hz)
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*(ghz|mhz|khz|hz|m(?![a-z])|k(?![a-z]))\b", text, re.IGNORECASE)
+    if m:
+        val_str, unit = m.groups()
+        val = float(val_str.replace(",", "."))
+        unit_lower = unit.lower()
+        if unit_lower == "ghz":
+            return val * 1e9
+        elif unit_lower in ("mhz", "m"):
+            return val * 1e6
+        elif unit_lower in ("khz", "k"):
+            return val * 1e3
+        return val
+
+    # 2. Part number encoded frequencies
+    if "32768" in text or ".327" in text:
+        return 32768.0
+
+    # ECS-xxx: ECS-80 (8MHz), ECS-163.84 (16.384MHz), ECS-240 (24MHz), ECS-270 (27MHz), ECS-271.2 (27.12MHz)
+    m_ecs = re.search(r"ECS-(?:\.327|(\d+(?:\.\d+)?))", text, re.IGNORECASE)
+    if m_ecs:
+        if ".327" in text:
+            return 32768.0
+        val = float(m_ecs.group(1))
+        if val in (80, 80.0):
+            return 8000000.0
+        elif val in (240, 240.0):
+            return 24000000.0
+        elif val in (270, 270.0):
+            return 27000000.0
+        elif val in (271.2,):
+            return 27120000.0
+        elif val in (163.84,):
+            return 16384000.0
+        elif val < 100:
+            return val * 1e6
+
+    # Murata: CSTNE8M00 (8MHz), CSTCR4M00 / CSTLS4M00 (4MHz), XRCGB16M000 (16MHz), XRCGB24M000 (24MHz), XRCGB25M000 (25MHz)
+    m_mt = re.search(r"(\d+)M(\d{2,3})", text, re.IGNORECASE)
+    if m_mt:
+        whole, frac = m_mt.groups()
+        return (float(whole) + float(f"0.{frac}")) * 1e6
+
+    # Kyocera: CX3225GA20000 (20MHz), CX2016SA32000 (32MHz)
+    m_kyo = re.search(r"CX\d{4}[A-Z]{2}(\d{5})", text, re.IGNORECASE)
+    if m_kyo:
+        return float(m_kyo.group(1)) * 1e3
+
+    # Generic hyphenated or spaced frequency: -8.000-, -12.000-, -16.000-, -24.0000, -25.000-, -40.000-
+    m_gen = re.search(r"[- ](\d{1,3}\.\d{3,4})", text)
+    if m_gen:
+        val = float(m_gen.group(1))
+        if val < 100.0:
+            return val * 1e6
+
+    # TXC 8Y39... (39MHz)
+    if text.startswith("8Y39"):
+        return 39000000.0
+    # Diodes FW40... (40MHz)
+    if "FW40" in text:
+        return 40000000.0
+    # JYJE 12000... (12MHz)
+    if "12000" in text:
+        return 12000000.0
+
+    return None
+
+
 _DEFAULT_RULEBOOK: RuleBook | None = None
 
 
@@ -539,7 +616,7 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
         if re.match(dio_prefix_pat, p) or (len(p) == 2 and re.match(r"^M[1-7]$", p)):
             return "DIO", 0.98, "Part Number standart diyot serisine uyuyor."
     # Buzzer
-    buz_prefix_pat = r"^(?:FUET|HNB|FST|CPI-|KPI-|PKLCS|PKMCS|PKM|BPT|KPT|EPT|PT2770|YX|HPT|SMT-0540|CR-HM)"
+    buz_prefix_pat = r"^(?:FUET|HNB|FST|CPI-|KPI-|PKLCS|PKMCS|PKM|BPT|KPT|EPT|PT2770|YX|HPT|SMT-0540|CR-HM-013)"
     for p in pns_to_check:
         if re.match(buz_prefix_pat, p):
             return "BUZ", 0.98, "Part Number standart buzzer serisine uyuyor."
@@ -593,8 +670,10 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
         if re.match(dsp_prefix_pat, p):
             return "DSP", 0.98, "Part Number standart display/ekran serisine uyuyor."
     # Crystal
-    if re.match(r"^(?:RH\d{2,3}|ABS\d|ABM\d|ECS-|NX\d{4}[SGC]|FA-\d|TSX-\d|7M\d|9C\d|CST|SIT\d)", pn):
-        return "CRY", 0.95, "Part Number kristal serisine uyuyor."
+    cry_prefix_pat = r"^(?:RH\d{2,3}|ABS\d|ABM\d|ECS-|NX\d{4}[SGC]|FA-\d|TSX-\d|7M\d|9C\d|CST|SIT\d|FC-135|FC31M|RT3215|MC-306|H130B|TX5032|TAXM|CX3225|CX2016|Q\s*\d|SST\s*\d|ASDMB|ASEMB|XRCGB|8Y\d{7,8}|XL7EL|R38-|CFS-206|AB38T|\d+[\.,]\d+M\s*DIP|FW\d+Q|STDCZS|X1A\d+|HM014\d+)"
+    for p in pns_to_check:
+        if re.match(cry_prefix_pat, p):
+            return "CRY", 0.95, "Part Number kristal serisine uyuyor."
     # Inductor
     if re.match(r"^(?:NR\d{4}|CD\d{2,3}|MSS\d{4}|SRR\d{4}|IHLP)", pn):
         return "IND", 0.95, "Part Number indüktör serisine uyuyor."
@@ -628,8 +707,8 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     )
     PARASITIC_CAPACITANCE_RE = r"\b(?:load|shunt|junction|stray|parasitic|input|output|coupling|feedthrough|case)\s+capacitance\b"
 
-    non_resistor_dominant = bool(re.search(r"\b(?:crystals?|oscillators?|resonators?|inductors?|chokes?|relays?|transformers?|adapters?|power\s+suppl(?:y|ies))\b", text_lower))
-    non_capacitor_dominant = bool(re.search(r"\b(?:crystals?|oscillators?|diodes?|rectifiers?|relays?)\b", text_lower))
+    non_resistor_dominant = bool(re.search(r"\b(?:crystals?|oscillators?|resonators?|inductors?|chokes?|relays?|transformers?|adapters?|power\s+suppl(?:y|ies)|32\.768\s*khz|\d+(?:\.\d+)?\s*mhz)\b", text_lower))
+    non_capacitor_dominant = bool(re.search(r"\b(?:crystals?|oscillators?|diodes?|rectifiers?|relays?|32\.768\s*khz|\d+(?:\.\d+)?\s*mhz)\b", text_lower))
 
     # Resistor
     if any(k in text_lower or k in pn.casefold() for k in ("royal ohm", "royalohm", "royal-ohm")):
@@ -667,7 +746,11 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     _score("IND", r"\b(?:isat|irms|dcr|dc\s+resistance|saturation\s+current)\b", 6.0)
 
     # Diode
-    _score("DIO", r"\b(?:schottky|zener|rectifiers?|diodes?|surface\s+mount\s+rectifiers?)\b", 15.0)
+    non_diode_dominant = bool(re.search(r"\b(?:crystals?|oscillators?|resonators?|32\.768\s*khz|\d+(?:\.\d+)?\s*mhz)\b", text_lower))
+    if not non_diode_dominant:
+        _score("DIO", r"\b(?:schottky|zener|rectifiers?|diodes?|surface\s+mount\s+rectifiers?)\b", 15.0)
+    else:
+        _score("DIO", r"\b(?:schottky|zener|surface\s+mount\s+rectifiers?)\b", 15.0)
     _score("DIO", r"\b(?:forward\s+voltage|reverse\s+leakage|vf|ir)\b", 5.0)
 
     # MOSFET
@@ -713,7 +796,7 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     _score("TER", r"\b(?:thermistor|ntc|ptc|b25/50|b25/85|zero\s+power\s+resistance)\b", 15.0)
 
     # Crystal
-    _score("CRY", r"\b(?:quartz\s+crystal|crystal\s+unit|crystal\s+oscillator|ceramic\s+resonator|crystals?|resonators?|frequency\s+tolerance|load\s+capacitance)\b", 15.0)
+    _score("CRY", r"\b(?:quartz\s+crystal|crystal\s+unit|crystal\s+oscillator|ceramic\s+resonator|crystals?|resonators?|frequency\s+tolerance|load\s+capacitance|32\.768\s*khz|\d+(?:\.\d+)?\s*mhz)\b", 15.0)
 
     # Switch
     _score("SWT", r"\b(?:tactile\s+switch(?:es)?|tact\s+switch(?:es)?|push[\s-]button\s+switch(?:es)?|push[\s-]button|slide\s+switch(?:es)?|dip\s+switch(?:es)?|rocker\s+switch(?:es)?|toggle\s+switch(?:es)?)\b", 15.0)
@@ -1270,21 +1353,130 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
             specs["pitch"] = "15.0mm"
         return specs
 
-    # 10. Raltron Crystals: e.g. RH100-8.000-16-3030-TR-NS1
-    ral_m = re.match(r"^RH(?:\d+)?-([0-9.]+)-([0-9.]+)", pn)
-    if ral_m or pn.startswith("RALTRON"):
-        specs["manufacturer"] = "Raltron"
+    # 10. Crystals (CRY): Raltron, Epson, ECS, Abracon, Murata, Kyocera, NDK, Jauch, etc.
+    m_wrapper = re.match(r"^([A-Z0-9\._\-]+)\s*\((.+)\)$", pn)
+    wrapper_prefix = m_wrapper.group(1).strip().upper() if m_wrapper else ""
+    core_pn = m_wrapper.group(2).strip().upper() if m_wrapper else pn
+
+    is_cry = False
+    cry_candidates = [pn, core_pn]
+    for cp in cry_candidates:
+        if re.match(r"^(?:RH\d{2,3}|ABS\d|ABM\d|ECS-|NX\d{4}[SGC]|FA-\d|TSX-\d|7M\d|9C\d|CST|SIT\d|FC-135|FC31M|RT3215|MC-306|H130B|TX5032|TAXM|CX3225|CX2016|Q\s*\d|SST\s*\d|ASDMB|ASEMB|XRCGB|8Y\d{7,8}|XL7EL|R38-|CFS-206|AB38T|\d+[\.,]\d+M\s*DIP|FW\d{6}Q|STDCZS)", cp) or any(k in cp for k in ("32.768", "13.560M", "6,7458M", "830055951", "830108178109", "306010014200", "HM01400000300", "03030660001", "150-0220-010")):
+            is_cry = True
+            break
+
+    if is_cry or pn.startswith("RALTRON"):
+        is_th = ("DIP" in pn or "DIP" in core_pn or any(k in pn for k in ("R38-", "CFS-206", "AB38T", "CSTLS")) or any(k in core_pn for k in ("R38-", "CFS-206", "AB38T", "CSTLS")))
+        specs["mounting"] = "TH" if is_th else "SMD"
+
+        if wrapper_prefix:
+            if "GENTEK" in wrapper_prefix:
+                specs["manufacturer"] = "GENTEK"
+                specs["manufacturer_code"] = "GEN"
+            elif "DANN" in wrapper_prefix:
+                specs["manufacturer"] = "Dannie.CC"
+                specs["manufacturer_code"] = "DNI"
+            elif "TOGG" in wrapper_prefix:
+                specs["manufacturer"] = "Togg"
+                specs["manufacturer_code"] = "TGG"
+            elif "EATRON" in wrapper_prefix:
+                specs["manufacturer"] = "EATRON"
+                specs["manufacturer_code"] = "ETR"
+            elif "HDA" in wrapper_prefix:
+                specs["manufacturer"] = "HDAEnerji"
+                specs["manufacturer_code"] = "HDE"
+            elif "HM014" in wrapper_prefix:
+                specs["manufacturer"] = "Enervon"
+                specs["manufacturer_code"] = "ENV"
+            elif any(k in wrapper_prefix for k in ("HM0537", "HM0039", "HM0032")):
+                specs["manufacturer"] = "Mikrodev"
+                specs["manufacturer_code"] = "MIK"
+            elif "TRUWATT" in wrapper_prefix:
+                specs["manufacturer"] = "TRUWATT"
+                specs["manufacturer_code"] = "TRU"
+            elif "M-PLUSTEC" in wrapper_prefix:
+                specs["manufacturer"] = "M-Plustec"
+                specs["manufacturer_code"] = "MPL"
+            elif "CR-HM" in wrapper_prefix:
+                specs["manufacturer"] = "CORE"
+                specs["manufacturer_code"] = "COR"
+            elif "H0101020" in wrapper_prefix:
+                specs["manufacturer"] = "DTSİS"
+                specs["manufacturer_code"] = "DTS"
+            elif "03030660001" in wrapper_prefix:
+                specs["manufacturer"] = "İsmak"
+                specs["manufacturer_code"] = "ISM"
+            elif "150-0220-010" in wrapper_prefix:
+                specs["manufacturer"] = "ISIPARK"
+                specs["manufacturer_code"] = "ISP"
+
+        if "manufacturer" not in specs:
+            target_check = core_pn or pn
+            if any(target_check.startswith(k) for k in ("FC-135", "MC-306", "TSX-3225", "X1A00")):
+                specs["manufacturer"] = "EPSON"
+                specs["manufacturer_code"] = "EPS"
+            elif target_check.startswith("FA-238"):
+                specs["manufacturer"] = "Epson Timing"
+                specs["manufacturer_code"] = "EPT"
+            elif target_check.startswith("ECS-"):
+                specs["manufacturer"] = "ECS"
+                specs["manufacturer_code"] = "ZZ9"
+            elif any(target_check.startswith(k) for k in ("ABS06", "ABM8G", "ABM10AIG", "ASDMB", "ASEMB", "AB38T")):
+                specs["manufacturer"] = "Abracon"
+                specs["manufacturer_code"] = "ARC"
+            elif target_check.startswith("FC31M"):
+                specs["manufacturer"] = "HCI"
+                specs["manufacturer_code"] = "HCI"
+            elif target_check.startswith("SC20S"):
+                specs["manufacturer"] = "Seiko Instruments"
+                specs["manufacturer_code"] = "SKI"
+            elif any(target_check.startswith(k) for k in ("RH100", "H130B", "RT3215", "AS-16.384", "AS-25.000", "R38-")) or pn.startswith("RALTRON"):
+                specs["manufacturer"] = "Raltron"
+                specs["manufacturer_code"] = "RA"
+            elif any(target_check.startswith(k) for k in ("CSTNE", "CSTCR", "CSTLS", "XRCGB")):
+                specs["manufacturer"] = "Murata"
+                specs["manufacturer_code"] = "MT"
+            elif target_check.startswith("CX3225") or target_check.startswith("CX2016"):
+                specs["manufacturer"] = "KYOCERA AVX"
+                specs["manufacturer_code"] = "KY0"
+            elif target_check.startswith("Q 26") or target_check.startswith("Q 26,0"):
+                specs["manufacturer"] = "Jauch"
+                specs["manufacturer_code"] = "JA"
+            elif target_check.startswith("SST"):
+                specs["manufacturer"] = "Source-Set"
+                specs["manufacturer_code"] = "SST"
+            elif any(k in target_check for k in ("NX3225", "NX2520", "NX2016", "STDCZS")):
+                specs["manufacturer"] = "NDK"
+                specs["manufacturer_code"] = "NDK"
+            elif target_check.startswith("8Y39"):
+                specs["manufacturer"] = "TXC Corporation"
+                specs["manufacturer_code"] = "TXC"
+            elif target_check.startswith("CFS-206"):
+                specs["manufacturer"] = "Citizen"
+                specs["manufacturer_code"] = "ZZ8"
+            elif "DIP(HC49S)" in target_check:
+                specs["manufacturer"] = "CY"
+                specs["manufacturer_code"] = "CY"
+            elif target_check.startswith("HM01400000300"):
+                specs["manufacturer"] = "Enervon"
+                specs["manufacturer_code"] = "ENV"
+
+        f_hz = _extract_frequency_hz(core_pn) or _extract_frequency_hz(pn)
+        if f_hz is not None:
+            if f_hz >= 1e6:
+                mhz = f_hz / 1e6
+                specs["frequency_str"] = f"{int(mhz) if mhz.is_integer() else mhz}MHz"
+            else:
+                khz = f_hz / 1e3
+                specs["frequency_str"] = f"{int(khz) if khz.is_integer() else khz}kHz"
+
+        ral_m = re.match(r"^RH(?:\d+)?-([0-9.]+)-([0-9.]+)", core_pn)
         if ral_m:
-            f_val, cl_val = ral_m.groups()
-            if "." in f_val:
-                f_val = f_val.rstrip("0").rstrip(".")
-            specs["frequency_str"] = f"{f_val}MHz"
-            if "." in cl_val:
-                cl_val = cl_val.rstrip("0").rstrip(".")
+            cl_val = ral_m.group(2).rstrip("0").rstrip(".")
             specs["load_capacitance"] = f"{cl_val} pF"
-            specs["mounting"] = "SMD"
-            if pn.startswith("RH100"):
+            if core_pn.startswith("RH100"):
                 specs["package"] = "4-SMD"
+
         return specs
 
     # 11. Displays (DSP): Foryard, Microtech, Winstar, YEEBO, Liteon, Strong Base, Bright Led, Avago, Wuxi Compul, Kinley, Assemcorp, Semtech, Display Visions, Nextion
@@ -3123,7 +3315,7 @@ CORE_ATTRIBUTES_BY_TYPE: dict[str, set[str]] = {
     "FUS": {"mounting", "package", "typefuse", "fusecurrent", "q"},
     "VAR": {"mounting", "package", "varistorsize", "voltageac", "q"},
     "TER": {"mounting", "package", "typethermistor", "value", "tolerance", "q"},
-    "CRY": {"mounting", "value", "q"},
+    "CRY": {"mounting", "value", "valuecrystals", "q"},
     "POT": {"mounting", "value", "potturnnumber", "wattage", "q"},
     "SWT": {"mounting", "typeswitch", "q"},
     "FER": {"ferritetypes", "q"},
@@ -3410,6 +3602,9 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             elif material_type == "ADP":
                 if str(counter_val).isdigit():
                     counter_val = f"{int(counter_val):03d}"
+            elif material_type == "CRY":
+                if str(counter_val).isdigit():
+                    counter_val = f"{int(counter_val):03d}"
             elif material_type == "BAH":
                 if str(counter_val).isdigit():
                     counter_val = f"{int(counter_val):05d}"
@@ -3481,7 +3676,7 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                             break
 
         # 3. VALUE
-        elif attr_norm in ("value", "valuecapacitors", "valueresistors", "valueresistor"):
+        elif attr_norm in ("value", "valuecapacitors", "valueresistors", "valueresistor", "valuecrystals"):
             if material_type == "CAP":
                 target_val = specs.get("capacitance_str", "")
                 extracted_val_str = target_val
@@ -3556,14 +3751,37 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                             break
 
             elif material_type == "CRY":
-                target_val = specs.get("frequency_str", "")
+                target_val = specs.get("frequency_str", "") or specs.get("frequency", "") or specs.get("value", "")
                 extracted_val_str = target_val
                 if target_val:
+                    # Pass 1: exact string match
                     for e in entries:
-                        if target_val.casefold() in e.value_description.casefold():
+                        desc = (e.value_description or "").strip().rstrip(",").strip().casefold()
+                        if desc == target_val.casefold().strip():
                             matched_entry = e
                             status = "TAM EŞLEŞTİ"
                             break
+                    # Pass 2: normalized frequency numeric comparison
+                    if not matched_entry:
+                        f_target = _extract_frequency_hz(target_val)
+                        if f_target is not None:
+                            best_diff = float("inf")
+                            best_entry = None
+                            for e in entries:
+                                f_entry = _extract_frequency_hz(e.value_description or "")
+                                if f_entry is not None:
+                                    diff = abs(f_entry - f_target)
+                                    rel_diff = diff / max(f_entry, f_target)
+                                    if diff == 0:
+                                        best_entry = e
+                                        best_diff = 0
+                                        break
+                                    elif rel_diff < 0.05 and rel_diff < best_diff:
+                                        best_entry = e
+                                        best_diff = rel_diff
+                            if best_entry:
+                                matched_entry = best_entry
+                                status = "TAM EŞLEŞTİ" if best_diff == 0 else "YAKIN EŞLEŞTİ"
 
             elif material_type == "DIO":
                 target_val = specs.get("value_diode", "")
@@ -4633,6 +4851,7 @@ def analyze_datasheet(
     filename: str = "datasheet.pdf",
     client: VisionLLMClient | None = None,
     serial_counter: str | None = None,
+    text: str | None = None,
 ) -> dict[str, Any]:
     """Analyze a single datasheet PDF with multimodal hybrid fusion and map to DEKA ERP format."""
     # 1. Normalize stream_or_path
@@ -4718,6 +4937,10 @@ def analyze_datasheet(
                 mat_type = "ANT"
                 conf = 0.90
                 reason = "Parça numarası kod çözümünden anten olarak tespit edildi."
+            elif mat_type == "BİLİNMİYOR" and ("frequency_str" in pn_specs or pn_specs.get("load_capacitance")):
+                mat_type = "CRY"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden kristal olarak tespit edildi."
 
     pn_has_core = False
     if mat_type == "RES" and pn_specs.get("resistance_str") and pn_specs.get("package"):
@@ -4736,12 +4959,16 @@ def analyze_datasheet(
         pn_has_core = True
     elif mat_type == "BAH" and bool(pn_specs.get("type_battery_holder")):
         pn_has_core = True
+    elif mat_type == "CRY" and bool(pn_specs.get("frequency_str")):
+        pn_has_core = True
     elif mat_type in ("FET", "TRA", "ICR", "ICS", "MCU", "VAR") and bool(pn_specs.get("package")) and bool(pn_specs.get("manufacturer")):
         pn_has_core = True
 
     # 3. Priority 2: Text Extraction
     error_msg = None
-    if file_bytes:
+    if text:
+        text, page_count, analyzed_pages = text, 1, [1]
+    elif file_bytes:
         try:
             text, page_count, analyzed_pages = extract_pdf_data(file_bytes, part_number=pn)
         except Exception as exc:
