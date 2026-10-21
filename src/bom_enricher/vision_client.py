@@ -134,6 +134,9 @@ class VisionLLMClient:
                 "or its exact pin count / variant row. Do not mix up values from other variants or generic series entries.",
                 "3. Extract all relevant electrical and mechanical specs visible in the drawing or tables "
                 "(e.g., pitch, pin_number, type_connector, mounting, pin_type, capacitance, resistance, voltage, current).",
+                "4. For card connectors (SIM, MicroSIM, SD, MicroSD), sum contact circuits and any detect/switch pins "
+                "(e.g. 6 circuits + 2 detect pins = 8 pin), classify type_connector ('SIM Card', 'MicroSIM Card', 'MicroSD Card'), "
+                "style ('Push-Push', 'Push-Pull', 'Hinged'), and orientation ('90°(Yatık)' for horizontal front/side entry).",
                 "",
                 "SCHEMA INSTRUCTIONS:",
                 "Return ONLY a valid JSON object matching the following structure:",

@@ -1588,3 +1588,71 @@ def test_molex_minifit_jr_locking_connector_and_2digit_pin(rulebook):
     assert result.suggested_description == "TH Wire to Board Kilitli Konnektör, Erkek, 4.2mm, 2 pin, 180°(Dik), Molex"
 
 
+def test_molex_sim_card_connector_detection_and_erp_mapping(rulebook):
+    from bom_enricher.datasheet_analyzer import decode_manufacturer_pn, map_specs_to_erp, build_rich_description
+
+    # 1. Test PN Decoder for Molex 475532001 (Series 47553)
+    specs = decode_manufacturer_pn("475532001")
+    assert specs["manufacturer"] == "Molex"
+    assert specs["type_connector"] == "SIM Card"
+    assert specs["mounting"] == "SMD"
+    assert specs["pin_number"] == "8 pin"
+    assert specs["angle"] == "90°(Yatık)"
+    assert specs["style"] == "Push-Push"
+
+    # 2. Test ERP Mapping: CON + S + BD + 0 + 00 + 08 + 1 + 0000XX + -MO -> CONSBD0000810000XX-MO
+    mappings, desc, erp_code = map_specs_to_erp(rulebook, "CON", specs)
+    assert erp_code == "CONSBD0000810000XX-MO"
+    codes_by_attr = {m.attribute_name: m.erp_code for m in mappings}
+    assert codes_by_attr["Mounting"] == "S"
+    assert codes_by_attr["Type Connector"] == "BD"
+    assert codes_by_attr["Pin Type of Connector"] == "0"
+    assert codes_by_attr["Pitch Connector"] == "00"
+    assert codes_by_attr["Pin Number"] == "08"
+    assert codes_by_attr["Angle"] == "1"
+
+    # 3. Test with injected serial counter 0562 -> CONSBD0000810562-MO
+    specs_injected = {**specs, "serial_counter": "0562"}
+    _, _, erp_code_injected = map_specs_to_erp(rulebook, "CON", specs_injected)
+    assert erp_code_injected == "CONSBD0000810562-MO"
+
+    # 4. Test rich description
+    rich_desc = build_rich_description("CON", specs, "")
+    assert rich_desc == "SMD SIM Card, Push-Push, 8 pin, 90°(Yatık), Molex"
+
+    # 5. Test PDF extraction with real Molex 475532001 datasheet text
+    pdf_bytes = _create_sample_pdf(
+        "1.27mm Pitch SIM Card Holder with 2 Detect Pins, 6 Circuits, Push-Push Style, Housing Height 1.80mm, with Pegs, Lead-Free",
+        "475532001",
+        [
+            "Product Category: Memory / SIM Card Connectors",
+            "Series Number: 47553",
+            "Status: Active",
+            "Product Name: mini-SIM",
+            "Style: Push-Push",
+            "Card Detection Switch: Open",
+            "Card Entry Location: Front",
+            "Circuits (Loaded): 6",
+            "Circuits (maximum): 6",
+            "Current - Maximum per Contact: 0.5A",
+            "Voltage - Maximum: 50V DC",
+            "Pitch - Mating Interface: 2.54mm",
+            "Pitch - Termination Interface: 1.27mm",
+            "Termination Interface Style: Surface Mount",
+            "Mates With: Standard SIM Card",
+        ],
+    )
+    result = analyze_single_datasheet("475532001.pdf", pdf_bytes, rulebook, part_number_override="475532001")
+    assert result.material_type == "CON"
+    pdf_codes = {p.attribute_name: p.erp_code for p in result.properties}
+    assert pdf_codes["Type Connector"] == "BD"
+    assert pdf_codes["Mounting"] == "S"
+    assert pdf_codes["Pin Type of Connector"] == "0"
+    assert pdf_codes["Pitch Connector"] == "00"
+    assert pdf_codes["Pin Number"] == "08"
+    assert pdf_codes["Angle"] == "1"
+    assert result.suggested_erp_code == "CONSBD0000810000XX-MO"
+    assert result.rich_description == "SMD SIM Card, Push-Push, 8 pin, 90°(Yatık), Molex"
+
+
+

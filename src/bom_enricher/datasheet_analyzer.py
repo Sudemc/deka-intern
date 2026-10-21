@@ -1024,6 +1024,31 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
         specs["angle"] = "90°(Yatık)" if series_code == "3930" else "180°(Dik)"
         return specs
 
+    # Molex SIM / Memory Card Holders: e.g. 47553-2001, 475532001, 0475532001, 47388-2001, 47334-0001
+    molex_card = re.match(r"^(?:0)?(47553|47388|47334|105168|105020)[-_]?(\d{4})$", pn)
+    if molex_card:
+        s_id = molex_card.group(1)
+        specs["manufacturer"] = "Molex"
+        specs["mounting"] = "SMD"
+        specs["angle"] = "90°(Yatık)"
+        if s_id == "47553":
+            specs["type_connector"] = "SIM Card"
+            specs["pin_number"] = "8 pin"
+            specs["style"] = "Push-Push"
+        elif s_id == "47388":
+            specs["type_connector"] = "SIM Card"
+            specs["pin_number"] = "6 pin"
+            specs["style"] = "Push-Pull"
+        elif s_id == "47334":
+            specs["type_connector"] = "MicroSD Card"
+            specs["pin_number"] = "8 pin"
+            specs["style"] = "Push-Push"
+        elif s_id in ("105168", "105020"):
+            specs["type_connector"] = "MicroSIM Card"
+            specs["pin_number"] = "6 pin"
+            specs["style"] = "Push-Pull"
+        return specs
+
     # 8. JST Connectors: e.g. B4B-XH-A, S4B-XH-A, XHP-4, B4B-PH-K-S, S4B-PH-K-S, PHR-4
     jst_hdr = re.match(r"^([BS])(\d+)B-(XH|PH|VH|EH)", pn)
     if jst_hdr:
@@ -1630,19 +1655,52 @@ def extract_component_specs(
             text_lower,
         ))
         if "type_connector" not in specs:
-            if any(k in text_lower for k in ("wire to board", "wire-to-board", "crimp housing", "housing")):
+            # 1. Specialized Memory, Card, USB, Interface connectors (Highest priority over generic sub-words)
+            if re.search(r"\b(?:microsim|micro[- ]sim)\b", text_lower):
+                specs["type_connector"] = "MicroSIM Card"
+            elif re.search(r"\b(?:sim\s*card(?:\s*(?:holder|connector|socket|tray))?|mini[- ]sim|nano[- ]sim)\b", text_lower):
+                specs["type_connector"] = "SIM Card"
+            elif re.search(r"\b(?:microsd|micro[- ]sd)\b", text_lower):
+                specs["type_connector"] = "MicroSD Card"
+            elif re.search(r"\b(?:memory\s*card|sd\s*card(?:\s*connector)?)\b", text_lower):
+                specs["type_connector"] = "Memory Connectors"
+            elif re.search(r"\b(?:usb[- ]?c(?:[- ]?type)?|type[- ]?c(?:\s*connector)?)\b", text_lower):
+                specs["type_connector"] = "USB C Type"
+            elif re.search(r"\b(?:micro[- ]?usb|usb[- ]?micro[- ]?b)\b", text_lower):
+                specs["type_connector"] = "USB-microB"
+            elif re.search(r"\b(?:mini[- ]?usb|usb[- ]?mini)\b", text_lower):
+                specs["type_connector"] = "USB MINI B Type"
+            elif re.search(r"\b(?:usb[- ]?a(?:[- ]?type)?)\b", text_lower):
+                specs["type_connector"] = "USB A Type"
+            elif re.search(r"\b(?:ffc|fpc)\b", text_lower):
+                specs["type_connector"] = "FFC/FPC Konnektör"
+            elif re.search(r"\b(?:d[- ]?sub)\b", text_lower):
+                specs["type_connector"] = "D-Sub"
+            elif re.search(r"\b(?:dc\s*(?:power\s*)?jack|power\s*jack)\b", text_lower):
+                specs["type_connector"] = "DC Power Jack"
+            elif re.search(r"\b(?:modular\s*jack|rj45|rj[- ]?45|rj11)\b", text_lower):
+                specs["type_connector"] = "Modular Jack"
+            elif any(k in text_lower for k in ("wire to board", "wire-to-board", "crimp housing", "wire-to-board housing")):
                 specs["type_connector"] = "Wire to Board Kilitli Konnektör" if is_locked else "Wire to Board Konnektör"
             elif any(k in text_lower for k in ("wire to wire", "wire-to-wire")):
                 specs["type_connector"] = "Wire to Wire Kilitli Konnektör" if is_locked else "Wire to Wire Konnektör"
-            elif any(k in text_lower for k in ("pin header", "header")):
-                specs["type_connector"] = "Pin Header"
+            elif any(k in text_lower for k in ("board to board", "board-to-board")):
+                specs["type_connector"] = "Board to Board Konnektör"
             elif "terminal block" in text_lower or "klemens" in text_lower:
                 specs["type_connector"] = "PCB Klemens"
+            elif any(k in text_lower for k in ("pin header", "header")):
+                specs["type_connector"] = "Pin Header"
         elif is_locked:
             if specs.get("type_connector") == "Wire to Board Konnektör":
                 specs["type_connector"] = "Wire to Board Kilitli Konnektör"
             elif specs.get("type_connector") == "Wire to Wire Konnektör":
                 specs["type_connector"] = "Wire to Wire Kilitli Konnektör"
+
+        # Style (e.g. Push-Push, Push-Pull, Hinged)
+        if "style" not in specs:
+            style_m = re.search(r"\b(push[- ]push|push[- ]pull|hinged?)\b", text_lower)
+            if style_m:
+                specs["style"] = style_m.group(1).title().replace(" ", "-")
 
         # Pin Type
         if "pin_type" not in specs:
@@ -1695,11 +1753,21 @@ def extract_component_specs(
 
         # Pin Number
         if "pin_number" not in specs:
-            pins_m = re.search(r"(?:circuits?|pins?|positions?|poles?|kutup|pin sayısı)[:\s=]+(\d+)\b", text_lower)
-            if not pins_m:
-                pins_m = re.search(r"\b(\d+)\s*(?:circuits?|pins?|pos|poles?|ways?|kutup)\b", text_lower)
-            if pins_m:
-                specs["pin_number"] = f"{pins_m.group(1)} pin"
+            # Check for combined circuits + detect pins (e.g. "with 2 Detect Pins, 6 Circuits", "6 Circuits, 2 Detect Pins")
+            circuits_m = re.search(r"\b(\d+)\s*(?:circuits?|contacts?|ways?|positions?|pos\.?|pins?)\b", text_lower)
+            detect_m = re.search(r"\b(\d+)\s*(?:detect\s*pins?|detection\s*pins?|switch\s*pins?)\b", text_lower)
+            if circuits_m and detect_m:
+                total_pins = int(circuits_m.group(1)) + int(detect_m.group(1))
+                specs["pin_number"] = f"{total_pins} pin"
+            elif circuits_m and ("detect pin" in text_lower or "detection switch" in text_lower):
+                total_pins = int(circuits_m.group(1)) + 2
+                specs["pin_number"] = f"{total_pins} pin"
+            else:
+                pins_m = re.search(r"(?:circuits?|pins?|positions?|poles?|kutup|pin sayısı)[:\s=]+(\d+)\b", text_lower)
+                if not pins_m:
+                    pins_m = re.search(r"\b(\d+)\s*(?:circuits?|pins?|pos|poles?|ways?|kutup)\b", text_lower)
+                if pins_m:
+                    specs["pin_number"] = f"{pins_m.group(1)} pin"
 
         # Angle
         if "angle" not in specs:
@@ -1707,6 +1775,8 @@ def extract_component_specs(
                 specs["angle"] = "90°(Yatık)"
             elif any(k in text_lower for k in ("vertical", "straight", "180 deg", "180°", "dik")):
                 specs["angle"] = "180°(Dik)"
+            elif specs.get("type_connector") in ("SIM Card", "MicroSIM Card", "MicroSD Card", "Memory Connectors") or any(k in text_lower for k in ("card entry location: front", "card entry: front", "push-push", "push-pull")):
+                specs["angle"] = "90°(Yatık)"
 
     elif material_type == "IND":
         # Inductance
@@ -2190,6 +2260,12 @@ CORE_ATTRIBUTES_BY_TYPE: dict[str, set[str]] = {
     "ANT": {"mounting", "typeantenna", "q"},
     "BAH": {"mounting", "typebatteryholder", "q"},
     "DSP": {"mounting", "typedisplay", "colordisplayled", "specialdefinitiondisplay", "q"},
+}
+
+CARD_OR_INTERFACE_CONNECTORS: set[str] = {
+    "SIM Card", "MicroSIM Card", "MicroSD Card", "Memory Connectors",
+    "USB C Type", "USB A Type", "USB-microB", "USB MINI B Type",
+    "DC Power Jack", "Modular Jack",
 }
 
 
@@ -2757,31 +2833,60 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                         status = "TAM EŞLEŞTİ"
                         break
         elif "pintype" in attr_norm:
-            pt = specs.get("pin_type", "")
-            extracted_val_str = pt
-            if pt:
+            tc = specs.get("type_connector", "")
+            if tc in CARD_OR_INTERFACE_CONNECTORS:
+                # Card sockets, USB, and Jacks have no pin gender; map to unassigned rule entry '0'
                 for e in entries:
-                    if pt.casefold() in e.value_description.casefold():
+                    if str(e.value).strip() in ("0", "00", ""):
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
-        elif "pitch" in attr_norm:
-            p_val = specs.get("pitch", "")
-            extracted_val_str = p_val
-            if p_val:
-                target_pitch_m = re.search(r"(\d+(?:\.\d+)?)", p_val)
-                target_pitch_num = float(target_pitch_m.group(1)) if target_pitch_m else None
-                for e in entries:
-                    em = re.search(r"(\d+(?:\.\d+)?)\s*mm", e.value_description.casefold())
-                    if em and target_pitch_num is not None:
-                        if abs(float(em.group(1)) - target_pitch_num) < 0.001:
+            else:
+                pt = specs.get("pin_type", "")
+                extracted_val_str = pt
+                if pt:
+                    for e in entries:
+                        if pt.casefold() in e.value_description.casefold():
                             matched_entry = e
                             status = "TAM EŞLEŞTİ"
                             break
-                    elif p_val.casefold() == e.value_description.strip().rstrip(",").casefold():
-                        matched_entry = e
+        elif "pitch" in attr_norm:
+            tc = specs.get("type_connector", "")
+            if tc in CARD_OR_INTERFACE_CONNECTORS:
+                # Card sockets, USB, and Jacks do not use board pitch in DEKA ERP; map to unassigned rule entry '0' (padded to '00')
+                pad2 = any(len(str(x.value)) >= 2 for x in entries)
+                for e in entries:
+                    if str(e.value).strip() in ("0", "00", ""):
+                        matched_entry = RuleEntry(
+                            material_type=e.material_type,
+                            attribute_code=e.attribute_code,
+                            attribute_name=e.attribute_name,
+                            value="00" if pad2 else "0",
+                            value_description="",
+                            language=e.language,
+                            sort_order=e.sort_order,
+                            prefix=e.prefix,
+                            suffix=e.suffix,
+                        )
                         status = "TAM EŞLEŞTİ"
                         break
+            else:
+                p_val = specs.get("pitch", "")
+                extracted_val_str = p_val
+                if p_val:
+                    target_pitch_m = re.search(r"(\d+(?:\.\d+)?)", p_val)
+                    target_pitch_num = float(target_pitch_m.group(1)) if target_pitch_m else None
+                    for e in entries:
+                        em = re.search(r"(\d+(?:\.\d+)?)\s*mm", e.value_description.casefold())
+                        if em and target_pitch_num is not None:
+                            if abs(float(em.group(1)) - target_pitch_num) < 0.001:
+                                matched_entry = e
+                                status = "TAM EŞLEŞTİ"
+                                break
+                        elif p_val.casefold() == e.value_description.strip().rstrip(",").casefold():
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
         elif "pinnumber" in attr_norm:
             pn_val = specs.get("pin_number", "")
             extracted_val_str = pn_val
@@ -3114,6 +3219,8 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                     pass
                 else:
                     description_tokens.append(desc_val)
+                    if material_type == "CON" and attr_norm == "typeconnector" and specs.get("style"):
+                        description_tokens.append(f"{specs['style']},")
             if code_val:
                 code_tokens.append(code_val)
         elif extracted_val_str:
@@ -3274,10 +3381,13 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
         mounting = specs.get("mounting", "")
         lead = f"{mounting} {title}" if mounting and not title.startswith(mounting) else title
         tokens = [lead]
-        if specs.get("pin_type"):
-            tokens.append(specs["pin_type"])
-        if specs.get("pitch"):
-            tokens.append(specs["pitch"])
+        if specs.get("style"):
+            tokens.append(specs["style"])
+        if title not in CARD_OR_INTERFACE_CONNECTORS:
+            if specs.get("pin_type"):
+                tokens.append(specs["pin_type"])
+            if specs.get("pitch"):
+                tokens.append(specs["pitch"])
         if specs.get("pin_number"):
             tokens.append(specs["pin_number"])
         if specs.get("angle"):
