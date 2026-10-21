@@ -1809,3 +1809,35 @@ def test_real_ezurio_maf95310_antenna_datasheet_e2e():
     assert res_counter["erp_code"] == "ANTT3000021-EZU"
     assert res_counter["rich_description"] == "RF Flex Antenna, WLAN, 185mm UFL Cable (I-PEX), Ezurio"
 
+
+def test_auto_material_type_emf2449a1_10ufl_antenna_e2e():
+    """Verify EMF2449A1-10UFL is classified as ANT under AUTO product type without false capacitor match."""
+    from pathlib import Path
+    from bom_enricher.datasheet_analyzer import analyze_datasheet, classify_material_type
+    from bom_enricher.comparison import load_rulebook
+
+    # Test PN classification with empty text does NOT match CAP
+    mat_type, conf, reason = classify_material_type("", "EMF2449A1-10UFL")
+    assert mat_type == "ANT"
+    assert conf >= 0.85
+
+    pdf_path = Path(r"C:\Users\sudem\.gemini\antigravity\brain\8be84be6-1095-43d5-b848-ce9fe57a8347\.user_uploaded\media_1792581483711_8d7964b4.pdf")
+    if not pdf_path.exists():
+        pdf_path = Path(r"C:\Users\sudem\.gemini\antigravity\brain\8be84be6-1095-43d5-b848-ce9fe57a8347\.user_uploaded\media_1792578508694_12998fb7.pdf")
+    if not pdf_path.exists():
+        pytest.skip("User uploaded PDF not found at path")
+
+    rule_file = Path("data/rules.xlsx")
+    rulebook = load_rulebook(rule_file) if rule_file.exists() else None
+
+    # Analyze with AUTO / default material type
+    res = analyze_datasheet(pdf_path, part_number="EMF2449A1-10UFL", rulebook=rulebook)
+    assert res["material_type"] == "ANT"
+    assert res["part_number"] == "EMF2449A1-10UFL"
+    assert res["specs"]["manufacturer"] == "Ezurio"
+    assert res["specs"]["cable_length"] == "100mm"
+    assert res["specs"]["mating_connector"] == "UFL (I-PEX)"
+    assert res["erp_code"] == "ANTT30000XX-EZU"
+    assert res["rich_description"] == "RF Flex Antenna, WLAN, 100mm UFL Cable (I-PEX), Ezurio"
+
+

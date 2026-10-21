@@ -577,6 +577,9 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     # Adapter (ADP): Simsukian SK, Mean Well GST/SDR/HDR, ADP-
     if re.match(r"^(?:SK\d{2}[A-Z]?-\d+|GST\d|SDR-\d|HDR-\d|ADP-)", pn):
         return "ADP", 0.98, "Part Number standart adaptör/güç kaynağı serisine uyuyor."
+    # Antenna (ANT): Laird MAF/EMF, Taoglas FXP, etc.
+    if re.match(r"^(?:MAF\d{4,6}|EMF\d{4}|FXP\d|WISP\d)", pn, re.I):
+        return "ANT", 0.98, "Part Number standart anten serisine uyuyor."
 
     # ── 3. WEIGHTED TEXT KEYWORD SCORING (Cover: 4x weight, Rest: 1x weight) ──
     scores: dict[str, float] = {
@@ -737,8 +740,10 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
         return "BAH", 0.85, "Parça kodundan pil yuvası/klipsi olarak tespit edildi."
     if any(k in pn_lower for k in ("b722", "varistor")):
         return "VAR", 0.85, "Parça kodundan varistör olarak tespit edildi."
-    if any(k in pn_lower for k in ("cap", "uf", "nf", "pf", "mlcc")):
+    if re.search(r"\bcap\b|mlcc|\d+(?:\.\d+)?(?:uf|nf|pf)(?![a-z])", pn_lower):
         return "CAP", 0.70, "Parça kodu veya birim bilgisinden kapasitör olarak tespit edildi."
+    if any(k in pn_lower for k in ("ant", "antenna", "ufl", "ipex")):
+        return "ANT", 0.85, "Parça kodundan anten olarak tespit edildi."
     if any(k in pn_lower for k in ("dio", "bat", "bzx", "1n4")):
         return "DIO", 0.70, "Parça kodundan diyot olarak tespit edildi."
     if any(k in pn_lower for k in ("con", "molex", "jst", "hdr", "header", "term", "crimp")):
@@ -3954,10 +3959,14 @@ def analyze_datasheet(
             except Exception:
                 pass
 
-    # 4. Material Type Classification (fallback to document text if still unknown)
-    if mat_type == "BİLİNMİYOR":
-        mat_type, conf, reason = classify_material_type(text, pn, filename=filename)
-        if mat_type == "BİLİNMİYOR" and pn_specs:
+    # 4. Material Type Classification (evaluate with document text if not overridden)
+    if not material_type_override or material_type_override.upper() == "AUTO":
+        text_mat, text_conf, text_reason = classify_material_type(text, pn, filename=filename)
+        if text_mat != "BİLİNMİYOR" and (mat_type == "BİLİNMİYOR" or text_conf > conf or conf < 0.95):
+            mat_type = text_mat
+            conf = text_conf
+            reason = text_reason
+        elif mat_type == "BİLİNMİYOR" and pn_specs:
             if "resistance_str" in pn_specs or "wattage" in pn_specs:
                 mat_type = "RES"
                 conf = 0.90
@@ -4112,11 +4121,18 @@ def analyze_datasheet(
                     if llm_specs.get("style") and not specs.get("style"):
                         cand_style = str(llm_specs["style"]).strip()
                         if cand_style.casefold() not in ("through hole", "surface mount", "smd", "th", "none", "n/a", "standard"):
-                            specs["style"] = cand_style
+                            # Card styles (Push-Push, Push-Pull, Hinged) only apply to card/memory sockets or relevant context
+                            if cand_style.casefold() in ("push-push", "push-pull", "hinged", "ejector"):
+                                if any(k in clean_text.casefold() for k in ("sim", "card", "microsd", "memory")) or specs.get("type_connector") in CARD_OR_INTERFACE_CONNECTORS:
+                                    specs["style"] = cand_style
+                            else:
+                                specs["style"] = cand_style
                     if llm_specs.get("angle") and not specs.get("angle"):
                         specs["angle"] = str(llm_specs["angle"]).strip()
                     # 4. Fill any remaining unextracted properties across all material types
                     for k, v in llm_specs.items():
+                        if k in ("style", "pin_number", "type_connector", "angle", "part_number"):
+                            continue
                         if v is not None and (k not in specs or specs[k] is None or specs[k] == ""):
                             s_v = str(v).strip()
                             if s_v and s_v not in ("...", "N/A", "null", "None", "<...>", "—"):
