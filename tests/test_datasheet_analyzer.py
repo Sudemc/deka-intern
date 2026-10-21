@@ -1702,5 +1702,73 @@ def test_keyword_context_guards_prevent_false_positives():
     assert con_specs.get("type_connector") == "Box Header"
 
 
+def test_adp_classification_and_decoding():
+    from bom_enricher.datasheet_analyzer import (
+        classify_material_type,
+        decode_manufacturer_pn,
+        extract_component_specs,
+        map_specs_to_erp,
+        build_rich_description,
+        get_default_rulebook,
+    )
+
+    # 1. Part number decoding
+    pn_specs = decode_manufacturer_pn("SK03T-1200200V")
+    assert pn_specs["voltage_output"] == "12VDC"
+    assert pn_specs["current_output"] == "2A"
+    assert pn_specs["manufacturer"] == "SIMSUKIAN"
+    assert pn_specs["manufacturer_code"] == "SMK"
+    assert pn_specs["type_adaptor"] == "AC/DC Duvar Tipi Adaptör"
+
+    # 2. Material type classification
+    mat_type, conf, reason = classify_material_type("", "SK03T-1200200V")
+    assert mat_type == "ADP"
+    assert conf >= 0.90
+
+    # 3. Title cover classification
+    cover_text = "--- PAGE 1 ---\nSwitching Power Supply\nModel No: SK03T-1200200V\nShenzhen Simsukian Electronics"
+    mat_type_cover, conf_cover, _ = classify_material_type(cover_text, "")
+    assert mat_type_cover == "ADP"
+    assert conf_cover == 0.99
+
+    # 4. Rich description
+    specs = {
+        "type_adaptor": "AC/DC Duvar Tipi Adaptör",
+        "voltage_output": "12VDC",
+        "current_output": "2A",
+        "manufacturer": "SIMSUKIAN",
+    }
+    desc = build_rich_description("ADP", specs)
+    assert desc == "AC/DC Duvar Tipi Adaptör, 12VDC, 2A, SIMSUKIAN"
+
+    # 5. ERP Mapping
+    rb = get_default_rulebook()
+    mappings, s_desc, erp_code_default = map_specs_to_erp(rb, "ADP", specs)
+    assert erp_code_default == "ADPAA0A310000XX-SMK"
+
+    specs_counter = dict(specs)
+    specs_counter["serial_counter"] = "0001"
+    _, _, erp_code_counter = map_specs_to_erp(rb, "ADP", specs_counter)
+    assert erp_code_counter == "ADPAA0A310001-SMK"
 
 
+def test_real_simsukian_adapter_datasheet_e2e():
+    from pathlib import Path
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+
+    pdf_path = Path(r"C:\Users\sudem\.gemini\antigravity\brain\8be84be6-1095-43d5-b848-ce9fe57a8347\.user_uploaded\media_1792570576636_17351353.pdf")
+    if not pdf_path.exists():
+        pytest.skip("User uploaded PDF not found at path")
+
+    # Analyze without providing part_number (simulating raw upload)
+    res_default = analyze_datasheet(pdf_path, filename="media_1792570576636_17351353.pdf")
+    assert res_default["material_type"] == "ADP"
+    assert res_default["part_number"] == "SK03T-1200200V"
+    assert res_default["erp_code"] == "ADPAA0A310000XX-SMK"
+    assert res_default["rich_description"] == "AC/DC Duvar Tipi Adaptör, 12VDC, 2A, SIMSUKIAN"
+
+    # Analyze with injected serial counter
+    res_counter = analyze_datasheet(pdf_path, filename="media_1792570576636_17351353.pdf", serial_counter="0001")
+    assert res_counter["material_type"] == "ADP"
+    assert res_counter["part_number"] == "SK03T-1200200V"
+    assert res_counter["erp_code"] == "ADPAA0A310001-SMK"

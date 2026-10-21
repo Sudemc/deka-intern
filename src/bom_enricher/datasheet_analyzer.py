@@ -178,6 +178,7 @@ MATERIAL_TYPE_NAMES = {
     "MIC": "Mikrofon (MIC)",
     "TRF": "Trafo (TRF)",
     "DSP": "Ekran / Display (DSP)",
+    "ADP": "Adaptör (ADP)",
     "ENC": "Enkoder (ENC)",
     "LDR": "Foto Direnç (LDR)",
     "BAH": "Pil Yuvası (BAH)",
@@ -284,6 +285,10 @@ def is_catalog_document_name(name: str) -> bool:
         return False
     clean = re.sub(r"\.pdf$", "", name, flags=re.I).strip().upper()
 
+    # 0. Generic upload, media, or scratch file names (e.g. media_1792570576636_17351353, upload_1234, datasheet, untitled)
+    if re.match(r"^(?:MEDIA|UPLOAD|FILE|DOC|DOCUMENT|DATASHEET|TEMP|TMP|BLOB|DOWNLOAD|SCAN|UNTITLED)[-_0-9A-F]*$", clean, flags=re.I):
+        return True
+
     # 1. Distributor document prefixes/patterns
     # e.g. PYU-RC_51_ROHS_P, PYU-RC_GROUP_51_ROHS_L, DOC-1234, DS-001, DATASHEET_V1
     if re.match(r"^(?:PYU|DOC|DS|CATALOG|DATASHEET|SPEC|MANUAL)[-_]", clean):
@@ -355,6 +360,29 @@ def extract_part_numbers_from_text(text: str) -> list[str]:
     found: list[str] = []
     seen = set()
 
+    # 1. Explicit Model/Part Number labels (e.g. "MODEL NO.: SK03T-1200200V", "Model: ...", "P/N: ...")
+    model_labels_re = (
+        r"(?:(?:MODEL|PART|ORDERING)(?:\s*(?:NO\.?|NUMBER|CODE))?|P/N|机种型号|机种编号|产品型号)"
+        r"\s*[:：\s]\s*([A-Za-z0-9_.-]{4,35})"
+    )
+    noise_tokens = {
+        "DESIGNED", "REVISION", "APPROVAL", "CUSTOMER", "DATE", "NUMBER",
+        "STATUS", "SPECIFICATION", "APPROVED", "CHECKED", "PREPARATION",
+        "INITIAL", "RELEASED", "PAGE", "TOTAL", "VERSION", "SERIES",
+    }
+    for m in re.finditer(model_labels_re, text, flags=re.IGNORECASE):
+        cand = m.group(1).strip().strip(".:：,-_")
+        if cand.upper() in noise_tokens or len(cand) < 4:
+            continue
+        if not any(c.isdigit() for c in cand):
+            continue
+        if is_catalog_document_name(cand):
+            continue
+        if cand.upper() not in seen:
+            seen.add(cand.upper())
+            found.append(cand.upper())
+
+    # 2. Known MPN regular expression patterns
     patterns = [
         # Yageo Resistors: RC0805JR-07300RL, RC0402FR-0710KL, AC0805JR-07300RL, etc.
         r"\b(?:RC|AC)\d{4}[A-Z][A-Z]-[0-9A-Z]{2}[0-9A-Z]+L?\b",
@@ -431,6 +459,8 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
     ("ANT", r"\b(?:triple\s+band\s+(?:embedded\s+)?antenna|embedded\s+antenna|chip\s+antenna|pcb\s+antenna|rf\s+antenna|wifi\s+antenna|patch\s+antenna|dipole\s+antenna|antennas?)\b", "Anten (ANT)"),
     # DISPLAY
     ("DSP", r"\b(?:(?:seven|7)[\s-]segment\s+displays?|digits?\s+displays?|character\s+lcd|graphic\s+lcd|tft\s+displays?|oled\s+displays?|dotmatrix\s+displays?)\b", "Display (DSP)"),
+    # ADAPTER / POWER SUPPLY
+    ("ADP", r"\b(?:ac/dc\s+adapter|power\s+adapter|switching\s+power(?:\s+supply)?|switching\s+adapter|电源适配器|开关电源|wall\s+mount\s+adapter|desktop\s+adapter)\b", "Adaptör (ADP)"),
 ]
 
 
@@ -513,6 +543,9 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     # Display (DSP): Foryard FYQ-, FYS-, FYD-, FYT-
     if re.match(r"^FY[QSTD]-\d{4}", pn):
         return "DSP", 0.98, "Part Number standart Foryard display serisine uyuyor."
+    # Adapter (ADP): Simsukian SK, Mean Well GST/SDR/HDR, ADP-
+    if re.match(r"^(?:SK\d{2}[A-Z]?-\d+|GST\d|SDR-\d|HDR-\d|ADP-)", pn):
+        return "ADP", 0.98, "Part Number standart adaptör/güç kaynağı serisine uyuyor."
 
     # ── 3. WEIGHTED TEXT KEYWORD SCORING (Cover: 4x weight, Rest: 1x weight) ──
     scores: dict[str, float] = {
@@ -521,7 +554,7 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
         "LED": 0.0, "CON": 0.0, "REL": 0.0, "FUS": 0.0, "VAR": 0.0,
         "TER": 0.0, "CRY": 0.0, "SWT": 0.0, "FER": 0.0, "POT": 0.0,
         "BUZ": 0.0, "TRF": 0.0, "TRI": 0.0, "SCR": 0.0, "AMP": 0.0,
-        "FLT": 0.0, "ANT": 0.0, "BAH": 0.0, "DSP": 0.0,
+        "FLT": 0.0, "ANT": 0.0, "BAH": 0.0, "DSP": 0.0, "ADP": 0.0,
     }
 
     def _score(cat: str, pattern: str, pts: float):
@@ -537,7 +570,7 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     )
     PARASITIC_CAPACITANCE_RE = r"\b(?:load|shunt|junction|stray|parasitic|input|output|coupling|feedthrough|case)\s+capacitance\b"
 
-    non_resistor_dominant = bool(re.search(r"\b(?:crystals?|oscillators?|resonators?|inductors?|chokes?|relays?|transformers?)\b", text_lower))
+    non_resistor_dominant = bool(re.search(r"\b(?:crystals?|oscillators?|resonators?|inductors?|chokes?|relays?|transformers?|adapters?|power\s+suppl(?:y|ies))\b", text_lower))
     non_capacitor_dominant = bool(re.search(r"\b(?:crystals?|oscillators?|diodes?|rectifiers?|relays?)\b", text_lower))
 
     # Resistor
@@ -648,6 +681,11 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     # Display (DSP)
     _score("DSP", r"\b(?:7[\s-]segment|seven\s+segment|digits?\s+display|tft|lcd|oled)\b", 15.0)
 
+    # Adapter / Power Supply (ADP)
+    _score("ADP", r"\b(?:ac/dc\s+adapter|power\s+adapter|switching\s+power(?:\s+supply)?|switching\s+adapter|电源适配器|开关电源|rated\s+output\s+voltage|rated\s+output\s+current)\b", 18.0)
+    if any(w in text_lower for w in ("simsukian", "mean well", "meanwell", "delta electronics", "cui inc")):
+        scores["ADP"] += 12.0
+
     best_type = max(scores, key=scores.get)
     best_score = scores[best_type]
 
@@ -658,6 +696,8 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
 
     # ── 4. CONTEXTUAL FALLBACK ──
     pn_lower = pn.casefold()
+    if any(k in pn_lower for k in ("sk0", "sk1", "sk2", "sk3", "sk4", "sk5", "adp", "adapter", "adaptor")):
+        return "ADP", 0.85, "Parça kodundan adaptör olarak tespit edildi."
     if any(k in pn_lower for k in ("res", "royal")):
         return "RES", 0.70, "Parça kodu veya üretici bilgisinden direnç olarak tespit edildi."
     if any(k in pn_lower for k in ("buz", "fuet", "hnb", "fst")):
@@ -1196,6 +1236,26 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
 
         specs["voltage"] = f"{int(volt_code)}V"
         return specs
+
+    # 14. Adapter Model Numbers: e.g. SK03T-1200200V, SK01T-0500200V, SK6011-1200200V1-01
+    m_adp = re.match(r"^[A-Z0-9]+-(\d{2,4})(\d{2,4})[A-Z0-9-]*$", pn)
+    if m_adp and (pn.startswith("SK") or pn.startswith("ADP") or "ADAPTER" in pn):
+        v_raw, i_raw = m_adp.groups()
+        try:
+            v_val = int(v_raw) / 100.0 if len(v_raw) == 4 else int(v_raw) / 10.0
+            i_val = int(i_raw) / 100.0 if len(i_raw) >= 3 else int(i_raw) / 10.0
+            specs["voltage_output"] = f"{int(v_val)}VDC" if v_val.is_integer() else f"{v_val}VDC"
+            specs["voltage_adapter_output"] = specs["voltage_output"]
+            specs["current_output"] = f"{int(i_val)}A" if i_val.is_integer() else f"{i_val}A"
+            specs["current_adapter_output"] = specs["current_output"]
+            specs["voltage_adapter_input"] = "176 - 264VAC"
+            specs["type_adaptor"] = "AC/DC Duvar Tipi Adaptör"
+            if pn.startswith("SK"):
+                specs["manufacturer"] = "SIMSUKIAN"
+                specs["manufacturer_code"] = "SMK"
+            return specs
+        except Exception:
+            pass
 
     return specs
 
@@ -2231,6 +2291,56 @@ def extract_component_specs(
                 specs["manufacturer"] = "Foryard"
                 specs["manufacturer_code"] = "FO"
 
+    elif material_type == "ADP":
+        # Type Adaptor
+        t_adp = specs.get("type_adaptor", "")
+        if not t_adp:
+            if any(k in text_lower for k in ("desktop", "c14", "c8", "masaüstü")):
+                t_adp = "AC/DC Masaüstü Adaptör"
+            elif any(k in text_lower for k in ("car charger", "cigarette", "çakmaklık")):
+                t_adp = "Çakmaklık"
+            elif any(k in text_lower for k in ("adjustable", "ayarlanabilir")):
+                t_adp = "AC/DC Ayarlanabilir Güç Kaynağı"
+            else:
+                t_adp = "AC/DC Duvar Tipi Adaptör"
+        specs["type_adaptor"] = t_adp
+
+        # Input Voltage (default 176 - 264VAC in DEKA ERP rules)
+        if "voltage_adapter_input" not in specs:
+            specs["voltage_adapter_input"] = "176 - 264VAC"
+
+        # Output Voltage
+        v_out = specs.get("voltage_output") or specs.get("voltage_adapter_output") or specs.get("voltage")
+        if not v_out:
+            m_vo = re.search(r"(?:rated\s+output\s+voltage|output\s+voltage|输出电压)[^\d\n]*(\d+(?:\.\d+)?)\s*(?:vdc|v)?", text_lower)
+            if not m_vo:
+                m_vo = re.search(r"\b(\d{1,2}(?:\.\d+)?)\s*(?:vdc|v\s+output|v\s+rated)\b", text_lower)
+            if m_vo:
+                v_num = float(m_vo.group(1))
+                v_out = f"{int(v_num)}VDC" if v_num.is_integer() else f"{v_num}VDC"
+        if v_out:
+            specs["voltage_output"] = v_out
+            specs["voltage_adapter_output"] = v_out
+
+        # Output Current
+        i_out = specs.get("current_output") or specs.get("current_adapter_output") or specs.get("current")
+        if not i_out:
+            m_ma = re.search(r"(?:rated\s+output\s+current|output\s+current|输出电流)[^\d\n]*(\d{3,4})\s*(?:ma)?", text_lower)
+            if m_ma:
+                ma_val = float(m_ma.group(1))
+                a_val = ma_val / 1000.0
+                i_out = f"{int(a_val)}A" if a_val.is_integer() else f"{a_val:.1f}A"
+            else:
+                m_a = re.search(r"(?:rated\s+output\s+current|output\s+current|输出电流)[^\d\n]*(\d+(?:\.\d+)?)\s*a\b", text_lower)
+                if not m_a:
+                    m_a = re.search(r"\b(\d+(?:\.\d+)?)\s*a\b", text_lower)
+                if m_a:
+                    a_val = float(m_a.group(1))
+                    i_out = f"{int(a_val)}A" if a_val.is_integer() else f"{a_val:.1f}A"
+        if i_out:
+            specs["current_output"] = i_out
+            specs["current_adapter_output"] = i_out
+
     # Common for ICs and discrete parts: set part number as value
     if material_type in ("OPT", "ICS", "MCU", "TRI", "SCR", "AMP", "FLT", "ICL", "ICM", "ICC", "ICD", "ICB"):
         specs["value_pn"] = part_number.strip()
@@ -2268,6 +2378,7 @@ CORE_ATTRIBUTES_BY_TYPE: dict[str, set[str]] = {
     "ANT": {"mounting", "typeantenna", "q"},
     "BAH": {"mounting", "typebatteryholder", "q"},
     "DSP": {"mounting", "typedisplay", "colordisplayled", "specialdefinitiondisplay", "q"},
+    "ADP": {"typeadaptor", "voltageadapterinput", "voltageadapteroutput", "currentadapteroutput", "serial", "q"},
 }
 
 CARD_OR_INTERFACE_CONNECTORS: set[str] = {
@@ -3186,7 +3297,43 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                         status = "TAM EŞLEŞTİ"
                         break
 
-        # 24. UNIVERSAL SEMANTIC MATCHER
+        # 24. ADAPTER ATTRIBUTES
+        elif "typeadaptor" in attr_norm:
+            ta = specs.get("type_adaptor", "AC/DC Duvar Tipi Adaptör")
+            extracted_val_str = ta
+            for e in entries:
+                if ta.casefold() in e.value_description.casefold():
+                    matched_entry = e
+                    status = "TAM EŞLEŞTİ"
+                    break
+        elif "voltageadapterinput" in attr_norm:
+            vai = specs.get("voltage_adapter_input") or specs.get("voltage_input") or "176 - 264VAC"
+            extracted_val_str = vai
+            for e in entries:
+                if vai.casefold() in e.value_description.casefold() or str(e.value).strip() == "0":
+                    matched_entry = e
+                    status = "TAM EŞLEŞTİ"
+                    break
+        elif "voltageadapteroutput" in attr_norm:
+            vo = specs.get("voltage_adapter_output") or specs.get("voltage_output") or specs.get("voltage")
+            extracted_val_str = str(vo) if vo else ""
+            if vo:
+                for e in entries:
+                    if str(vo).strip().casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+        elif "currentadapteroutput" in attr_norm:
+            io = specs.get("current_adapter_output") or specs.get("current_output") or specs.get("current")
+            extracted_val_str = str(io) if io else ""
+            if io:
+                for e in entries:
+                    if str(io).strip().casefold() in e.value_description.casefold():
+                        matched_entry = e
+                        status = "TAM EŞLEŞTİ"
+                        break
+
+        # 25. UNIVERSAL SEMANTIC MATCHER
         # Grounded semantic matching for any unhandled attribute sort (e.g. Type Display, Color Display LED,
         # Special Definition - Display, or future attributes not caught by dedicated branches)
         if not matched_entry and attr_norm not in ("mounting", "package", "value", "voltage", "tolerance", "q"):
@@ -3508,6 +3655,20 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
             return f"{base_desc},  {mfr}" if base_desc else mfr
         return base_desc
 
+    elif material_type == "ADP":
+        # e.g.: AC/DC Duvar Tipi Adaptör, 12VDC, 2A, SIMSUKIAN
+        t_adp = specs.get("type_adaptor", "AC/DC Duvar Tipi Adaptör")
+        tokens = [t_adp]
+        vo = specs.get("voltage_output") or specs.get("voltage_adapter_output") or specs.get("voltage")
+        if vo:
+            tokens.append(str(vo))
+        io = specs.get("current_output") or specs.get("current_adapter_output") or specs.get("current")
+        if io:
+            tokens.append(str(io))
+        if mfr:
+            tokens.append(mfr)
+        return ", ".join(tokens)
+
     # General fallback
     mat_name = MATERIAL_TYPE_NAMES.get(material_type, material_type)
     tokens = [mat_name]
@@ -3531,6 +3692,7 @@ CRITICAL_SPECS_BY_MATERIAL_TYPE: dict[str, tuple[str, ...]] = {
     "FUS": ("current", "voltage"),
     "REL": ("coil_voltage", "contact_current"),
     "SWI": ("type_switch",),
+    "ADP": ("voltage_output", "current_output", "voltage_adapter_output", "current_adapter_output", "type_adaptor"),
 }
 
 
@@ -3624,6 +3786,8 @@ def analyze_datasheet(
         pn_has_core = True
     elif mat_type == "DSP" and pn_specs.get("digits") and pn_specs.get("polarity"):
         pn_has_core = True
+    elif mat_type == "ADP" and pn_specs.get("voltage_adapter_output") and pn_specs.get("current_adapter_output"):
+        pn_has_core = True
     elif mat_type in ("DIO", "FET", "TRA", "ICR", "ICS", "MCU", "BUZ", "BAH", "VAR") and bool(pn_specs.get("package")) and bool(pn_specs.get("manufacturer")):
         pn_has_core = True
 
@@ -3647,15 +3811,21 @@ def analyze_datasheet(
             is_catalog = False
     detected_mpns = extract_part_numbers_from_text(text)
 
-    # If user didn't enter a manual override, and text has a single unique genuine MPN
-    if is_catalog and not part_number and len(detected_mpns) == 1:
-        pn = detected_mpns[0]
-        is_catalog = False
-        if not pn_specs:
+    # If user didn't enter a manual override, or name is a catalog/generic document name, and text has detected MPNs
+    if (is_catalog or not part_number) and detected_mpns:
+        valid_mpns = [m for m in detected_mpns if not is_catalog_document_name(m)]
+        if valid_mpns:
+            # Pick the most prominent genuine MPN in text (highest occurrence, then length)
+            best_mpn = max(valid_mpns, key=lambda m: (text.count(m), len(m)))
+            pn = best_mpn
+            is_catalog = False
             try:
-                pn_specs = decode_manufacturer_pn(pn) or {}
+                new_specs = decode_manufacturer_pn(pn) or {}
+                for k, v in new_specs.items():
+                    if k not in pn_specs or not pn_specs[k]:
+                        pn_specs[k] = v
             except Exception:
-                pn_specs = {}
+                pass
 
     # 4. Material Type Classification (fallback to document text if still unknown)
     if mat_type == "BİLİNMİYOR":
@@ -3673,6 +3843,10 @@ def analyze_datasheet(
                 mat_type = "CON"
                 conf = 0.90
                 reason = "Parça numarası kod çözümünden konnektör olarak tespit edildi."
+            elif "voltage_adapter_output" in pn_specs or "current_adapter_output" in pn_specs or "type_adaptor" in pn_specs:
+                mat_type = "ADP"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden adaptör olarak tespit edildi (ADP)."
 
     # Re-check pn_has_core if PN was discovered from text
     if mat_type == "RES" and pn_specs.get("resistance_str") and pn_specs.get("package"):
@@ -3682,6 +3856,8 @@ def analyze_datasheet(
     elif mat_type == "CON" and pn_specs.get("pitch") and pn_specs.get("pin_number"):
         pn_has_core = True
     elif mat_type == "DSP" and pn_specs.get("digits") and pn_specs.get("polarity"):
+        pn_has_core = True
+    elif mat_type == "ADP" and pn_specs.get("voltage_adapter_output") and pn_specs.get("current_adapter_output"):
         pn_has_core = True
     elif mat_type in ("DIO", "FET", "TRA", "ICR", "ICS", "MCU", "BUZ", "BAH", "VAR") and bool(pn_specs.get("package")) and bool(pn_specs.get("manufacturer")):
         pn_has_core = True
