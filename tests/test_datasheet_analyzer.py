@@ -1655,4 +1655,52 @@ def test_molex_sim_card_connector_detection_and_erp_mapping(rulebook):
     assert result.rich_description == "SMD SIM Card, Push-Push, 8 pin, 90°(Yatık), Molex"
 
 
+def test_keyword_context_guards_prevent_false_positives():
+    from bom_enricher.datasheet_analyzer import classify_material_type, extract_component_specs
+
+    # 1. Step-down SMPS converter mentions 'switches', 'housing', 'header', 'fuse protection' -> ICS, not SWT/CON/FUS
+    smps_text = (
+        "--- PAGE 1 ---\n"
+        "MP2307 3A, 23V, 340kHz Synchronous Rectified Step-Down Converter\n"
+        "DESCRIPTION\n"
+        "The MP2307 integrates internal power switches to achieve high efficiency. "
+        "The thermal housing provides low thermal resistance. "
+        "Features internal fuse protection on input line and table header layout."
+    )
+    mat_type, conf, _ = classify_material_type(smps_text, part_number="MP2307DN")
+    assert mat_type == "ICS"
+
+    # 2. Resistor mentioning 'gate array' does not become 'Resistor Array'
+    res_text = "Thick film chip resistor designed for connection to microcontroller gate array."
+    res_specs = extract_component_specs("RES", res_text, "RC0805JR-0710KL")
+    assert res_specs.get("composition") != "Resistor Array"
+    assert res_specs.get("composition") == "Thick Film"
+
+    # 3. SMD Buzzer mentioning 'Pin 1' and 'Pin 2' does not become TH
+    buz_text = "SMD Magnetic Buzzer 3V. Surface mount reflow soldering. Pin 1 (+), Pin 2 (-)."
+    buz_specs = extract_component_specs("BUZ", buz_text, "HNB09A03")
+    assert buz_specs.get("mounting") == "SMD"
+
+    # 4. Battery holder with 'clean contact surface' does not falsely become SMD
+    bah_text = "Through hole coin cell battery holder for CR2032. Clean contact surface with dry cloth."
+    bah_specs = extract_component_specs("BAH", bah_text, "BH-2032-1")
+    assert bah_specs.get("mounting") == "TH"
+
+    # 5. Transformer with 'Isolation voltage 3000V' does not falsely become Isolation Transformer
+    trf_text = "Flyback SMPS Transformer for offline converters. 3000V isolation voltage test."
+    trf_specs = extract_component_specs("TRF", trf_text, "TRF-FLY-01")
+    assert trf_specs.get("type_transformer") == "SMPS Transformer"
+
+    # 6. Switch with 'push-pull output' or 'pushing force' does not falsely become Push Button
+    swt_text = "Slide switch with 2 positions. Pushing force is 250gf."
+    swt_specs = extract_component_specs("SWT", swt_text, "SS-12D00")
+    assert swt_specs.get("type_switch") == "Slide Switch"
+
+    # 7. Connector with 'table header' does not falsely override Box Header
+    con_text = "Box header connector 2.54mm pitch, 10 pin. See table header for pin assignments."
+    con_specs = extract_component_specs("CON", con_text, "BH-10P")
+    assert con_specs.get("type_connector") == "Box Header"
+
+
+
 

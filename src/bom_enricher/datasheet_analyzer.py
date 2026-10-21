@@ -410,7 +410,7 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
     # CRYSTAL / OSCILLATOR
     ("CRY", r"\b(?:(?:surface\s+mount\s+)?(?:microprocessor\s+)?crystals?|quartz\s+crystals?|crystal\s+units?|crystal\s+oscillators?|ceramic\s+resonators?|tcxo|vcxo|ocxo)\b", "Kristal / Osilatör (CRY)"),
     # SWITCH
-    ("SWT", r"\b(?:tactile\s+switch|tact\s+switch|push\s+button\s+switch|dip\s+switch|slide\s+switch|rocker\s+switch|toggle\s+switch|rotary\s+switch|switches?)\b", "Anahtar / Switch (SWT)"),
+    ("SWT", r"\b(?:tactile\s+switch(?:es)?|tact\s+switch(?:es)?|push[\s-]button\s+switch(?:es)?|dip\s+switch(?:es)?|slide\s+switch(?:es)?|rocker\s+switch(?:es)?|toggle\s+switch(?:es)?|rotary\s+switch(?:es)?|micro\s+switch(?:es)?|limit\s+switch(?:es)?|reed\s+switch(?:es)?|electromechanical\s+switches?)\b", "Anahtar / Switch (SWT)"),
     # FERRITE BEAD
     ("FER", r"\b(?:ferrite\s+bead|ferrite\s+chip\s+bead|chip\s+bead)\b", "Ferrit Boncuk (FER)"),
     # POTENTIOMETER
@@ -426,7 +426,7 @@ COVER_TITLE_PATTERNS: list[tuple[str, str, str]] = [
     # LED
     ("LED", r"\b(?:surface\s+mount\s+led|light\s+emitting\s+diode|chip\s+led|smd\s+led)\b", "LED"),
     # CONNECTOR
-    ("CON", r"\b(?:wire-to-board|board-to-board|pin\s+header|terminal\s+block|receptacle\s+housing|pcb\s+connector|crimp\s+housing|wafer\s+connector|box\s+header)\b", "Konnektör (CON)"),
+    ("CON", r"\b(?:wire-to-board|board-to-board|wire-to-wire|pin\s+header|terminal\s+block|receptacle\s+housing|pcb\s+connector|crimp\s+housing|wafer\s+connector|box\s+header|sim\s+card\s+(?:holder|connector|socket)|memory\s+card\s+connector|microsd\s+connector|modular\s+jack|usb\s+(?:type[- ]c|connector|receptacle)|d-sub\s+connector)\b", "Konnektör (CON)"),
     # ANTENNA
     ("ANT", r"\b(?:triple\s+band\s+(?:embedded\s+)?antenna|embedded\s+antenna|chip\s+antenna|pcb\s+antenna|rf\s+antenna|wifi\s+antenna|patch\s+antenna|dipole\s+antenna|antennas?)\b", "Anten (ANT)"),
     # DISPLAY
@@ -602,7 +602,7 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
 
     # Connector
     if not re.search(r"\b(?:antenna|relay|transformer|optocoupler)\b", cover_lower):
-        _score("CON", r"\b(?:connector|header|housing|crimp|terminal\s+block|wire-to-board)\b", 15.0)
+        _score("CON", r"\b(?:connectors?|pin\s+header|box\s+header|pcb\s+header|receptacle\s+housing|crimp\s+housing|crimp\s+terminal|terminal\s+block|wire-to-board|board-to-board|wire-to-wire|sim\s+card|microsd|memory\s+card|modular\s+jack|rj45|d-sub)\b", 15.0)
         if any(w in text_lower for w in ("molex", "jst", "phoenix contact", "wago", "ttaf", "amtek")):
             scores["CON"] += 12.0
 
@@ -610,10 +610,10 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     _score("ANT", r"\b(?:antennas?|vswr|gain\s*(?:dbi)?|radiation\s+pattern|rf\s+data|peak\s+gain|average\s+gain|feed\s+point|polarization|triple\s+band)\b", 18.0)
 
     # Relay
-    _score("REL", r"\b(?:relay|contact\s+rating|coil\s+voltage|spst|spdt)\b", 15.0)
+    _score("REL", r"\b(?:power\s+relay|miniature\s+relay|signal\s+relay|solid\s+state\s+relay|pcb\s+relay|relays?(?!\s+driver)|contact\s+rating|coil\s+voltage|spst|spdt)\b", 15.0)
 
     # Fuse
-    _score("FUS", r"\b(?:resettable\s+fuse|ptc\s+fuse|tripping\s+current|hold\s+current|fuse)\b", 15.0)
+    _score("FUS", r"\b(?:resettable\s+fuse|ptc\s+fuse|tripping\s+current|hold\s+current|cartridge\s+fuse|thermal\s+fuse|smd\s+fuse|fuses?(?!\s+(?:bits?|config|setting|registers?|bytes?)))\b", 15.0)
 
     # Varistor
     _score("VAR", r"\b(?:varistors?|metal\s+oxide\s+varistors?|siov|clamping\s+voltage|max\s+continuous\s+voltage)\b", 18.0)
@@ -625,13 +625,13 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     _score("CRY", r"\b(?:quartz\s+crystal|crystal\s+unit|crystal\s+oscillator|ceramic\s+resonator|crystals?|resonators?|frequency\s+tolerance|load\s+capacitance)\b", 15.0)
 
     # Switch
-    _score("SWT", r"\b(?:tactile\s+switch|tact\s+switch|push\s+button|slide\s+switch|dip\s+switch)\b", 15.0)
+    _score("SWT", r"\b(?:tactile\s+switch(?:es)?|tact\s+switch(?:es)?|push[\s-]button\s+switch(?:es)?|push[\s-]button|slide\s+switch(?:es)?|dip\s+switch(?:es)?|rocker\s+switch(?:es)?|toggle\s+switch(?:es)?)\b", 15.0)
 
     # Ferrite Bead
     _score("FER", r"\b(?:ferrite\s+bead|ferrite\s+chip|impedance\s+at\s+100mhz)\b", 15.0)
 
     # Potentiometer
-    _score("POT", r"\b(?:potentiometer|trimmer|trimpot|single\s+turn|multi\s+turn)\b", 15.0)
+    _score("POT", r"\b(?:potentiometers?|trimmer\s+potentiometer|trimpot|single\s+turn\s+potentiometer|multi\s+turn\s+potentiometer)\b", 15.0)
 
     # Buzzer
     _score("BUZ", r"\b(?:piezo\s+buzzer|magnetic\s+buzzer|active\s+buzzer|electromagnetic\s+buzzer|buzzers?|sound\s+pressure\s+level|resonant\s+frequency|oscillation\s+frequency|sound\s+output|蜂鸣器)\b", 18.0)
@@ -640,7 +640,7 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     _score("BAH", r"\b(?:battery\s+(?:holder|clip|retainer|contact)|coin\s+cell\s+(?:holder|retainer)|pil\s+(?:yuvası|tutucu|klipsi))\b", 18.0)
 
     # Transformer
-    _score("TRF", r"\b(?:transformer|turns\s+ratio|primary\s+inductance|isolation\s+voltage)\b", 15.0)
+    _score("TRF", r"\b(?:transformers?|turns\s+ratio|primary\s+inductance|flyback\s+transformer|pulse\s+transformer|isolation\s+transformer)\b", 15.0)
 
     # Amplifier
     _score("AMP", r"\b(?:operational\s+amplifier|op\s+amp|gain\s+bandwidth|slew\s+rate)\b", 15.0)
@@ -1369,13 +1369,13 @@ def extract_component_specs(
     # Mounting
     if "mounting" not in specs:
         if material_type == "CON":
-            if any(k in text_lower for k in ("smd", "smt", "surface mount")):
+            if re.search(r"\b(?:surface[\s-]mount|smd|smt)\b", text_lower):
                 specs["mounting"] = "SMD"
             else:
                 specs["mounting"] = "TH"
-        elif any(k in text_lower for k in ("through hole", "through-hole", "tht", "dip", "radial", "leaded", "wave soldering", "terminal pins")):
+        elif re.search(r"\b(?:through[\s-]hole|tht|dip|radial|leaded|wave\s+soldering|terminal\s+pins)\b", text_lower):
             specs["mounting"] = "TH"
-        elif any(k in text_lower for k in ("smd", "smt", "surface mount", "chip")):
+        elif re.search(r"\b(?:surface[\s-]mount|smd|smt|chip\s+(?:resistor|capacitor|inductor|fuse))\b", text_lower):
             specs["mounting"] = "SMD"
         else:
             specs["mounting"] = "SMD"  # standard default for modern electronic parts
@@ -1393,17 +1393,17 @@ def extract_component_specs(
                 specs["package"] = "0603"
             elif "1005" in text and "0402" in text:
                 specs["package"] = "0402"
-            elif "sot-23" in text_lower or "sot23" in text_lower:
+            elif re.search(r"\b(?:sot-?23)\b", text_lower):
                 specs["package"] = "SOT-23"
-            elif "sod-123" in text_lower or "sod123" in text_lower:
+            elif re.search(r"\b(?:sod-?123)\b", text_lower):
                 specs["package"] = "SOD-123"
             elif re.search(r"\b(?:sma|do-214ac)\b", text_lower):
                 specs["package"] = "SMA"
             elif re.search(r"\b(?:smb|do-214aa)\b", text_lower):
                 specs["package"] = "SMB"
-            elif "to-220" in text_lower:
+            elif re.search(r"\b(?:to-?220)\b", text_lower):
                 specs["package"] = "TO-220"
-            elif "to-92" in text_lower:
+            elif re.search(r"\b(?:to-?92)\b", text_lower):
                 specs["package"] = "TO-92"
 
     # Manufacturer: document text is authoritative when an explicit manufacturer is mentioned
@@ -1481,7 +1481,7 @@ def extract_component_specs(
                 specs["composition"] = "Carbon Film"
             elif "wirewound" in text_lower:
                 specs["composition"] = "Wirewound"
-            elif "resistor array" in text_lower or "array" in text_lower:
+            elif re.search(r"\b(?:resistor\s+array|chip\s+resistor\s+array|resistor\s+network)\b", text_lower):
                 specs["composition"] = "Resistor Array"
             else:
                 specs["composition"] = "Thick Film" if specs.get("mounting") == "SMD" else "General"
@@ -1608,9 +1608,9 @@ def extract_component_specs(
 
         # Diode Mounting
         if "mounting" not in specs:
-            if any(k in text_lower for k in ("smd", "surface mount", "sod", "sot", "sma", "smb", "smc")):
+            if re.search(r"\b(?:surface[\s-]mount|smd|smt|sod-?\d+|sot-?\d+|sma|smb|smc)\b", text_lower):
                 specs["mounting"] = "SMD"
-            elif any(k in text_lower for k in ("through hole", "tht", "do-15", "do-41", "leaded")):
+            elif re.search(r"\b(?:through[\s-]hole|tht|do-15|do-41|leaded)\b", text_lower):
                 specs["mounting"] = "TH"
 
         # Automotive AEC-Q101 qualification
@@ -1686,9 +1686,13 @@ def extract_component_specs(
                 specs["type_connector"] = "Wire to Wire Kilitli Konnektör" if is_locked else "Wire to Wire Konnektör"
             elif any(k in text_lower for k in ("board to board", "board-to-board")):
                 specs["type_connector"] = "Board to Board Konnektör"
-            elif "terminal block" in text_lower or "klemens" in text_lower:
+            elif re.search(r"\b(?:terminal\s+block|klemens|screw\s+terminal)\b", text_lower):
                 specs["type_connector"] = "PCB Klemens"
-            elif any(k in text_lower for k in ("pin header", "header")):
+            elif re.search(r"\b(?:box\s+header)\b", text_lower):
+                specs["type_connector"] = "Box Header"
+            elif re.search(r"\b(?:pin\s+header|male\s+header|breakaway\s+header|pcb\s+header|shrouded\s+header)\b", text_lower):
+                specs["type_connector"] = "Pin Header"
+            elif re.search(r"\bheaders?\b", text_lower) and not any(h in text_lower for h in ("table header", "column header", "row header", "page header")):
                 specs["type_connector"] = "Pin Header"
         elif is_locked:
             if specs.get("type_connector") == "Wire to Board Konnektör":
@@ -1771,9 +1775,9 @@ def extract_component_specs(
 
         # Angle
         if "angle" not in specs:
-            if any(k in text_lower for k in ("right angle", "90 deg", "90°", "horizontal", "yatık")):
+            if re.search(r"\b(?:right[\s-]angle|90\s*deg(?:rees)?|90°|horizontal|yatık)\b", text_lower):
                 specs["angle"] = "90°(Yatık)"
-            elif any(k in text_lower for k in ("vertical", "straight", "180 deg", "180°", "dik")):
+            elif re.search(r"\b(?:vertical|straight|180\s*deg(?:rees)?|180°|dik)\b", text_lower):
                 specs["angle"] = "180°(Dik)"
             elif specs.get("type_connector") in ("SIM Card", "MicroSIM Card", "MicroSD Card", "Memory Connectors") or any(k in text_lower for k in ("card entry location: front", "card entry: front", "push-push", "push-pull")):
                 specs["angle"] = "90°(Yatık)"
@@ -1943,7 +1947,7 @@ def extract_component_specs(
                 specs["package"] = "4-SMD"
             elif any(k in text_lower for k in ("hc-49/smd", "hc-49smd", "hc-49s/smd", "hc-49us/smd")):
                 specs["package"] = "HC-49/SMD"
-            elif any(k in text_lower for k in ("2-smd", "2 smd", "2-pad", "2 pad")) or re.search(r"\b2\s*pins?\b", text_lower):
+            elif any(k in text_lower for k in ("2-smd", "2 smd", "2-pad", "2 pad")) or re.search(r"\b2[- ](?:pad|smd|pin|lead)s?\b", text_lower):
                 specs["package"] = "2-SMD"
             elif any(k in text_lower for k in ("hc-49/u", "hc-49u", "hc-49s", "hc-49us")):
                 specs["package"] = "HC-49/SMD" if specs.get("mounting") == "SMD" else "HC-49/U"
@@ -1952,9 +1956,9 @@ def extract_component_specs(
         if str(specs.get("package", "")).endswith("SMD"):
             specs.setdefault("mounting", "SMD")
         if "mounting" not in specs or specs["mounting"] != "SMD":
-            if any(k in text_lower for k in ("surface mount", "smd", "smt")):
+            if re.search(r"\b(?:surface[\s-]mount|smd|smt)\b", text_lower):
                 specs["mounting"] = "SMD"
-            elif any(k in text_lower for k in ("through hole", "through-hole", "tht")):
+            elif re.search(r"\b(?:through[\s-]hole|tht)\b", text_lower):
                 specs["mounting"] = "TH"
 
         # Manufacturer
@@ -1970,9 +1974,9 @@ def extract_component_specs(
                 specs["resistance_str"] = _format_res(res_dec)
         # Turns
         if "pot_turns" not in specs:
-            if any(k in text_lower for k in ("multi", "10 turn", "10 tur", "10-turn")):
+            if re.search(r"\b(?:multi[\s-]turns?|multiturn|\d+[\s-]turns?)\b", text_lower):
                 specs["pot_turns"] = "Multi"
-            elif "slide" in text_lower:
+            elif re.search(r"\b(?:slide\s+potentiometer|slider)\b", text_lower):
                 specs["pot_turns"] = "Slide"
             else:
                 specs["pot_turns"] = "1 Tur"
@@ -2004,16 +2008,20 @@ def extract_component_specs(
 
     elif material_type == "SWT":
         if "type_switch" not in specs:
-            if any(k in text_lower for k in ("tact", "tactile")):
+            if re.search(r"\b(?:tactile\s+switch|tact\s+switch|tactile|tact)\b", text_lower):
                 specs["type_switch"] = "Tact Switch"
-            elif "push" in text_lower:
+            elif re.search(r"\b(?:push[\s-]button|pushbutton)\b", text_lower):
                 specs["type_switch"] = "Push Button"
-            elif "slide" in text_lower:
+            elif re.search(r"\b(?:slide\s+switch)\b", text_lower):
                 specs["type_switch"] = "Slide Switch"
-            elif "toggle" in text_lower:
+            elif re.search(r"\b(?:toggle\s+switch)\b", text_lower):
                 specs["type_switch"] = "Toggle Switch"
-            elif "dip" in text_lower:
+            elif re.search(r"\b(?:dip\s+switch)\b", text_lower):
                 specs["type_switch"] = "DIP Switch"
+            elif re.search(r"\b(?:rocker\s+switch)\b", text_lower):
+                specs["type_switch"] = "Rocker Switch"
+            elif re.search(r"\b(?:rotary\s+switch)\b", text_lower):
+                specs["type_switch"] = "Rotary Switch"
 
     elif material_type == "FER":
         if "ferrite_type" not in specs:
@@ -2089,33 +2097,33 @@ def extract_component_specs(
 
         # Mounting
         if "mounting" not in specs:
-            if any(k in text_lower for k in ("pin", "pins", "wave soldering", "through hole", "tht")):
-                specs["mounting"] = "TH"
-            elif any(k in text_lower for k in ("smd", "smt", "reflow", "surface mount", "reel")):
+            if re.search(r"\b(?:surface[\s-]mount|smd|smt|reflow)\b", text_lower):
                 specs["mounting"] = "SMD"
+            elif re.search(r"\b(?:through[\s-]hole|tht|pin\s+type|wave\s+soldering|dip)\b", text_lower):
+                specs["mounting"] = "TH"
 
     elif material_type == "BAH":
         if "type_battery_holder" not in specs:
-            if "l-kls5-sp" in pn.lower() or "clip" in text_lower or "retainer" in text_lower:
+            if "l-kls5-sp" in pn.lower() or re.search(r"\b(?:coin\s+cell\s+retainer|battery\s+retainer|clip|retainer)\b", text_lower):
                 specs["type_battery_holder"] = "Coin Cell Retainer"
-            elif "holder" in text_lower or "yuvası" in text_lower:
+            elif re.search(r"\b(?:battery\s+holder|coin\s+cell\s+holder|cr2032|cr2025|pil\s+yuvası)\b", text_lower):
                 specs["type_battery_holder"] = "CR2032 Pil Yuvası"
             else:
                 specs["type_battery_holder"] = "Pil Tutucu"
         if "mounting" not in specs:
-            specs["mounting"] = "SMD" if "smd" in text_lower or "surface" in text_lower or "l-kls5" in pn.lower() else "TH"
+            specs["mounting"] = "SMD" if ("l-kls5" in pn.lower() or re.search(r"\b(?:surface[\s-]mount|smd|smt)\b", text_lower)) else "TH"
         if "manufacturer" not in specs:
-            if "kls" in pn.lower() or "kls" in text_lower:
+            if "kls" in pn.lower() or re.search(r"\bkls\b", text_lower):
                 specs["manufacturer"] = "Kls"
                 specs["manufacturer_code"] = "KL"
 
     elif material_type == "TRF":
         if "type_transformer" not in specs:
-            if "isolation" in text_lower:
+            if re.search(r"\b(?:isolation\s+transformer)\b", text_lower):
                 specs["type_transformer"] = "Isolation Transformer"
-            elif "smps" in text_lower:
+            elif re.search(r"\b(?:smps\s+transformer|switch[\s-]mode\s+transformer)\b", text_lower):
                 specs["type_transformer"] = "SMPS Transformer"
-            elif "choke" in text_lower:
+            elif re.search(r"\b(?:common\s+mode\s+choke|power\s+choke|choke\s+coil)\b", text_lower):
                 specs["type_transformer"] = "Choke Coil"
             else:
                 specs["type_transformer"] = "Standard Transformer"
@@ -2144,9 +2152,9 @@ def extract_component_specs(
             specs["protocol"] = "Cellular"
 
         # Type Antenna: 1:Chip, 2:Wire, 3:RF
-        if "chip" in text_lower:
+        if re.search(r"\b(?:chip\s+antenna|dielectric\s+chip|ceramic\s+chip\s+antenna)\b", text_lower):
             specs["type_antenna"] = "Chip"
-        elif "wire" in text_lower:
+        elif re.search(r"\b(?:wire\s+antenna|monopole\s+wire)\b", text_lower):
             specs["type_antenna"] = "Wire"
         else:
             specs["type_antenna"] = "RF"
@@ -2154,7 +2162,7 @@ def extract_component_specs(
     elif material_type == "DSP":
         # Mounting: SMD or TH
         if "mounting" not in specs:
-            specs["mounting"] = "SMD" if any(k in text_lower for k in ("smd", "surface mount", "smt")) else "TH"
+            specs["mounting"] = "SMD" if re.search(r"\b(?:surface[\s-]mount|smd|smt)\b", text_lower) else "TH"
 
         # Type Display
         if "type_display" not in specs:
@@ -3728,7 +3736,7 @@ def analyze_datasheet(
     is_text_empty = len(clean_text) == 0
     are_critical_missing = is_critical_spec_missing(mat_type, specs, is_text_empty)
     is_complex_or_ambiguous = (
-        mat_type in ("CON", "ICR", "ICS", "BİLİNMİYOR")
+        mat_type in ("CON", "ICR", "ICS", "SWT", "REL", "TRF", "BİLİNMİYOR")
         or any(k in clean_text.casefold() for k in ("detect pin", "detection switch", "sim card", "microsd", "memory card"))
         or conf < 0.95
     )
