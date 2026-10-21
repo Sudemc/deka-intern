@@ -313,7 +313,7 @@ def test_decode_ttaf_connector_200g1_04r(rulebook):
 
     mappings, desc, code = map_specs_to_erp(rulebook, "CON", specs)
     assert desc == "TH Wire to Board Konnektör, Erkek, 2mm, 4 pin, 90°(Yatık), Ttaf"
-    assert code == "CONTADAB410000XX-TT"
+    assert code == "CONTADAB0410000XX-TT"
     assert len(mappings) == 8
 
 
@@ -351,7 +351,7 @@ def test_exact_pitch_and_pin_number_matching(rulebook):
     assert pitch_m.erp_code == "B"
     pin_m = next(m for m in mappings if m.attribute_name == "Pin Number")
     assert pin_m.matched_erp_value == "4 pin,"
-    assert pin_m.erp_code == "4"
+    assert pin_m.erp_code == "04"
 
 
 def test_yageo_ac0603fr_07255kl_automotive_resistor(rulebook):
@@ -1477,7 +1477,7 @@ def test_molex_connector_gender_and_picoflex_decoding(rulebook):
 
     # 2. Test ERP Mapping and Descriptions
     mappings, desc, code = map_specs_to_erp(rulebook, "CON", specs)
-    assert code == "CONTADAO420000XX-MO"
+    assert code == "CONTADAO0420000XX-MO"
     assert desc == "TH Wire to Board Konnektör, Erkek, 1.27mm, 4 pin, 180°(Dik), Molex"
 
     rich_desc = build_rich_description("CON", specs, "")
@@ -1486,7 +1486,7 @@ def test_molex_connector_gender_and_picoflex_decoding(rulebook):
     # 3. Test with injected serial counter
     specs_injected = {**specs, "serial_counter": "0315"}
     _, _, code_injected = map_specs_to_erp(rulebook, "CON", specs_injected)
-    assert code_injected == "CONTADAO420315-MO"
+    assert code_injected == "CONTADAO0420315-MO"
 
     # 4. Test Molex DuraClik 5023520200
     dc_specs = decode_manufacturer_pn("5023520200")
@@ -1518,9 +1518,73 @@ def test_connector_pdf_mating_receptacle_does_not_override_male_header(rulebook)
     codes_by_attr = {p.attribute_name: p.erp_code for p in result.properties}
     assert codes_by_attr["Pin Type of Connector"] == "A"
     assert codes_by_attr["Pitch Connector"] == "O"
-    assert codes_by_attr["Pin Number"] == "4"
+    assert codes_by_attr["Pin Number"] == "04"
     assert codes_by_attr["Mounting"] == "T"
-    assert result.suggested_erp_code == "CONTADAO420000XX-MO"
+    assert result.suggested_erp_code == "CONTADAO0420000XX-MO"
     assert result.suggested_description == "TH Wire to Board Konnektör, Erkek, 1.27mm, 4 pin, 180°(Dik), Molex"
     assert result.rich_description == "TH Wire to Board Konnektör, Erkek, 1.27mm, 4 pin, 180°(Dik), Molex"
+
+
+def test_molex_minifit_jr_locking_connector_and_2digit_pin(rulebook):
+    from bom_enricher.datasheet_analyzer import decode_manufacturer_pn, map_specs_to_erp, build_rich_description
+
+    # 1. Test PN Decoder for 39281023 (5566-02A)
+    specs = decode_manufacturer_pn("39281023")
+    assert specs["manufacturer"] == "Molex"
+    assert specs["pitch"] == "4.2mm"
+    assert specs["pin_number"] == "2 pin"
+    assert specs["type_connector"] == "Wire to Board Kilitli Konnektör"
+    assert specs["pin_type"] == "Erkek"
+    assert specs["mounting"] == "TH"
+    assert specs["angle"] == "180°(Dik)"
+
+    # 2. Test ERP Mapping: CON + T + AE + A + 3 + 02 + 2 + 0000XX + -MO -> CONTAEA30220000XX-MO
+    mappings, desc, erp_code = map_specs_to_erp(rulebook, "CON", specs)
+    assert erp_code == "CONTAEA30220000XX-MO"
+    assert desc == "TH Wire to Board Kilitli Konnektör, Erkek, 4.2mm, 2 pin, 180°(Dik), Molex"
+
+    codes_by_attr = {m.attribute_name: m.erp_code for m in mappings}
+    assert codes_by_attr["Type Connector"] == "AE"
+    assert codes_by_attr["Pitch Connector"] == "3"
+    assert codes_by_attr["Pin Number"] == "02"
+    assert codes_by_attr["Angle"] == "2"
+
+    # 3. Test with serial counter 0007 injected -> CONTAEA30220007-MO
+    specs_injected = {**specs, "serial_counter": "0007"}
+    _, _, erp_code_injected = map_specs_to_erp(rulebook, "CON", specs_injected)
+    assert erp_code_injected == "CONTAEA30220007-MO"
+
+    # 4. Test rich description
+    rich_desc = build_rich_description("CON", specs, "")
+    assert rich_desc == "TH Wire to Board Kilitli Konnektör, Erkek, 4.2mm, 2 pin, 180°(Dik), Molex"
+
+    # 5. Test PDF extraction with locking text
+    pdf_bytes = _create_sample_pdf(
+        "Mini-Fit Jr. Header, Dual Row, Vertical, with Snap-in Plastic Peg PCB Lock, 2 Circuits",
+        "39-28-1023",
+        [
+            "Overview: Mini-Fit Jr. Power Connectors",
+            "Product Name: Mini-Fit Jr.",
+            "Circuits: 2",
+            "Color - Resin: Natural",
+            "Durability (cycles max): 30",
+            "Flammability: 94V-2",
+            "Glow-Wire Capable: No",
+            "Lock to Mating Part: Yes",
+            "Material - Metal: Brass",
+            "Material - Plating Mating: Tin",
+            "Orientation: Vertical",
+            "PCB Locator: Yes",
+            "PCB Retention: Yes",
+            "Pitch - Mating Interface: 4.20mm",
+            "Termination Interface Style: Through Hole",
+        ],
+    )
+    result = analyze_single_datasheet("39281023.pdf", pdf_bytes, rulebook, part_number_override="39281023")
+    assert result.material_type == "CON"
+    pdf_codes = {p.attribute_name: p.erp_code for p in result.properties}
+    assert pdf_codes["Type Connector"] == "AE"
+    assert result.suggested_erp_code == "CONTAEA30220000XX-MO"
+    assert result.suggested_description == "TH Wire to Board Kilitli Konnektör, Erkek, 4.2mm, 2 pin, 180°(Dik), Molex"
+
 

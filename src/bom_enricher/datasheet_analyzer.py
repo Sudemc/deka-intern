@@ -291,6 +291,9 @@ def is_catalog_document_name(name: str) -> bool:
 
     # 2. Distributor numeric document IDs (e.g. 6-8 digit PDF codes from DigiKey/Mouser)
     if re.fullmatch(r"\d{6,8}", clean):
+        # Real manufacturer numeric part numbers (e.g. Molex 39xxxxxx, 22xxxxxx, 10xxxxxx, 43xxxxxx) are specific MPNs, not catalog documents
+        if re.match(r"^(?:39|22|10|43)\d{6}$", clean):
+            return False
         return True
 
     # 3. Contains series/catalog indicator keywords
@@ -996,6 +999,31 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
         specs["angle"] = "90°(Yatık)"
         return specs
 
+    # Molex Mini-Fit Jr.: e.g. 39-28-1023, 39281023, 039281023, 5566-02A, 556602A, 39-30-1020, 39301020
+    molex_mf = re.match(r"^(?:0)?(39[-_]?28|39[-_]?29|39[-_]?30)[-_]?\d?(\d{2})\d$", pn)
+    if not molex_mf:
+        molex_mf_alt = re.match(r"^(5566|5569)[-_]?(\d{2})[A-Za-z0-9]*$", pn)
+        if molex_mf_alt:
+            series_num, c_str = molex_mf_alt.groups()
+            series_code = "3928" if series_num == "5566" else "3930"
+            circuits = int(c_str)
+        else:
+            series_code, circuits = None, None
+    else:
+        s_raw, c_str = molex_mf.groups()
+        series_code = s_raw.replace("-", "").replace("_", "")
+        circuits = int(c_str)
+
+    if series_code and circuits:
+        specs["manufacturer"] = "Molex"
+        specs["pitch"] = "4.2mm"
+        specs["pin_number"] = f"{circuits} pin"
+        specs["type_connector"] = "Wire to Board Kilitli Konnektör"
+        specs["pin_type"] = "Erkek"
+        specs["mounting"] = "TH"
+        specs["angle"] = "90°(Yatık)" if series_code == "3930" else "180°(Dik)"
+        return specs
+
     # 8. JST Connectors: e.g. B4B-XH-A, S4B-XH-A, XHP-4, B4B-PH-K-S, S4B-PH-K-S, PHR-4
     jst_hdr = re.match(r"^([BS])(\d+)B-(XH|PH|VH|EH)", pn)
     if jst_hdr:
@@ -1595,13 +1623,26 @@ def extract_component_specs(
 
     elif material_type == "CON":
         # Connector Type
+        is_locked = bool(re.search(
+            r"\b(?:lock\s+to\s+mating\s+part[:\s=]+yes|positive\s+(?:lock|latch)(?:ing)?|"
+            r"with\s+(?:positive\s+)?lock|friction\s+lock|locking\s+(?:latch|header|connector)|"
+            r"latching|kilitli|mini-fit|micro-fit|duraclik)\b",
+            text_lower,
+        ))
         if "type_connector" not in specs:
             if any(k in text_lower for k in ("wire to board", "wire-to-board", "crimp housing", "housing")):
-                specs["type_connector"] = "Wire to Board Konnektör"
+                specs["type_connector"] = "Wire to Board Kilitli Konnektör" if is_locked else "Wire to Board Konnektör"
+            elif any(k in text_lower for k in ("wire to wire", "wire-to-wire")):
+                specs["type_connector"] = "Wire to Wire Kilitli Konnektör" if is_locked else "Wire to Wire Konnektör"
             elif any(k in text_lower for k in ("pin header", "header")):
                 specs["type_connector"] = "Pin Header"
             elif "terminal block" in text_lower or "klemens" in text_lower:
                 specs["type_connector"] = "PCB Klemens"
+        elif is_locked:
+            if specs.get("type_connector") == "Wire to Board Konnektör":
+                specs["type_connector"] = "Wire to Board Kilitli Konnektör"
+            elif specs.get("type_connector") == "Wire to Wire Konnektör":
+                specs["type_connector"] = "Wire to Wire Kilitli Konnektör"
 
         # Pin Type
         if "pin_type" not in specs:
@@ -3049,12 +3090,18 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                 extracted_val_str = str(candidates[0][1]).strip()
 
         if matched_entry:
+            raw_code_val = matched_entry.value or ""
+            if material_type == "CON" and attr_norm == "pinnumber":
+                # In DEKA ERP for connectors, numeric pin count is standardized to 2 digits (e.g. 01..09, 10..99, 0A..0Z)
+                if raw_code_val.isdigit() and len(raw_code_val) == 1:
+                    raw_code_val = f"0{raw_code_val}"
+            code_val = (matched_entry.prefix or "") + raw_code_val
             mappings.append(PropertyMapping(
                 attribute_name=attr_display_name,
                 sort_no=sort_no,
                 extracted_value=extracted_val_str,
                 matched_erp_value=matched_entry.value_description,
-                erp_code=matched_entry.value,
+                erp_code=raw_code_val,
                 prefix=matched_entry.prefix or "",
                 status=status,
             ))
@@ -3067,7 +3114,6 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                     pass
                 else:
                     description_tokens.append(desc_val)
-            code_val = (matched_entry.prefix or "") + (matched_entry.value or "")
             if code_val:
                 code_tokens.append(code_val)
         elif extracted_val_str:
@@ -3477,6 +3523,10 @@ def analyze_datasheet(
     clean_text = text.strip()
 
     is_catalog = is_catalog_document_name(pn)
+    if is_catalog and pn_specs:
+        core_spec_keys = {"pin_number", "resistance_str", "capacitance_str", "inductance_str", "voltage", "current"}
+        if any(k in pn_specs for k in core_spec_keys):
+            is_catalog = False
     detected_mpns = extract_part_numbers_from_text(text)
 
     # If user didn't enter a manual override, and text has a single unique genuine MPN
