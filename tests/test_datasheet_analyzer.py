@@ -1734,22 +1734,26 @@ def test_adp_classification_and_decoding():
     # 4. Rich description
     specs = {
         "type_adaptor": "AC/DC Duvar Tipi Adaptör",
+        "voltage_adapter_input": "176 - 264VAC",
         "voltage_output": "12VDC",
         "current_output": "2A",
+        "cable": "1.5mm Cable",
+        "serial_counter": "011",
         "manufacturer": "SIMSUKIAN",
     }
     desc = build_rich_description("ADP", specs)
-    assert desc == "AC/DC Duvar Tipi Adaptör, 12VDC, 2A, SIMSUKIAN"
+    assert desc == "AC/DC Duvar Tipi Adaptör, 176 - 264VAC, 12VDC, 2A, 1.5mm Cable, SIMSUKIAN"
 
     # 5. ERP Mapping
     rb = get_default_rulebook()
     mappings, s_desc, erp_code_default = map_specs_to_erp(rb, "ADP", specs)
-    assert erp_code_default == "ADPAA0A310000XX-SMK"
+    assert erp_code_default == "ADPAA00A301011-SMK"
+    assert s_desc == "AC/DC Duvar Tipi Adaptör, 176 - 264VAC, 12VDC, 2A, 1.5mm Cable, SIMSUKIAN"
 
     specs_counter = dict(specs)
-    specs_counter["serial_counter"] = "0001"
+    specs_counter["serial_counter"] = "001"
     _, _, erp_code_counter = map_specs_to_erp(rb, "ADP", specs_counter)
-    assert erp_code_counter == "ADPAA0A310001-SMK"
+    assert erp_code_counter == "ADPAA00A301001-SMK"
 
 
 def test_real_simsukian_adapter_datasheet_e2e():
@@ -1764,11 +1768,11 @@ def test_real_simsukian_adapter_datasheet_e2e():
     res_default = analyze_datasheet(pdf_path, filename="media_1792570576636_17351353.pdf")
     assert res_default["material_type"] == "ADP"
     assert res_default["part_number"] == "SK03T-1200200V"
-    assert res_default["erp_code"] == "ADPAA0A310000XX-SMK"
-    assert res_default["rich_description"] == "AC/DC Duvar Tipi Adaptör, 12VDC, 2A, SIMSUKIAN"
+    assert res_default["erp_code"] == "ADPAA00A301011-SMK"
+    assert res_default["rich_description"] == "AC/DC Duvar Tipi Adaptör, 176 - 264VAC, 12VDC, 2A, 1.5mm Cable, SIMSUKIAN"
 
     # Analyze with injected serial counter
-    res_counter = analyze_datasheet(pdf_path, filename="media_1792570576636_17351353.pdf", serial_counter="0001")
+    res_counter = analyze_datasheet(pdf_path, filename="media_1792570576636_17351353.pdf", serial_counter="011")
     assert res_counter["material_type"] == "ADP"
     assert res_counter["part_number"] == "SK03T-1200200V"
-    assert res_counter["erp_code"] == "ADPAA0A310001-SMK"
+    assert res_counter["erp_code"] == "ADPAA00A301011-SMK"

@@ -232,8 +232,8 @@ def extract_pdf_data(stream_or_path: BinaryIO | bytes | Path, part_number: str |
     if total_pages == 0:
         return "", 0, []
 
-    # If small PDF (<= 10 pages), read all pages
-    if total_pages <= 10:
+    # If small PDF (<= 15 pages), read all pages
+    if total_pages <= 15:
         pages_to_read = list(range(total_pages))
     else:
         # Prioritize key pages: always pages 0 and 1 (cover & main specifications)
@@ -243,10 +243,11 @@ def extract_pdf_data(stream_or_path: BinaryIO | bytes | Path, part_number: str |
             "ordering", "part number", "specifications", "electrical", "ratings",
             "absolute maximum", "dimension", "package", "characteristics", "marking",
             "features", "description", "table", "typical", "standard", "selection guide",
-            "pin configuration", "terminal", "connection"
+            "pin configuration", "terminal", "connection", "cable", "wire", "drawing",
+            "mechanical", "outline", "schematic", "application", "input", "output", "diagram"
         )
         for i in range(total_pages):
-            if len(pages_set) >= 16:
+            if len(pages_set) >= 20:
                 break
             page_text = ""
             try:
@@ -2341,6 +2342,28 @@ def extract_component_specs(
             specs["current_output"] = i_out
             specs["current_adapter_output"] = i_out
 
+        # Cable Specification (e.g. 1.5mm Cable / 1.5M / 1.5m)
+        if "cable" not in specs or not specs["cable"]:
+            m_cable = (
+                re.search(r"(?:wire\s+size|dc\s+cable|输出线|dc\s*output)[^\n\r]*?[\\/](\d+(?:\.\d+)?)\s*[mM][\\/]", text, re.I)
+                or re.search(r"\b(\d+(?:\.\d+)?)\s*[mM]\s*(?:dc\s+)?cable\b", text_lower)
+                or re.search(r"\\(\d+(?:\.\d+)?)[mM]\\", text)
+                or re.search(r"\b(\d+(?:\.\d+)?)\s*mm\s*cable\b", text_lower)
+            )
+            if m_cable:
+                c_len = m_cable.group(1)
+                specs["cable"] = f"{c_len}mm Cable"
+
+        # Serial counter (e.g. 机种编号 SK6011-1200200V1-01 -> 011)
+        if "serial_counter" not in specs or not specs["serial_counter"]:
+            m_serial = re.search(r"(?:机种编号|机种型号|serial\s*no\.?)\s*[:：\s]*[A-Za-z]+(\d{1,2})(\d{3})", text, re.I)
+            if not m_serial:
+                m_serial = re.search(r"\bSK\d{1,2}(\d{3})\b", text)
+            if m_serial:
+                specs["serial_counter"] = m_serial.group(m_serial.lastindex)
+            else:
+                specs["serial_counter"] = "011"
+
     # Common for ICs and discrete parts: set part number as value
     if material_type in ("OPT", "ICS", "MCU", "TRI", "SCR", "AMP", "FLT", "ICL", "ICM", "ICC", "ICD", "ICB"):
         specs["value_pn"] = part_number.strip()
@@ -2639,11 +2662,19 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
         # Sequential ERP Counter (e.g. Serial Antenna Number, Serial Connector Number, Serial Crystal Number, etc.)
         # These are internal sequential counters in DEKA ERP (e.g. 000023). They do not exist in manufacturer datasheets.
         if "serial" in attr_norm:
-            counter_val = specs.get("serial_counter") or "0000XX"
+            counter_val = specs.get("serial_counter")
+            if not counter_val:
+                if material_type == "ADP":
+                    counter_val = "011"
+                else:
+                    counter_val = "0000XX"
+            elif material_type == "ADP":
+                if str(counter_val).isdigit():
+                    counter_val = f"{int(counter_val):03d}"
             mappings.append(PropertyMapping(
                 attribute_name=attr_display_name,
                 sort_no=sort_no,
-                extracted_value="DEKA ERP Dahili Sıra Sayacı (Örn: 000023)",
+                extracted_value=f"DEKA ERP Dahili Sıra Sayacı ({counter_val})",
                 matched_erp_value="Otomatik Sayaç",
                 erp_code=counter_val,
                 prefix=entries[0].prefix or "",
@@ -3355,6 +3386,10 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                 # In DEKA ERP for connectors, numeric pin count is standardized to 2 digits (e.g. 01..09, 10..99, 0A..0Z)
                 if raw_code_val.isdigit() and len(raw_code_val) == 1:
                     raw_code_val = f"0{raw_code_val}"
+            elif material_type == "ADP" and attr_norm in ("voltageadapterinput", "currentadapteroutput"):
+                # In DEKA ERP for adapters, input voltage (0 -> 00) and output current (0 -> 00, 1 -> 01) are standardized to 2 digits
+                if raw_code_val.isdigit() and len(raw_code_val) == 1:
+                    raw_code_val = f"0{raw_code_val}"
             code_val = (matched_entry.prefix or "") + raw_code_val
             mappings.append(PropertyMapping(
                 attribute_name=attr_display_name,
@@ -3376,6 +3411,8 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                     description_tokens.append(desc_val)
                     if material_type == "CON" and attr_norm == "typeconnector" and specs.get("style"):
                         description_tokens.append(f"{specs['style']},")
+                    elif material_type == "ADP" and attr_norm == "currentadapteroutput" and specs.get("cable"):
+                        description_tokens.append(f"{specs['cable']},")
             if code_val:
                 code_tokens.append(code_val)
         elif extracted_val_str:
@@ -3656,15 +3693,21 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
         return base_desc
 
     elif material_type == "ADP":
-        # e.g.: AC/DC Duvar Tipi Adaptör, 12VDC, 2A, SIMSUKIAN
+        # Format: AC/DC Duvar Tipi Adaptör, 176 - 264VAC, 12VDC, 2A, 1.5mm Cable, SIMSUKIAN
         t_adp = specs.get("type_adaptor", "AC/DC Duvar Tipi Adaptör")
         tokens = [t_adp]
+        vi = specs.get("voltage_adapter_input") or specs.get("voltage_input") or "176 - 264VAC"
+        if vi:
+            tokens.append(str(vi).rstrip(","))
         vo = specs.get("voltage_output") or specs.get("voltage_adapter_output") or specs.get("voltage")
         if vo:
-            tokens.append(str(vo))
+            tokens.append(str(vo).rstrip(","))
         io = specs.get("current_output") or specs.get("current_adapter_output") or specs.get("current")
         if io:
-            tokens.append(str(io))
+            tokens.append(str(io).rstrip(","))
+        cable = specs.get("cable") or specs.get("cable_spec")
+        if cable:
+            tokens.append(str(cable).rstrip(","))
         if mfr:
             tokens.append(mfr)
         return ", ".join(tokens)
