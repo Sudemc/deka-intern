@@ -1841,3 +1841,57 @@ def test_auto_material_type_emf2449a1_10ufl_antenna_e2e():
     assert res["rich_description"] == "RF Flex Antenna, WLAN, 100mm UFL Cable (I-PEX), Ezurio"
 
 
+def test_connfly_ds1092_battery_holder_e2e():
+    """Verify Connfly DS1092 and DS1091 battery holders decode correctly to BAH, SMD, CR2032 Pil Yuvası, Connfly CF."""
+    from pathlib import Path
+    from bom_enricher.datasheet_analyzer import analyze_datasheet, classify_material_type, decode_manufacturer_pn
+    from bom_enricher.comparison import load_rulebook
+
+    # 1. Part Number Classification & Decoding
+    mat_type, conf, reason = classify_material_type("", "DS1092-11-N8S")
+    assert mat_type == "BAH"
+    assert conf >= 0.95
+
+    pn_specs = decode_manufacturer_pn("DS1092-11-N8S")
+    assert pn_specs["manufacturer"] == "Connfly"
+    assert pn_specs["manufacturer_code"] == "CF"
+    assert pn_specs["mounting"] == "SMD"
+    assert pn_specs["type_battery_holder"] == "CR2032 Pil Yuvası"
+
+    # Test DS1091 Retainer series
+    pn_ret = decode_manufacturer_pn("DS1091-S")
+    assert pn_ret["manufacturer"] == "Connfly"
+    assert pn_ret["type_battery_holder"] == "Coin Cell Retainer"
+    assert pn_ret["mounting"] == "SMD"
+
+    # 2. End-to-end analysis with user PDF or synthetic PDF
+    pdf_path = Path(r"C:\Users\sudem\.gemini\antigravity\brain\8be84be6-1095-43d5-b848-ce9fe57a8347\.user_uploaded\media_1792583690492_14206d56.pdf")
+    if pdf_path.exists():
+        pdf_bytes = pdf_path.read_bytes()
+    else:
+        pdf_bytes = _create_sample_pdf(
+            "BATTERY HOLDER DRAWING",
+            "DS1092-11-N8S",
+            ["CR2032 Battery Holder SMD", "Connfly Electronic Co., Ltd."],
+        )
+
+    rule_file = Path("data/rules.xlsx")
+    rulebook = load_rulebook(rule_file) if rule_file.exists() else None
+
+    # Test default counter
+    res = analyze_datasheet(pdf_bytes, part_number="DS1092-11-N8S", rulebook=rulebook)
+    assert res["material_type"] == "BAH"
+    assert res["specs"]["manufacturer"] == "Connfly"
+    assert res["specs"]["manufacturer_code"] == "CF"
+    assert res["specs"]["mounting"] == "SMD"
+    assert res["specs"]["type_battery_holder"] == "CR2032 Pil Yuvası"
+    assert res["erp_code"] == "BAHS100000XX-CF"
+    assert res["rich_description"] == "SMD CR2032 Pil Yuvası, Connfly"
+
+    # Test with injected serial counter
+    res_counter = analyze_datasheet(pdf_bytes, part_number="DS1092-11-N8S", rulebook=rulebook, serial_counter="21")
+    assert res_counter["erp_code"] == "BAHS10000021-CF"
+    assert res_counter["rich_description"] == "SMD CR2032 Pil Yuvası, Connfly"
+
+
+

@@ -528,7 +528,7 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     if re.match(r"^(?:FUET|HNB|FST|CPI-|KPI-)", pn):
         return "BUZ", 0.98, "Part Number standart buzzer serisine uyuyor."
     # Battery Holder / Clip
-    if re.match(r"^(?:L-KLS5-SP|BK-|BH-|BS-)", pn):
+    if re.match(r"^(?:L-KLS5-SP|BK-|BH-|BS-|DS109[12])", pn):
         return "BAH", 0.98, "Part Number pil yuvası/klipsi serisine uyuyor."
     # MOSFET
     if re.match(r"^(?:2N7002|BSS138|BSS84|SI23\d{2}|AO34\d{2}|IRF|DMN|DMP)", pn):
@@ -1292,6 +1292,23 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
             return specs
         except Exception:
             pass
+
+    # 15. Connfly Electronic Battery Holders (DS1092 / DS1091 Series)
+    if re.match(r"^DS1092\b", pn, re.I):
+        specs["manufacturer"] = "Connfly"
+        specs["manufacturer_code"] = "CF"
+        specs["type_battery_holder"] = "CR2032 Pil Yuvası"
+        if re.search(r"[-_](?:11|12|s|smd|smt)\b", pn, re.I) or pn.endswith("S") or "smd" in pn.lower():
+            specs["mounting"] = "SMD"
+        else:
+            specs["mounting"] = "TH"
+        return specs
+    elif re.match(r"^DS1091\b", pn, re.I):
+        specs["manufacturer"] = "Connfly"
+        specs["manufacturer_code"] = "CF"
+        specs["type_battery_holder"] = "Coin Cell Retainer"
+        specs["mounting"] = "SMD" if (re.search(r"[-_](?:s|smd|smt)\b", pn, re.I) or pn.endswith("S") or "smd" in pn.lower()) else "TH"
+        return specs
 
     return specs
 
@@ -2211,18 +2228,24 @@ def extract_component_specs(
 
     elif material_type == "BAH":
         if "type_battery_holder" not in specs:
-            if "l-kls5-sp" in pn.lower() or re.search(r"\b(?:coin\s+cell\s+retainer|battery\s+retainer|clip|retainer)\b", text_lower):
+            if "l-kls5-sp" in pn.lower() or "ds1091" in pn.lower() or re.search(r"\b(?:coin\s+cell\s+retainer|battery\s+retainer|clip|retainer)\b", text_lower):
                 specs["type_battery_holder"] = "Coin Cell Retainer"
-            elif re.search(r"\b(?:battery\s+holder|coin\s+cell\s+holder|cr2032|cr2025|pil\s+yuvası)\b", text_lower):
+            elif "ds1092" in pn.lower() or re.search(r"\b(?:battery\s+holder|coin\s+cell\s+holder|cr2032|cr2025|pil\s+yuvası)\b", text_lower):
                 specs["type_battery_holder"] = "CR2032 Pil Yuvası"
             else:
                 specs["type_battery_holder"] = "Pil Tutucu"
         if "mounting" not in specs:
-            specs["mounting"] = "SMD" if ("l-kls5" in pn.lower() or re.search(r"\b(?:surface[\s-]mount|smd|smt)\b", text_lower)) else "TH"
+            specs["mounting"] = "SMD" if ("l-kls5" in pn.lower() or "ds109" in pn.lower() or re.search(r"\b(?:surface[\s-]mount|smd|smt)\b", text_lower)) else "TH"
         if "manufacturer" not in specs:
             if "kls" in pn.lower() or re.search(r"\bkls\b", text_lower):
                 specs["manufacturer"] = "Kls"
                 specs["manufacturer_code"] = "KL"
+            elif "ds10" in pn.lower() or "connfly" in text_lower:
+                specs["manufacturer"] = "Connfly"
+                specs["manufacturer_code"] = "CF"
+            elif "eemb" in text_lower or "bh201" in pn.lower() or "bh201" in text_lower:
+                specs["manufacturer"] = "Eemb"
+                specs["manufacturer_code"] = "EM"
 
     elif material_type == "TRF":
         if "type_transformer" not in specs:
@@ -2745,7 +2768,7 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             elif material_type == "ADP":
                 if str(counter_val).isdigit():
                     counter_val = f"{int(counter_val):03d}"
-            elif material_type == "ANT":
+            elif material_type in ("ANT", "BAH"):
                 if str(counter_val).isdigit():
                     counter_val = f"{int(counter_val):06d}"
             mappings.append(PropertyMapping(
@@ -3746,11 +3769,11 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
         return ", ".join(tokens)
 
     elif material_type == "BAH":
-        # e.g.: Coin Cell Battery Retainer / Clip, SMD, Ningbo KLS
-        t_bah = specs.get("type_battery_holder", "Battery Clip / Retainer")
-        tokens = [t_bah]
-        if specs.get("mounting"):
-            tokens.append(specs["mounting"])
+        # e.g.: SMD CR2032 Pil Yuvası, Connfly
+        t_bah = specs.get("type_battery_holder", "Pil Yuvası")
+        m_str = specs.get("mounting", "")
+        prefix = f"{m_str} {t_bah}".strip() if m_str else t_bah
+        tokens = [prefix]
         if mfr:
             tokens.append(mfr)
         return ", ".join(tokens)
