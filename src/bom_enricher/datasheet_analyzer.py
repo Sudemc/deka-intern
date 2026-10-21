@@ -587,15 +587,17 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     # Thermistor
     if re.match(r"^(?:NTC|PTC|MF52|MF58|\d{1,2}D-[579])", pn):
         return "TER", 0.95, "Part Number termistör serisine uyuyor."
+    # Display (DSP): Foryard, Microtech, Winstar, YEEBO, Liteon, Strong Base, Bright Led, Avago, Wuxi Compul, Kinley, Assemcorp, Semtech, Display Visions, Nextion
+    dsp_prefix_pat = r"^(?:FY[QSTD]-|MTB0?802|WH0?802|GR-V|LT[SCD]-|E[1-4]-\d{4}|BD-A|HDSP-|CPS\d{5}|KL0\d{4}|\d{4}A-DW|ALS\d{4}|EA\s*(?:DOG|LED)|NX\d{4}[PKT])"
+    for p in pns_to_check:
+        if re.match(dsp_prefix_pat, p):
+            return "DSP", 0.98, "Part Number standart display/ekran serisine uyuyor."
     # Crystal
-    if re.match(r"^(?:RH\d{2,3}|ABS\d|ABM\d|ECS-|NX\d{4}|FA-\d|TSX-\d|7M\d|9C\d|CST|SIT\d)", pn):
+    if re.match(r"^(?:RH\d{2,3}|ABS\d|ABM\d|ECS-|NX\d{4}[SGC]|FA-\d|TSX-\d|7M\d|9C\d|CST|SIT\d)", pn):
         return "CRY", 0.95, "Part Number kristal serisine uyuyor."
     # Inductor
     if re.match(r"^(?:NR\d{4}|CD\d{2,3}|MSS\d{4}|SRR\d{4}|IHLP)", pn):
         return "IND", 0.95, "Part Number indüktör serisine uyuyor."
-    # Display (DSP): Foryard FYQ-, FYS-, FYD-, FYT-
-    if re.match(r"^FY[QSTD]-\d{4}", pn):
-        return "DSP", 0.98, "Part Number standart Foryard display serisine uyuyor."
     # Adapter (ADP): Simsukian SK, Mean Well GST/SDR/HDR, ADP-
     if re.match(r"^(?:SK\d{2}[A-Z]?-\d+|GST\d|SDR-\d|HDR-\d|ADP-)", pn):
         return "ADP", 0.98, "Part Number standart adaptör/güç kaynağı serisine uyuyor."
@@ -1285,11 +1287,12 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
                 specs["package"] = "4-SMD"
         return specs
 
-    # 11. Foryard Displays: e.g. FYQ-5643CUW-21, FYS-5611DUR-11
-    foryard_m = re.match(r"^FY([QSTD])-(\d{2})\d{2}([CD])([A-Z]+)", pn)
+    # 11. Displays (DSP): Foryard, Microtech, Winstar, YEEBO, Liteon, Strong Base, Bright Led, Avago, Wuxi Compul, Kinley, Assemcorp, Semtech, Display Visions, Nextion
+    foryard_m = re.match(r"^FY([QSTD])-(\d{2})\d{2}([A-D])([A-Z]+)", pn)
     if foryard_m:
         digit_code, height_code, pol_code, color_code = foryard_m.groups()
         specs["manufacturer"] = "Foryard"
+        specs["manufacturer_code"] = "FO"
         specs["mounting"] = "TH"
         specs["type_display"] = "7 Segment Display"
 
@@ -1302,15 +1305,16 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
         if digit_code in digit_map:
             specs["digits"] = digit_map[digit_code]
 
-        if pol_code == "C":
-            specs["polarity"] = "COM-"
-        elif pol_code == "D":
+        if pol_code in ("A", "B", "D"):
             specs["polarity"] = "COM+"
+        elif pol_code == "C":
+            specs["polarity"] = "COM-"
 
         color_map = {
             "UW": "Beyaz",
             "W": "Beyaz",
             "UR": "Kırmızı",
+            "UHR": "Kırmızı",
             "R": "Kırmızı",
             "UG": "Yeşil",
             "G": "Yeşil",
@@ -1321,11 +1325,164 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
         }
         if color_code in color_map:
             specs["color"] = color_map[color_code]
+        elif len(color_code) >= 3 and color_code[:3] in color_map:
+            specs["color"] = color_map[color_code[:3]]
         elif len(color_code) >= 2 and color_code[:2] in color_map:
             specs["color"] = color_map[color_code[:2]]
         elif len(color_code) >= 1 and color_code[:1] in color_map:
             specs["color"] = color_map[color_code[:1]]
 
+        if specs.get("digits") and specs.get("polarity"):
+            specs["special_def_display"] = f"{specs['digits']}, {specs['polarity']}"
+        return specs
+
+    # 11b. Other Displays
+    if pn.startswith("MTB0802") or pn.startswith("MTB08"):
+        specs["manufacturer"] = "Microtech"
+        specs["manufacturer_code"] = "MH"
+        specs["mounting"] = "TH"
+        specs["type_display"] = "Karakter LCD"
+        specs["color"] = "Beyaz"
+        specs["special_def_display"] = "8x2 Char"
+        return specs
+
+    if pn.startswith("WH0802") or pn.startswith("WH08"):
+        specs["manufacturer"] = "Winstar Display"
+        specs["manufacturer_code"] = "WS"
+        specs["mounting"] = "TH"
+        specs["type_display"] = "Karakter LCD"
+        specs["color"] = "Beyaz"
+        specs["special_def_display"] = "8x2 Char"
+        return specs
+
+    if pn.startswith("GR-V"):
+        specs["manufacturer"] = "YEEBO"
+        specs["manufacturer_code"] = "YBO"
+        specs["mounting"] = "TH"
+        specs["type_display"] = "7 Segment Display"
+        specs["color"] = "Full Color"
+        specs["special_def_display"] = "8 Digit, 4-MUX"
+        return specs
+
+    if pn.startswith("LTS-") or pn.startswith("LTD-") or pn.startswith("LTC-"):
+        specs["manufacturer"] = "Liteon"
+        specs["manufacturer_code"] = "LO"
+        specs["mounting"] = "TH"
+        specs["type_display"] = "7 Segment Display"
+        specs["color"] = "Kırmızı"
+        digits = "1 Digit" if pn.startswith("LTS-") else ("2 Digit" if pn.startswith("LTD-") else "4 Digit")
+        specs["special_def_display"] = f"{digits}, COM+"
+        return specs
+
+    m_sb = re.match(r"^E([1-4])-(\d{4})([A-Z0-9.-]+)", pn)
+    if m_sb:
+        d_code = m_sb.group(1)
+        specs["manufacturer"] = "Strong Base"
+        specs["manufacturer_code"] = "SB"
+        specs["mounting"] = "TH"
+        specs["type_display"] = "7 Segment Display"
+        specs["color"] = "Kırmızı"
+        digits = "1 Digit" if d_code == "1" else "2 Digit"
+        specs["special_def_display"] = f"{digits}, COM+"
+        return specs
+
+    if pn.startswith("BD-A"):
+        specs["manufacturer"] = "Bright Led"
+        specs["manufacturer_code"] = "BR"
+        specs["mounting"] = "TH"
+        specs["type_display"] = "7 Segment Display"
+        specs["color"] = "Kırmızı"
+        specs["special_def_display"] = "2 Digit, COM+"
+        return specs
+
+    if pn.startswith("HDSP-"):
+        specs["manufacturer"] = "Avago"
+        specs["manufacturer_code"] = "AA"
+        specs["mounting"] = "TH"
+        specs["type_display"] = "7 Segment Display"
+        specs["color"] = "Kırmızı"
+        specs["special_def_display"] = "2 Digit, COM+"
+        return specs
+
+    if pn.startswith("CPS036"):
+        specs["manufacturer"] = "Wuxi Compul"
+        specs["manufacturer_code"] = "WX"
+        specs["mounting"] = "TH"
+        specs["type_display"] = "7 Segment Display"
+        specs["color"] = "Kırmızı"
+        specs["special_def_display"] = "2 Digit, COM+"
+        return specs
+
+    m_kl = re.match(r"^KL0(\d{2})(\d)(\d)([A-Z0-9-]+)", pn)
+    if m_kl:
+        sz, dig, _, code_suffix = m_kl.groups()
+        specs["mounting"] = "TH"
+        specs["type_display"] = "7 Segment Display"
+        if "ASSEM" in pn or "KL05632WDGAW" in pn:
+            specs["manufacturer"] = "Assemcorp"
+            specs["manufacturer_code"] = "AS"
+        else:
+            specs["manufacturer"] = "Kinley"
+            specs["manufacturer_code"] = "KLY"
+
+        digit_count = f"{dig} Digit"
+        if "WDGBSR" in code_suffix:
+            specs["color"] = "Kırmızı"
+            specs["special_def_display"] = f"{digit_count}, COM+"
+        elif "WDGAW1-0603" in code_suffix:
+            specs["color"] = "Beyaz"
+            specs["special_def_display"] = f"{digit_count}, COM-"
+        elif "WDGAW" in code_suffix:
+            specs["color"] = "Kırmızı"
+            specs["special_def_display"] = f"{digit_count}, COM-"
+        else:
+            specs["color"] = "Kırmızı"
+            specs["special_def_display"] = f"{digit_count}, COM+"
+        return specs
+
+    if re.match(r"^\d{4}A-DW", pn):
+        specs["manufacturer"] = "Semtech"
+        specs["manufacturer_code"] = "SM"
+        specs["mounting"] = "TH"
+        specs["type_display"] = "7 Segment Display"
+        specs["color"] = "Beyaz"
+        specs["special_def_display"] = "3 Digit, COM-"
+        return specs
+
+    if pn.startswith("ALS3819"):
+        specs["manufacturer"] = "Semtech"
+        specs["manufacturer_code"] = "SM"
+        specs["mounting"] = "TH"
+        specs["type_display"] = "7 Segment Display"
+        specs["color"] = "Beyaz"
+        specs["special_def_display"] = "4 Digit, COM-"
+        return specs
+
+    if pn.startswith("EA DOG"):
+        specs["manufacturer"] = "Display Visions"
+        specs["manufacturer_code"] = "DV"
+        specs["mounting"] = "TH"
+        specs["type_display"] = "Super-Twisted Nematic"
+        specs["color"] = "Yeşil"
+        specs["special_def_display"] = "16x2 Char"
+        return specs
+
+    if pn.startswith("EA LED"):
+        specs["manufacturer"] = "Display Visions"
+        specs["manufacturer_code"] = "DV"
+        specs["mounting"] = "TH"
+        specs["type_display"] = "Led Backlighting"
+        specs["color"] = "Sarı/Yeşil"
+        specs["special_def_display"] = "Custom"
+        return specs
+
+    if pn.startswith("NX4827"):
+        specs["manufacturer"] = "Nextion"
+        specs["manufacturer_code"] = "NT"
+        specs["mounting"] = "TH"
+        specs["type_display"] = "HMI Display"
+        specs["color"] = "Full Color"
+        specs["special_def_display"] = "4.3\" 480x272"
         return specs
 
     # 12. Standard Schottky Diodes (SS series: e.g. SS0520, SS0530, SS0540, SS12, SS14, SS24, SS34, SS54, SS110)
@@ -3585,8 +3742,16 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                         break
             extracted_val_str = target_mfr
             if target_mfr or target_mfr_code:
+                # Pass 0: exact code and compatible description match (e.g. 'KLY' == 'KLY' with description 'Kinley')
+                if target_mfr_code:
+                    for e in entries:
+                        if target_mfr_code.upper() == e.value.strip().upper():
+                            if not target_mfr or target_mfr.casefold() in e.value_description.casefold() or e.value_description.strip().rstrip(",").casefold() in target_mfr.casefold():
+                                matched_entry = e
+                                status = "TAM EŞLEŞTİ"
+                                break
                 # Pass 1: exact description match (e.g. 'TE Connectivity' == 'TE Connectivity' or 'Samsung' == 'Samsung')
-                if target_mfr:
+                if not matched_entry and target_mfr:
                     for e in entries:
                         if target_mfr.casefold() == e.value_description.strip().rstrip(",").casefold():
                             matched_entry = e
@@ -4063,6 +4228,10 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                 # In DEKA ERP for buzzers, frequency, sound level, and size are standardized to 2 digits (e.g. 03, 07)
                 if str(raw_code_val).isdigit() and len(str(raw_code_val)) == 1:
                     raw_code_val = f"0{raw_code_val}"
+            elif material_type == "DSP" and attr_norm == "specialdefinitiondisplay":
+                # In DEKA ERP for displays, special definition is a 2-char code (e.g. AA, BA, BC, BE, BF, BH, FE, FC, 00)
+                if raw_code_val == "0":
+                    raw_code_val = "00"
             code_val = (matched_entry.prefix or "") + raw_code_val
             mappings.append(PropertyMapping(
                 attribute_name=attr_display_name,
