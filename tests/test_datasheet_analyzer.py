@@ -1838,7 +1838,7 @@ def test_auto_material_type_emf2449a1_10ufl_antenna_e2e():
     assert res["specs"]["cable_length"] == "100mm"
     assert res["specs"]["mating_connector"] == "UFL (I-PEX)"
     assert res["erp_code"] == "ANTT30000XX-EZU"
-    assert res["rich_description"] == "RF Flex Antenna, WLAN, 100mm UFL Cable (I-PEX), Ezurio"
+    assert res["rich_description"] == "RF Flex Antenna, WiFi, WLAN, 100mm UFL Cable (I-PEX), Ezurio"
 
 
 def test_connfly_ds1092_battery_holder_e2e():
@@ -1885,12 +1885,12 @@ def test_connfly_ds1092_battery_holder_e2e():
     assert res["specs"]["manufacturer_code"] == "CF"
     assert res["specs"]["mounting"] == "SMD"
     assert res["specs"]["type_battery_holder"] == "CR2032 Pil Yuvası"
-    assert res["erp_code"] == "BAHS100000XX-CF"
+    assert res["erp_code"] == "BAHS10000XX-CF"
     assert res["rich_description"] == "SMD CR2032 Pil Yuvası, Connfly"
 
     # Test with injected serial counter
     res_counter = analyze_datasheet(pdf_bytes, part_number="DS1092-11-N8S", rulebook=rulebook, serial_counter="21")
-    assert res_counter["erp_code"] == "BAHS10000021-CF"
+    assert res_counter["erp_code"] == "BAHS1000021-CF"
     assert res_counter["rich_description"] == "SMD CR2032 Pil Yuvası, Connfly"
 
 

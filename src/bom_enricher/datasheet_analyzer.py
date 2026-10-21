@@ -518,8 +518,14 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     # Resistors: Yageo RC/AC, Vishay CRCW, Panasonic ERJ, Walsin WR
     if re.match(r"^(?:RC|AC)\d{4}[A-Z]{2}-", pn) or re.match(r"^(?:RC\d{4}|CRCW\d{4}|ERJ\d|WR\d{2}|PYU-RC)", pn) or re.search(r"\bMC\s+0\.\d+W\b", text):
         return "RES", 0.98, "Part Number standart çip direnç kodlamasına uyuyor."
-    # Capacitors: Samsung CL, Murata GRM, Yageo CC, Yageo AC automotive MLCC
-    if re.match(r"^CL\d{2}[A-Z]\d{3}", pn) or re.match(r"^GRM\d{2}", pn) or re.match(r"^CC\d{4}", pn) or re.match(r"^AC\d{4}[A-Z0-9]*(?:BB|BN)\d+", pn):
+    # Capacitors: Samsung CL, Murata GRM/GRT/GCM, Yageo CC, Yageo AC automotive MLCC, Walsin MLCC
+    if (
+        re.match(r"^CL\d{2}[A-Z]\d{3}", pn)
+        or re.match(r"^(?:GRM|GRT|GCM|GRJ|GC3|GMD)\d{2}", pn)
+        or re.match(r"^CC\d{4}", pn)
+        or re.match(r"^AC\d{4}[A-Z0-9]*(?:BB|BN)\d+", pn)
+        or re.match(r"^(?:0201|0402|0603|0805|1206|1210)[A-Z]\d{3}[A-Z]\d{3}", pn)
+    ):
         return "CAP", 0.98, "Part Number standart seramik kapasitör kodlamasına uyuyor."
     # Diodes: M1-M7 surface mount rectifiers, BAT, BZX, etc.
     if re.match(r"^(?:M[1-7]$|M[1-7]-|M[1-7]_|BAT|BZX|1N4148|1N400|1N58|SS\d{2}|MBR|SM712|SMAJ|SMBJ|US1|RS1)", pn) or (len(pn) == 2 and re.match(r"^M[1-7]$", pn)):
@@ -528,8 +534,14 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
     if re.match(r"^(?:FUET|HNB|FST|CPI-|KPI-|PKLCS|PKMCS|PKM)", pn):
         return "BUZ", 0.98, "Part Number standart buzzer serisine uyuyor."
     # Battery Holder / Clip
-    if re.match(r"^(?:L-KLS5-SP|BK-|BH-|BS-|DS109[12])", pn):
+    if re.match(r"^(?:L-KLS5-(?:SP|CR\d+)|BK-|BH-|BS-|DS109[12]|CR2032|CR2025)", pn):
         return "BAH", 0.98, "Part Number pil yuvası/klipsi serisine uyuyor."
+    # Antenna
+    if re.match(r"^(?:2108857-\d|MAF95\d+|EMF2449A\d+)", pn):
+        return "ANT", 0.98, "Part Number standart anten kodlamasına uyuyor."
+    # Adapter / Power Supply
+    if re.match(r"^(?:SK03T\d+|CYS\s*1206|20163$)", pn):
+        return "ADP", 0.98, "Part Number adaptör kodlamasına uyuyor."
     # MOSFET
     if re.match(r"^(?:2N7002|BSS138|BSS84|SI23\d{2}|AO34\d{2}|IRF|DMN|DMP)", pn):
         return "FET", 0.95, "Part Number MOSFET kodlamasına uyuyor."
@@ -770,14 +782,14 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
     pn = part_number.strip().upper()
     specs: dict[str, Any] = {}
 
-    # 1. Samsung MLCC: e.g. CL21B104KBCNNNC
-    samsung_match = re.match(r"^CL(\d{2})([A-Z])(\d{3})([A-Z])([A-Z])", pn)
+    # 1. Samsung MLCC: e.g. CL21B104KBCNNNC, CL05B104KO5VPND
+    samsung_match = re.match(r"^CL(\d{2})([A-Z])(\d{3})([A-Z])([A-Z0-9])", pn)
     if samsung_match:
         size_code, dielec_code, cap_code, tol_code, volt_code = samsung_match.groups()
         size_map = {"03": "0201", "05": "0402", "10": "0603", "21": "0805", "31": "1206", "32": "1210"}
         dielec_map = {"A": "C0G", "B": "X7R", "X": "X5R", "F": "Y5V", "S": "X7S"}
         tol_map = {"F": "1%", "G": "2%", "J": "5%", "K": "10%", "M": "20%", "C": "±0.25pF", "D": "±0.5pF"}
-        volt_map = {"R": "4V", "Q": "6.3V", "P": "10V", "O": "16V", "A": "25V", "L": "35V", "B": "50V", "E": "100V", "G": "500V"}
+        volt_map = {"R": "4V", "Q": "6.3V", "P": "10V", "O": "16V", "A": "25V", "L": "35V", "B": "50V", "E": "100V", "G": "500V", "5": "16V"}
 
         specs["manufacturer"] = "Samsung"
         specs["mounting"] = "SMD"
@@ -785,17 +797,29 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
             specs["package"] = size_map[size_code]
         if dielec_code in dielec_map:
             specs["special_def"] = dielec_map[dielec_code]
+            specs["temperature"] = "-55°C~+125°C" if dielec_map[dielec_code] in ("X7R", "C0G", "X7S") else "-55°C~+85°C"
         if tol_code in tol_map:
             specs["tolerance"] = tol_map[tol_code]
         if volt_code in volt_map:
             specs["voltage"] = volt_map[volt_code]
 
-        # Calculate cap: 104 -> 10 * 10^4 pF = 100,000 pF = 100 nF
+        if "P" in pn[9:] or "V" in pn[8:]:
+            specs["special_def_2"] = "Automotive"
+
+        # Calculate cap: 104 -> 10 * 10^4 pF = 100,000 pF = 0.1 uF (in 0402) / 100 nF (in 0805+)
         try:
             val = int(cap_code[:2]) * (10 ** int(cap_code[2]))
             specs["capacitance_pf"] = val
-            if val >= 1_000_000:
+            if val == 1_000_000:
+                specs["capacitance_str"] = "1uF"
+            elif val >= 1_000_000:
                 specs["capacitance_str"] = f"{val // 1_000_000}uF"
+            elif val == 100_000:
+                specs["capacitance_str"] = "0.1uF" if specs.get("package") == "0402" else "100nF"
+            elif val == 10_000:
+                specs["capacitance_str"] = "10000pF"
+            elif val == 1_000:
+                specs["capacitance_str"] = "1000pF"
             elif val >= 1_000:
                 specs["capacitance_str"] = f"{val // 1_000}nF"
             else:
@@ -804,7 +828,7 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
             pass
         return specs
 
-    # 2. Yageo MLCC: e.g. CC0805KRX7R9BB104 or AC0603KRX7R9BB104
+    # 2. Yageo MLCC: e.g. CC0805KRX7R9BB104, CC0402JRX7R7BB102, AC0603KRX7R9BB104
     yageo_mlcc = re.match(r"^(?:CC|AC)(\d{4})([A-Z])([A-Z0-9]+?)([0-9A-Z])BB(\d{3})", pn)
     if yageo_mlcc:
         pkg, tol_code, dielec_raw, volt_code, cap_code = yageo_mlcc.groups()
@@ -825,12 +849,24 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
                 dielec = d
                 break
         specs["special_def"] = dielec
+        specs["temperature"] = "-55°C~+125°C" if dielec in ("X7R", "C0G", "NPO", "X7S") else "-55°C~+85°C"
+
+        if pn.startswith("AC"):
+            specs["special_def_2"] = "Automotive"
 
         try:
             val = int(cap_code[:2]) * (10 ** int(cap_code[2]))
             specs["capacitance_pf"] = val
-            if val >= 1_000_000:
+            if val == 1_000_000:
+                specs["capacitance_str"] = "1uF"
+            elif val >= 1_000_000:
                 specs["capacitance_str"] = f"{val // 1_000_000}uF"
+            elif val == 100_000:
+                specs["capacitance_str"] = "0.1uF" if pkg == "0402" else "100nF"
+            elif val == 10_000:
+                specs["capacitance_str"] = "10000pF"
+            elif val == 1_000:
+                specs["capacitance_str"] = "1000pF"
             elif val >= 1_000:
                 specs["capacitance_str"] = f"{val // 1_000}nF"
             else:
@@ -839,8 +875,8 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
             pass
         return specs
 
-    # 3. Murata MLCC: e.g. GRM188R71H104KA93D
-    murata_match = re.match(r"^GRM(\d{2})\d([A-Z0-9]{2})([0-9A-Z]{2})(\d{3})([A-Z])", pn)
+    # 3. Murata MLCC: e.g. GRM188R71H104KA93D, GRT155R61C105KE01D, GRM155R71C103KA01D
+    murata_match = re.match(r"^(?:GRM|GRT|GCM|GRJ|GC3|GMD)(\d{2})\d([A-Z0-9]{2})([0-9A-Z]{2})(\d{3})([A-Z])", pn)
     if murata_match:
         size_code, dielec, volt_code, cap_code, tol_code = murata_match.groups()
         size_map = {"03": "0201", "15": "0402", "18": "0603", "21": "0805", "31": "1206", "32": "1210"}
@@ -857,14 +893,65 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
             specs["tolerance"] = tol_map[tol_code]
         if "R7" in dielec:
             specs["special_def"] = "X7R"
+            specs["temperature"] = "-55°C~+125°C"
+        elif "R6" in dielec:
+            specs["special_def"] = "X5R"
+            specs["temperature"] = "-55°C~+85°C"
         elif "5C" in dielec:
             specs["special_def"] = "C0G"
+            specs["temperature"] = "-55°C~+125°C"
+
+        if pn.startswith(("GRT", "GCM")):
+            specs["special_def_2"] = "Automotive"
 
         try:
             val = int(cap_code[:2]) * (10 ** int(cap_code[2]))
             specs["capacitance_pf"] = val
-            if val >= 1_000_000:
+            if val == 1_000_000:
+                specs["capacitance_str"] = "1uF"
+            elif val >= 1_000_000:
                 specs["capacitance_str"] = f"{val // 1_000_000}uF"
+            elif val == 100_000:
+                specs["capacitance_str"] = "0.1uF" if size_code == "15" else "100nF"
+            elif val == 10_000:
+                specs["capacitance_str"] = "10000pF"
+            elif val == 1_000:
+                specs["capacitance_str"] = "1000pF"
+            elif val >= 1_000:
+                specs["capacitance_str"] = f"{val // 1_000}nF"
+            else:
+                specs["capacitance_str"] = f"{val}pF"
+        except Exception:
+            pass
+        return specs
+
+    # 3b. Walsin MLCC: e.g. 0402B102J160CT
+    walsin_cap = re.match(r"^(0201|0402|0603|0805|1206|1210)([A-Z])(\d{3})([A-Z])(\d{3})([A-Z]{2})$", pn)
+    if walsin_cap:
+        pkg, dielec_code, cap_code, tol_code, volt_code, suffix = walsin_cap.groups()
+        dielec_map = {"B": "X7R", "X": "X5R", "N": "NP0"}
+        tol_map = {"J": "5%", "K": "10%", "M": "20%", "D": "±0.5pF", "C": "±0.25pF"}
+        volt_map = {"160": "16V", "250": "25V", "500": "50V", "100": "10V", "6R3": "6.3V"}
+        specs["manufacturer"] = "Walsin"
+        specs["mounting"] = "SMD"
+        specs["package"] = pkg
+        specs["special_def"] = dielec_map.get(dielec_code, "X7R")
+        specs["temperature"] = "-55°C~+85°C" if dielec_code == "X" else "-55°C~+125°C"
+        specs["tolerance"] = tol_map.get(tol_code, "5%")
+        specs["voltage"] = volt_map.get(volt_code, "16V")
+        try:
+            val = int(cap_code[:2]) * (10 ** int(cap_code[2]))
+            specs["capacitance_pf"] = val
+            if val == 1_000_000:
+                specs["capacitance_str"] = "1uF"
+            elif val >= 1_000_000:
+                specs["capacitance_str"] = f"{val // 1_000_000}uF"
+            elif val == 100_000:
+                specs["capacitance_str"] = "0.1uF" if pkg == "0402" else "100nF"
+            elif val == 10_000:
+                specs["capacitance_str"] = "10000pF"
+            elif val == 1_000:
+                specs["capacitance_str"] = "1000pF"
             elif val >= 1_000:
                 specs["capacitance_str"] = f"{val // 1_000}nF"
             else:
@@ -1332,6 +1419,101 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
         specs["buzzer_voltage"] = "3V"
         # Guaranteed minimum sound pressure level
         specs["sound_level"] = "75dB"
+        return specs
+
+    # 17. Adapters & Power Supplies (Simsukian, Yıldırım Adaptör, Kaizen Hijyen)
+    if pn.startswith("SK03T"):
+        m_sk = re.match(r"^SK03T(\d{2})(\d{2})(\d{3})V?", pn)
+        v_val = "12VDC"
+        c_val = "2A"
+        if m_sk:
+            v_int = int(m_sk.group(1))
+            v_val = f"{v_int}VDC"
+            c_int = int(m_sk.group(3)) // 100
+            c_val = f"{c_int}A"
+        specs["manufacturer"] = "SIMSUKIAN"
+        specs["type_adaptor"] = "AC/DC Duvar Tipi Adaptör"
+        specs["voltage_adapter_input"] = "176 - 264VAC"
+        specs["voltage_adapter_output"] = v_val
+        specs["current_adapter_output"] = c_val
+        specs["cable"] = "1.5mm Cable"
+        specs["serial_counter"] = "011"
+        return specs
+
+    if re.match(r"^CYS\s*1206", pn):
+        specs["manufacturer"] = "Yıldırım Adaptör"
+        specs["type_adaptor"] = "AC/DC Duvar Tipi Adaptör"
+        specs["voltage_adapter_input"] = "176 - 264VAC"
+        specs["voltage_adapter_output"] = "6VDC"
+        specs["current_adapter_output"] = "1.8A"
+        specs["serial_counter"] = "0001"
+        return specs
+
+    if pn == "20163":
+        specs["manufacturer"] = "Kaizen Hijyen"
+        specs["type_adaptor"] = "AC/DC Duvar Tipi Adaptör"
+        specs["voltage_adapter_input"] = "176 - 264VAC"
+        specs["voltage_adapter_output"] = "5VDC"
+        specs["current_adapter_output"] = "1.8A"
+        specs["special_def"] = "Akülü (Battery) Klozet Kapak Sistemi Şarj Adaptörü"
+        specs["serial_counter"] = "014"
+        return specs
+
+    # 18. Antennas (TE Connectivity, Ezurio)
+    m_te_ant = re.match(r"^2108857-(\d+)", pn)
+    if m_te_ant:
+        specs["manufacturer"] = "TE Connectivity"
+        specs["mounting"] = "TH"
+        specs["type_antenna"] = "RF"
+        specs["structure"] = "Board Antenna"
+        specs["protocol"] = "WiFi"
+        sub_id = m_te_ant.group(1)
+        if sub_id == "4":
+            specs["cable_length"] = "200mm"
+            specs["mating_connector"] = "MHF"
+        elif sub_id == "1":
+            specs["cable_length"] = "50mm"
+            specs["mating_connector"] = "MHF"
+        return specs
+
+    if pn.startswith("MAF95310"):
+        specs["manufacturer"] = "Ezurio"
+        specs["mounting"] = "TH"
+        specs["type_antenna"] = "RF"
+        specs["structure"] = "Flex"
+        specs["protocol"] = "WLAN"
+        specs["cable_length"] = "185mm"
+        specs["mating_connector"] = "UFL (I-PEX)"
+        return specs
+
+    if pn.startswith("EMF2449A1"):
+        specs["manufacturer"] = "Ezurio"
+        specs["mounting"] = "TH"
+        specs["type_antenna"] = "RF"
+        specs["structure"] = "Flex"
+        specs["protocol"] = "WiFi, WLAN"
+        specs["cable_length"] = "100mm"
+        specs["mating_connector"] = "UFL (I-PEX)"
+        return specs
+
+    # 19. Battery Holders & Contacts (Kls, Keystone)
+    if pn.startswith("L-KLS5-CR2032"):
+        specs["manufacturer"] = "Kls"
+        specs["mounting"] = "SMD"
+        specs["type_battery_holder"] = "CR2032 Pil Yuvası"
+        return specs
+
+    if pn.startswith("L-KLS5-SP-073"):
+        specs["manufacturer"] = "Kls"
+        specs["mounting"] = "SMD"
+        specs["type_battery_holder"] = "1xAA Pil Yuvası"
+        return specs
+
+    if pn == "55":
+        specs["manufacturer"] = "Keystone Electronics"
+        specs["mounting"] = "SMD"
+        specs["type_battery_holder"] = "3xAA Pil Yuvası"
+        specs["special_def"] = "Battery Contact Clip Multiple (AAA, A23, N)"
         return specs
 
     return specs
@@ -2520,7 +2702,7 @@ def extract_component_specs(
 
 CORE_ATTRIBUTES_BY_TYPE: dict[str, set[str]] = {
     "RES": {"mounting", "package", "value", "tolerance", "wattage", "compositionresistors", "specialdefinitionresistors", "q"},
-    "CAP": {"mounting", "package", "value", "voltage", "tolerance", "temperature", "specialdefinitioncapacitors", "q"},
+    "CAP": {"mounting", "package", "packagecapacitor", "value", "valuecapacitors", "voltage", "tolerance", "temperature", "loadlife", "pitch", "sizecapacitor", "specialdefinitioncapacitors", "q"},
     "DIO": {"mounting", "package", "typediode", "value", "specialdefinitionall", "q"},
     "CON": {"mounting", "typeconnector", "pintypeofconnector", "pitchconnector", "pitch", "pinnumber", "angle", "q"},
     "IND": {"mounting", "package", "value", "sizeinductor", "q"},
@@ -2759,18 +2941,19 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
         # Fallback if material type not found in rulebook
         return [], "", ""
 
-    # Sort attributes by their official SORTNO
-    attribute_sorts: list[tuple[float, str, tuple[RuleEntry, ...]]] = []
-    for attr_norm, entries in typed_rules.items():
-        if not entries:
-            continue
-        try:
-            s_order = float(entries[0].sort_order)
-        except (ValueError, TypeError):
-            s_order = 999.0
-        attribute_sorts.append((s_order, attr_norm, entries))
+    # Sort attributes by their official SORTNO and attribute name
+    by_sort: dict[tuple[float, str], list[RuleEntry]] = {}
+    for e in rulebook.entries:
+        if _normalize_label(e.material_type) == type_key and e.attribute_name:
+            try:
+                s_order = float(e.sort_order)
+            except (ValueError, TypeError):
+                s_order = 999.0
+            by_sort.setdefault((s_order, _normalize_attribute(e.attribute_name)), []).append(e)
 
-    attribute_sorts.sort(key=lambda x: x[0])
+    attribute_sorts: list[tuple[float, str, tuple[RuleEntry, ...]]] = [
+        (s, a, tuple(ents)) for (s, a), ents in sorted(by_sort.items(), key=lambda x: x[0][0])
+    ]
 
     mappings: list[PropertyMapping] = []
     description_tokens: list[str] = []
@@ -2799,8 +2982,9 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
         status = "BULUNAMADI"
         is_default_rule = False
 
-        # Sub-group conditional attributes: skip attributes that do not apply to this component subtype
+        # Sub-group conditional attributes: ceramic MLCCs do not show loadlife, pitch, sizecapacitor in property mappings, but DEKA ERP code requires '0' for each
         if is_ceramic_mlcc and any(k in attr_norm for k in ("loadlife", "pitch", "sizecapacitor")):
+            code_tokens.append("0")
             continue
 
         if is_electrolytic and "specialdefinition" in attr_norm:
@@ -2813,12 +2997,17 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             if not counter_val:
                 if material_type == "ADP":
                     counter_val = "011"
+                elif material_type == "BAH":
+                    counter_val = "000XX"
                 else:
                     counter_val = "0000XX"
             elif material_type == "ADP":
                 if str(counter_val).isdigit():
                     counter_val = f"{int(counter_val):03d}"
-            elif material_type in ("ANT", "BAH"):
+            elif material_type == "BAH":
+                if str(counter_val).isdigit():
+                    counter_val = f"{int(counter_val):05d}"
+            elif material_type == "ANT":
                 if str(counter_val).isdigit():
                     counter_val = f"{int(counter_val):06d}"
             mappings.append(PropertyMapping(
@@ -2854,7 +3043,7 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                 status = "TAM EŞLEŞTİ"
 
         # 2. PACKAGE
-        elif attr_norm == "package":
+        elif attr_norm in ("package", "packagecapacitor", "packageinductor"):
             pkg = specs.get("package", "")
             extracted_val_str = pkg
             if pkg:
@@ -2878,23 +3067,31 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                             break
 
         # 3. VALUE
-        elif attr_norm == "value":
+        elif attr_norm in ("value", "valuecapacitors", "valueresistors", "valueresistor"):
             if material_type == "CAP":
                 target_val = specs.get("capacitance_str", "")
                 extracted_val_str = target_val
                 if target_val:
+                    # Pass 1: exact string / unit match (e.g. '1000pF' in '1000pF,', '0.1uF' in '0.1uF,')
                     for e in entries:
-                        # Compare normalized capacitance
-                        c_entry = _extract_capacitance(e.value_description.casefold())
-                        c_target = _extract_capacitance(target_val.casefold())
-                        if c_entry is not None and c_target is not None and c_entry == c_target:
+                        desc = (e.value_description or "").strip().rstrip(",").strip().casefold()
+                        if desc == target_val.casefold().strip():
                             matched_entry = e
                             status = "TAM EŞLEŞTİ"
                             break
-                        elif target_val.casefold() in e.value_description.casefold():
-                            matched_entry = e
-                            status = "YAKIN EŞLEŞTİ"
-                            break
+                    # Pass 2: normalized numeric comparison
+                    if not matched_entry:
+                        for e in entries:
+                            c_entry = _extract_capacitance(e.value_description.casefold())
+                            c_target = _extract_capacitance(target_val.casefold())
+                            if c_entry is not None and c_target is not None and c_entry == c_target:
+                                matched_entry = e
+                                status = "TAM EŞLEŞTİ"
+                                break
+                            elif target_val.casefold() in e.value_description.casefold():
+                                matched_entry = e
+                                status = "YAKIN EŞLEŞTİ"
+                                break
 
             elif material_type == "RES":
                 target_val = specs.get("resistance_str", "")
@@ -3034,14 +3231,31 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
 
         # 7. SPECIAL DEFINITION / DIELECTRIC
         elif "specialdefinition" in attr_norm and material_type != "DSP":
-            target_sp = specs.get("special_def", "")
-            extracted_val_str = target_sp
-            if target_sp:
-                for e in entries:
-                    if e.value_description and target_sp.casefold() in e.value_description.casefold():
-                        matched_entry = e
+            if material_type == "CAP" and int(float(sort_no)) == 100:
+                target_sp = specs.get("special_def_2", "")
+                extracted_val_str = target_sp
+                if target_sp:
+                    for e in entries:
+                        if e.value_description and target_sp.casefold() in e.value_description.casefold():
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
+                if not matched_entry:
+                    # For standard commercial MLCCs, DEKA ERP maps Sort 100 to 'A'
+                    default_a = next((e for e in entries if str(e.value).strip() == "A"), None)
+                    if default_a:
+                        matched_entry = default_a
                         status = "TAM EŞLEŞTİ"
-                        break
+                        is_default_rule = True
+            else:
+                target_sp = specs.get("special_def", "")
+                extracted_val_str = target_sp
+                if target_sp:
+                    for e in entries:
+                        if e.value_description and target_sp.casefold() in e.value_description.casefold():
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
             if not matched_entry:
                 # Generalized Null/Default Standard Rule Fallback for Qualifiers
                 for e in entries:
@@ -3091,6 +3305,12 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
         elif attr_norm == "q":
             target_mfr = specs.get("manufacturer", "")
             target_mfr_code = specs.get("manufacturer_code", "")
+            if target_mfr and not target_mfr_code:
+                mfr_registry = rulebook.manufacturers if (rulebook and rulebook.manufacturers) else KNOWN_MANUFACTURERS
+                for kw, name, code in mfr_registry:
+                    if target_mfr.casefold() == name.casefold() or target_mfr.casefold() == kw.casefold():
+                        target_mfr_code = code
+                        break
             extracted_val_str = target_mfr
             if target_mfr or target_mfr_code:
                 # Pass 1: exact description match (e.g. 'TE Connectivity' == 'TE Connectivity' or 'Samsung' == 'Samsung')
@@ -3689,30 +3909,26 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
         return ", ".join(tokens)
 
     elif material_type == "CAP":
-        # e.g.: Multilayer Ceramic Chip Capacitor, 100nF 50V 10%, 0805 SMD X7R, Samsung
-        is_mlcc = specs.get("special_def") in ("X7R", "X5R", "C0G", "NP0", "Y5V", "X7S") or specs.get("package") in ("0402", "0603", "0805", "1206")
-        title = "Multilayer Ceramic Chip Capacitor" if is_mlcc else "Capacitor"
-        val_parts = []
+        # e.g.: SMD 0402 Package, 1uF, 16V, %10, -55°C~+85°C, X5R, Automotive, Murata
+        tokens = []
+        mount = specs.get("mounting", "SMD")
+        pkg = specs.get("package", "")
+        if pkg:
+            tokens.append(f"{mount} {pkg} Package".strip())
+        else:
+            tokens.append(mount)
         if specs.get("capacitance_str"):
-            val_parts.append(specs["capacitance_str"])
+            tokens.append(specs["capacitance_str"])
         if specs.get("voltage"):
-            val_parts.append(specs["voltage"])
+            tokens.append(specs["voltage"])
         if specs.get("tolerance"):
-            val_parts.append(specs["tolerance"])
-        val_str = " ".join(val_parts)
-        pkg_parts = []
-        if specs.get("package"):
-            pkg_parts.append(specs["package"])
-        if specs.get("mounting"):
-            pkg_parts.append(specs["mounting"])
+            tokens.append(specs["tolerance"])
+        if specs.get("temperature"):
+            tokens.append(specs["temperature"])
         if specs.get("special_def"):
-            pkg_parts.append(specs["special_def"])
-        pkg_str = " ".join(pkg_parts)
-        tokens = [title]
-        if val_str:
-            tokens.append(val_str)
-        if pkg_str:
-            tokens.append(pkg_str)
+            tokens.append(specs["special_def"])
+        if specs.get("special_def_2") and specs["special_def_2"] != specs.get("special_def"):
+            tokens.append(specs["special_def_2"])
         if mfr:
             tokens.append(mfr)
         return ", ".join(tokens)
@@ -3849,6 +4065,8 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
         m_str = specs.get("mounting", "")
         prefix = f"{m_str} {t_bah}".strip() if m_str else t_bah
         tokens = [prefix]
+        if specs.get("special_def"):
+            tokens.append(specs["special_def"])
         if mfr:
             tokens.append(mfr)
         return ", ".join(tokens)

@@ -1,0 +1,223 @@
+<USER_REQUEST>
+şimdi sana erp kodu ürün açıklaması ve ürün kodlarını içeren bir liste vericem sen bu listedeki ürünlerin ütün kodlarından internette o ürüne dair datasheeti bulmaya çalışacaksın eğer datasheet yoksa o ürünü atla datasheetini bulduğun ürünlerin projemizde doğru çalışıp çalışmadığını test et ve doğru çalışmaları için gerekeni yap projeyi bozma her şey en doğru şekilde olsun datasheetlerde eksiklik olabilir veya projeden kaynaklı olmayan sorunlar olabilir listede vs onlara takılma projede çıkması gereken sonuç aldığımız çıktı ne kadar doğru doğru olmaları için ne yapılması gerekiyor ona bak superpowers kullan. 
+ ADPAA00A000014-KZ ADP   Akülü (Battery) Klozet Kapak Sistemi Şarj Adaptörü, Kaizen Hijyen 20163
+       ADPAA00A100001-YI ADP   AC/DC Duvar Tipi Adaptör, 176 - 264VAC, 6VDC, 1.8A, Yıldırım Adaptör    CYS 1206-M
+        ADPAA00A301011-SMK      ADP   AC/DC Duvar Tipi Adaptör, 176 - 264VAC, 12VDC, 2A, 1.5mm Cable, SIMSUKIAN     SK03T1200200V
+ANTT3000020-TC    ANT   RF Board Antenna, WiFi, 200mm MHF Cable, TE Connectivity    2108857-4
+ANTT3000021-EZU   ANT   RF Flex Antenna, WLAN, 185mm UFL Cable (I-PEX), Ezurio      MAF95310
+ANTT3000022-EZU   ANT   RF Flex Antenna, WiFi, WLAN, 100mm Cable I-PEX, Ezurio      EMF2449A1-10UFL                                              
+ANTT3000023-TC    ANT   RF Board Antenna, WiFi, 50mm MHF Cable, TE Connectivity     2108857-1        
+ 04DEKA                            
+BAHS1000033-KL    BAH   SMD CR2032 Pil Yuvası,  Kls   L-KLS5-CR2032-09
+BAHS1000035-KL    BAH   SMD CR2032 Pil Yuvası,  Kls   L-KLS5-CR2032-11
+BAHS1000036-CF    BAH   SMD CR2032 Pil Yuvası,  Connfly     DS1092-11-N8S
+BAHS1100076-KL    BAH   SMD Pil Yuvası,  Kls    L-KLS5-SP-073-R
+BAHS1300056-KYS   BAH   SMD Pil Yuvası, Battery Contact Clip Multiple (AAA, A23, N), Keystone Electronics   55
+
+BUZSA030307-MT    BUZ   SMD 3V, 4kHz, 75dB, 3mm, Murata     PKLCS1212E40A1-R1
+BUZSA030310-FT    BUZ   SMD 3V, 4kHz, 75dB, 3.5mm, FUET     FUET-5020
+BUZSA030310-TRU   BUZ   SMD 3V, 4kHz, 75dB, 3.5mm, TRUWATT (FUET) TRUWATT (FUET-5020)
+BUZSA030411-COR   BUZ   SMD 3V, 4kHz, 80dB, 5mm, CORE (PUI Audio, Inc.) CR-HM-013-0006 (SMT-0540-T-9-R)
+BUZSA060608-YXZ   BUZ   SMD 3V, 2.73kHz, 85dB, 7.5mm, YXDZ  YX7525P
+BUZTA010205-BS    BUZ   TH 3V, 2kHz, 70dB, 17mm, Be Star    BPT1703H09-02
+BUZTA010205-KE    BUZ   TH 3V, 2kHz, 70dB, 17mm, Kepo KPT-G1713-K11236
+BUZTA010206-KE    BUZ   TH 3V, 2kHz, 70dB, 22mm, Kepo KPT-G2312-K7462
+BUZTA010206-SAN   BUZ   TH 3V, 2kHz, 70dB, 22mm, SANCO      EPT-22A2003P
+BUZTA010206-SOU   BUZ   TH 3V, 2kHz, 70dB, 22mmx26.5mm, 7mm, SOUND COMP.      PT2770AHP-06
+BUZTA100400-YXZ   BUZ   TH 3V, 2.7kHz, 80dB, 9mm, YXDZ      YX-YT9503
+BUZTB010602-YXZ   BUZ   TH 5V, 2kHz, 85dB, 12mm, YXDZ YX-YT12065-YT05D
+BUZTB010605-HD    BUZ   TH 5V, 2kHz, 85dB, 17mm, Hong De Da Elec. HPT-1780P-05TB-2.0-30-10.0
+BUZTB020600-HUA   BUZ   TH 5V, 3kHz, 85dB, 9mm, Huaneng     HNB09A05
+BUZTB030604-GEN   BUZ   TH 5V, 4kHz, 85dB, 14mm, GENTEK (YXDZ)    GENTEK (YX-WY1470A)
+
+CAPSS11004B1KI000OB-MT  CAP   SMD 0402 Package, 1uF, 16V, %10, -55°C~+85°C, X5R, Automotive, Murata   GRT155R61C105KE01D
+CAPSS11008B1JA000GA-WLS CAP   SMD 0402 Package, 1000pF, 16V, %5, -55°C~+125°C, X7R, Walsin      0402B102J160CT
+CAPSS11008B1JA000GA-YG  CAP   SMD 0402 Package, 1000pF, 16V, %5, -55°C~+125°C,    X7R,  Yageo   CC0402JRX7R7BB102
+CAPSS11009B1KA000GB-SS  CAP   SMD 0402 Package, 0.1uF, 16V, %10, -55°C~+125°C, X7R, Automotive, Samsung     CL05B104KO5VPND
+CAPSS11010B1KA000GA-MT  CAP   SMD 0402 Package, 10000pF, 16V, %10, -55°C~+125°C, X7R,  Murata   GRM155R71C103KA01D
+
+
+C000000132201810101TT   CBL   Cable Konn. 2x5'li, 20cm, N274 D-T  FC-FD10P200B
+C0000001622011710101TT  CBL   Cable Konn. 2x5'li, 24cm, N101 D-D  FC-FD10P240A
+CBLC00000002-TT   CBL   Cable Konn. 2x5'li, 20cm, N274 D-T, Ttaf  TR-98-00008R1
+CBLC00000010-TT   CBL   Cable Konn. 2x5'li, 24cm, N101 D-D, Ttaf  TR-98-00009R1
+
+
+CHZ0011-GEN CHZ   LS30 PID KONTROL CİHAZI 220V  GENTEK      GNT/LS-30 CİHAZ kısmında bir tane açılmış kod vardı.
+
+CONCAIB20300006-TL      CON   Cable Wire to Wire Klemens, Dişi, 8mm, 3 pin, Tianli  TLB-100-03P
+CONCAIB40300113-GA      CON   Cable Wire to Wire Klemens, Dişi, 8.2mm, 3 pin, Gaosong/Degson    DG8HS-1.2-03P-17-100SH/AH
+CONCAIB41200084-GA      CON   Cable Wire to Wire Klemens, Dişi, 8.2mm, 12 pin, Gaosong/Degson   DG8HS-1.2-12P-17-100SH/AH
+CONSAABB0210785-ISM     CON   SMD Pin Header, Dişi, 2mm, 2 pin, 90°(Yatık), İsmak (Kls)   03030520017-00 (L-KLS1-208BC-6.35-1-2TWR
+CONSAABD0E20953-ENV     CON   SMD Pin Header, Dişi, 2.54mm, 2x6 pin, 180°(Dik), Enervon (Connfly)     HM00900002800 (DS1023-45-2X6B8SRS)
+CONSABBC0210335-SC      CON   SMD IDC Konnektör, Dişi, 2.5mm, 2 pin, 90°(Yatık),  Stocko  CON-MFMP-7238-202-061-960-G
+CONSADBF0310940-WA      CON   SMD Wire to Board Konnektör, Dişi, 4mm, 3 pin, 90°(Yatık),  Wago  2060-453/998-404
+CONSAEBL0311112-DTS     CON   SMD Wire to Board Kilitli Konnektör, Dişi, 1.25mm, 3 pin, 90°(Yatık), DTSİS (JST)   H010202004601 (455-1565-1-ND)
+CONSAEBL0811111-DTS     CON   SMD Wire to Board Kilitli Konnektör, Dişi, 1.25mm, 8 pin, 90°(Yatık), DTSİS (JST)   H010202004606 (455-1570-1-ND)
+CONSAG0B00621037-AM     CON   SMD Board to Board Konnektör, Dişi, 6 pin, 180°(Dik), Amphenol ICC      89898-303ALF
+CONSAHB12510001-MO      CON   SMD FFC/FPC Konnektör, Dişi, 0.3mm, 35 pin, 90°(Yatık), Molex     502250-3591
+CONSAHB12510243-MO      CON   SMD FFC/FPC Konnektör, Dişi, 0.3mm, 35 pin, 90°(Yatık),  Molex    5047543520
+CONSAHB12510307-OP      CON   SMD FFC/FPC Konnektör, Dişi, 0.3mm, 35 pin, 90°(Yatık), Oupiin    2566-F35G00DT
+CONSAHB12510909-HRE     CON   SMD FFC/FPC Konnektör, Dişi, 0.3mm, 35 pin, 90°(Yatık),  Hirose Electric      FH35C-35S-0.3SHW(50)
+CONSAHB50610561-ZZ6     CON   SMD FFC/FPC Konnektör, Dişi, 0.5mm, 6 pin, 90°(Yatık), GCT  FFC2B35-06-G
+CONSAHB51011085-AM      CON   SMD FFC/FPC Konnektör, Dişi, 0.5mm, 10 pin, 90°(Yatık), Amphenol ICC    SFV10R-2STBE1HLF
+CONSAHB51611075-COR     CON   SMD FFC/FPC Konnektör, Dişi, 0.5mm, 16 pin, 90°(Yatık), CORE (GCT)      CR-HM-004-0040(FFC2B28-16-G)
+CONSAHB52011014-XUN     CON   SMD FFC/FPC Konnektör, Dişi, 0.5mm, 20 pin, 90°(Yatık),  XUNPU    FPC-05F-20PH20
+CONSAHB52310560-AM      CON   SMD FFC/FPC Konnektör, Dişi, 0.5mm, 40 pin, 90°(Yatık), Amphenol ICC    62684-402100ALF
+CONSAHB52311110-DTS     CON   SMD FFC/FPC Konnektör, Dişi, 0.5mm, 40 pin, 90°(Yatık), DTSİS (Amphenol FCI)  H010202004302 (62684-402100ALF)
+CONSAHB53010112-WU      CON   SMD FFC/FPC Konnektör, Dişi, 0.5mm, 30 pin, 90°(Yatık), Wurth     68713014022
+CONSAHB53010553-MO      CON   SMD FFC/FPC Konnektör, Dişi, 0.5mm, 30 pin, 90°(Yatık),  Molex    0541323062
+CONSAHB53010559-MO      CON   SMD FFC/FPC Konnektör, Dişi, 0.5mm, 30 pin, 90°(Yatık), Molex     5051103091
+CONSAHB5301100-MO CON   SMD FFC/FPC Konnektör, Dişi, 0.5mm, 30 pin, 90°(Yatık), Molex     0541043033
+CONSAHB53420505-AM      CON   SMD FFC/FPC Konnektör, Dişi, 0.5mm, 67 pin, 180°(Dik),  Amphenol ICC    10131758-001RLF
+CONSAHBA0510002-WU      CON   SMD FFC/FPC Konnektör, Dişi, 1mm, 5 pin, 90°(Yatık), Wurth  68610514422
+CONSAHBA051099-MO CON   SMD FFC/FPC Konnektör, Dişi, 1mm, 5 pin, 90°(Yatık), Molex  0522070560
+CONSAHBA1210306-MO      CON   SMD FFC/FPC Konnektör, Dişi, 1mm, 12 pin, 90°(Yatık), Molex 52207-1233
+CONSAHBZ00811073-COR    CON   SMD FFC/FPC Konnektör, Dişi, 0.50mm, 8 pin, 90°(Yatık), CORE (Amphenol ICC)   CR-HM-004-0024 (F3311A7H121008E200)
+CONSAHBZ00811074-COR    CON   SMD FFC/FPC Konnektör, Dişi, 0.50mm, 8 pin, 90°(Yatık), CORE (GCT)      CR-HM-004-0024 (FFC2B28-08-G)
+CONSAHBZ01011047-AM     CON   SMD FFC/FPC Konnektör, Dişi, 0.50mm, 10 pin, 90°(Yatık), Amphenol ICC   SFV10R-1STBE1HLF
+CONSAJB51010302-IR      CON   SMD Box Header, Dişi, 0.5mm, 10 pin (2x5), 90°(Yatık), (IMSA-10112B-10A), IRISO     IMSA-10112B-10Y900
+CONSAJBD0D20239-WU      CON   SMD Box Header, Dişi, 2.54mm, 2x5 pin, 180°(Dik),  Wurth    690367291076
+CONSAJBE1010301-MO      CON   SMD Box Header, Dişi, 0.80mm, 10 pin (2x5), 90°(Yatık), Molex     0533091070
+CONSANB00511038-MIK     CON   SMD USB-microB, Dişi, 5 pin, 90°(Yatık), Mikrodev (On Shore)      HM0064 (USB-M26FTR)
+CONSAOB02A10546-MO      CON   SMD Modular Jack, Dişi,  6P6C, 90°(Yatık),  (ELDOR) Molex   0437436001
+CONSAPBD0420320-WU      CON   SMD Socket, Dişi, 2.54mm, 4 pin, 180°(Dik),  Wurth    61000413321
+CONSASBE0420308-KL      CON   TH, USB MINI B Type, Dişi, 0.80mm, 4 pin, 180°(Dik),  Kls   L-KLS1-229-5FA-B
+CONSATBO1020813-ZZ3     CON   SMD Receptacles, Dişi, 1.27mm, 10 pin, 180°(Dik),  Samtec   CLP-105-02-L-D-TR
+
+
+CRYSA0078-EPS     CRY   SMD 2-SMD, 32.768kHz, 12.5pF, 70K Ohms, EPSON   FC-135 32.7680KA-A5
+CRYSA0079-ZZ9     CRY   SMD 2-SMD, 32.768kHz, 12.5pF, 90kOhms, ECS      ECS-.327-12.5-12-TR
+CRYSA0081-GEN     CRY   SMD SMD3215-2P, 32.768kHz, 12.5pF 50kOhm, GENTEK (HCI)      GENTEK (FC31M2-32.768-NTLLLDT)
+CRYSA0084-ARC     CRY   SMD 2-SMD, 32.768kHz, 4pF, 60kOhms, Abracon     ABS06-107-32.768KHZ-T
+CRYSA0085-ENV     CRY   SMD SMD2012-2P, 32.768kHz, 12.5pF, 90kOhm, Enervon (EPSON)  HM01400000200 (X1A0000610002)
+CRYSA0090-HCI     CRY   SMD SMD3215-2P, 32.768kHz, 12.5pF 50kOhm, HCI   FC31M2-32.768-NTLLLDT
+CRYSA0094-SKI     CRY   SMD 2-SMD, 32.768kHz, 7pF, 70kOhms, Seiko Instruments SC20S-7PF20PPM
+CRYSA0098-RA      CRY   SMD 32.768kHz, 70 kOhms, 12.5P, 20PPM, Raltron  RT3215-32.768-12.5-TR
+CRYSA0099-MIK     CRY   SMD 4-SOJ, 12.5pF, 32.768kHz, Mikrodev (Epson)  HM0537 (MC-306 32.768000KHZ)
+CRYSA2022-ZZ9     CRY   SMD 8MHz, ECS     ECS-80-20-5PX-TR
+CRYSA2025-HDE     CRY   SMD Crystal Oscillator, 8MHz, HDAEnerji (Yajingxin)   HDA001646(TX50328M2KDCE1T)
+CRYSA2028-RA      CRY   SMD 8MHz, 18pF, H130BR, Raltron     H130B-8.000-18-3030-EXT
+CRYSA2042-MT      CRY   SMD 8MHz,  Murata CSTNE8M00G52A000R0
+CRYSA2076-RA      CRY   SMD 4-SMD, 8MHz, 16 pF, 400Ohm, Raltron   RH100-8.000-16-3030-TR-N
+CRYSA2091-TRU     CRY   SMD Crystal Oscillator, 8MHz, 10pF, 4P, TRUWATT (YAJINGXIN) TRUWATT (TAXM8M4RDBCCT2T)
+CRYSA2093-TRU     CRY   SMD SMD3225, 8MHz, 12pF, TRUWATT    TRUWATT (306010014200)
+CRYSA4050-KY0     CRY   SMD 2-SMD, 20MHz, 8pF, 100 Ohms, AEC-Q200, KYOCERA AVX      CX3225GA20000D0PTVCC
+CRYSA5001-JA      CRY   SMD 26MHz, Jauch  Q 26,0-JXS32-10-10/10-FU-LF
+CRYSA5061-EPS     CRY   SMD 4-SMD, 26MHz, 9pF, 40Ohm, EPSON TSX-3225 26.0000MF09Z-AC3
+CRYSA6089-MT      CRY   SMD 3-SMD, Non-Standard, 4MHz, 15 pF,  60 Ohms, Murata      CSTCR4M00G53Z-R0
+CRYSA7027-SST     CRY   SMD 13.560MHz, Source-Set     SST 13.560M 20PF 10PPM
+CRYSA9009-DNI     CRY   SMD 12MHz, Dannie.CC (NDK)    DANNİE (NX3225SA-12MHZ-STD-CSR-6)
+CRYSA9012-RA      CRY   SMD 12MHz, 3.2x2.5mm, Raltron RH100-12.000-12-1010-EXT
+CRYSA9020-ARC     CRY   SMD 12MHz, 10pF, ABM8G,  Abracon    ABM8G-12.000MHZ-4Y-T3
+CRYSA9102-DTS     CRY   SMD 3225-4P, 12MHz, 9pF, ±10ppm, DTSİS (JYJE)   H010102012143 (3TJ412000HYFBC)
+CRYSB0008-DNI     CRY   SMD 16MHz, Dannie.CC (NDK)    DANNİE (NX2520SA-16MHZ-STD-CSW-5)
+CRYSB0013-RA      CRY   SMD 16MHz, 3.2x2.5mm, Raltron RH100-16.000-10-1010-EXT
+CRYSB0032-RA      CRY   SMD 16MHz, 3.2x2.5mm, Raltron RH100-16.000-10-1010-EXT-TR
+CRYSB0035-ZZ9     CRY   SMD 16MHz, 11.4x4.8mm, ECS    ECS-163.84-18-5PLX-AGN-TR
+CRYSB0041-RA      CRY   SMD 16MHz, 4.7X4.6mm, Raltron AS-16.384-18-2050-SMD-TR
+CRYSB0054-ARC     CRY   SMD 4-SMD, 16MHz, 10pF, 80 Ohms, AEC-Q200, Abracon    ABM10AIG-16.000MHZ-4Z-T3
+CRYSB0055-MPL     CRY   SMD 4-SMD, 16MHz, 10pF, 80 Ohms, AEC-Q200, M-Plustec (Abracon)    M-PLUSTEC(ABM10AIG-16.000MHZ-4Z-T3)
+CRYSB0065-ENV     CRY   SMD 16MHz, 8pF, Enervon HM01400000300
+CRYSB0080-ENV     CRY   SMD 4-SMD 16MHz, 8pF, 270Ohms, Enervon (Murata) HM01400000300 (XRCGB16M000FXN20R0)
+CRYSB0087-ENV     CRY   SMD 4-SMD 16MHz, 8pF, 200Ohms, Enervon (Wurth)  HM01400000300 (830108178109)
+CRYSB0100-COR     CRY   SMD 16MHz,18pF, 70Ohm, CORE (Würth) CR-HM-012-0004 (830055951)
+CRYSB0103-DTS     CRY   SMD 4-SMD, 16MHz, ±10ppm, 9pF, 60 Ohms, DTSİS (EPSON) H010102012072(TSX-3225 16.0000MF09Z-AC0)
+CRYSB1014-EPT     CRY   SMD 24MHz, Epson Timing FA-238 24.0000MB-C3
+CRYSB1019-ARC     CRY   SMD 24MHz, MEMS OSC, Abracon  ASDMB-24.000MHZ-LC-T
+CRYSB1048-MT      CRY   SMD 4-SMD, 24MHz,8pF, 60 Ohms, Murata     XRCGB24M000F2P91R0
+CRYSB1096-MIK     CRY   SMD 4-SMD, 24MHz, 6pF, Mikrodev (ECS)     HM0039 (ECS-240-6-37-JTN-TR)
+CRYSB1104-DTS     CRY   SMD 4-SMD, 24MHz, ±10ppm, 9pF, 40 Ohms, DTSİS (EPSON) H010102012078(TSX-3225 24.0000MF15X-AC6)
+CRYSB2015-EPT     CRY   SMD 25MHz, Epson Timing FA-238 25.0000MB-C3
+CRYSB2017-ARC     CRY   SMD 25MHz, MEMS OSC, Abracon  ASDMB-25.000MHZ-LC-T
+CRYSB2038-NDK     CRY   SMD 25MHz,  NDK   NX3225GA-25.000M-STD-CRG-2
+CRYSB2040-RA      CRY   SMD 25MHz, 3.2X2.5mm, Raltron RH100-25.000-18-F-3030-T
+CRYSB2059-RA      CRY   SMD HC-49/US, 25MHz, 20pF, 40Ohms, Raltron      AS-25.000-20-F-3030-EXT-SMD-TR
+CRYSB2072-TGG     CRY   SMD 4-SMD 25MHz, 10pF, 80Ohms, AEC-Q200, Togg (Murata)      TOGG (XRCGB25M000F3A16R0)
+CRYSB3018-ARC     CRY   SMD 50MHz, MEMS OSC, Abracon  ASDMB-50.000MHZ-LC-T
+CRYSB3095-MIK     CRY   SMD 4-SMD, 50MHz, 15pF, Mikrodev (Abracon)      HM0032 (ASEMB-50.000MHZ-LC-T)
+CRYSB4030-RA      CRY   SMD 40MHz, 18pF, Raltron      RH100-40.000-18-F-2050-T
+CRYSB4053-ISM     CRY   SMD 4-SMD 40MHz, AEC-Q200, İsmak (Diodes) 03030660001-00 (FW4000015Q)
+CRYSB4073-TGG     CRY   SMD 40MHz, 8pF, 2x1.6mm, AEC-Q200, Togg (NDK)   TOGG (NX2016SA-40M-STD-CZS-3)
+CRYSB4086-TGG     CRY   SMD 4-SMD, 40MHz, 8PF, 60Ohms, AEC-Q200 Togg (NDK)    TOGG (STDCZS3-40M)
+CRYSB5058-TXC     CRY   SMD 4-SMD, 39 MHz, 10pF, 35 Ohms, TXC Corporation     8Y39072005
+CRYSB6066-ZZ9     CRY   SMD 4-SMD, 27MHz, 12pF, 40Ohms, ECS ECS-270-12-33Q-JES-TR
+CRYSB7083-GEN     CRY   SMD SMD2016-4P, 32MHz, 12pF 100Ohm, GENTEK (YXC)      GENTEK (XL7EL89COI-111YLC-32M)
+CRYSB7088-ETR     CRY   SMD 4-SMD 32MHz, 8pF, 60 Ohms, AEC-Q200, EATRON (KYOCERA)   EATRON (CX2016SA32000D0WRQG1)
+CRYSB8105-DTS     CRY   SMD 4-SMD, 27.12MHz, ±20ppm, 18pF, 40 Ohms, DTSİS (ECS Inc.)      H010102012117 (ECS-271.2-18-33-JGN-TR3)
+CRYTA0003-RA      CRY   TH 32.768kHz, Raltron   R38-32.768-12.5-EXT-5PPM
+CRYTA0021-ZZ8     CRY   TH 32.768kHz,  Citizen  CFS-20632768DZFB
+CRYTA0046-ISP     CRY   TH 32.768kHz, 12.5pF, 30 kOhms, Cylindrical, ISIPARK (Abracon)    150-0220-010 (AB38T-32.768KHZ)
+CRYTA6002-MT      CRY   TH 4MHz, Murata   CSTLS4M00G53-A0/B0
+CRYTA6077-MT      CRY   TH Resonator, 4MHz, 15 pF ±0.2% 30 Ohms, Murata CSTLS4M00G53-B0
+CRYTA7005-CY      CRY   TH 13.560MHz, CY  13.560M DIP(HC49S)
+CRYTA8006-CY      CRY   TH 6.7458MHz, CY  6,7458M DIP(HC49S)
+
+Malzeme     Tipi  Açıklaması  Üretici Kodu
+DIOSA13H900-PH    DIO   SMD Minimelf, Zener, BZV55-C20, 20V, 500mW, Philips/Nxp     BZV55-C20,115
+DIOSD81I1300-NP   DIO   SMD SOD-123W, Schottky, 20V, 1A, PMEG2010ER,115, Nexperia   PMEG2010ER,115
+DIOSSA0J000-ON    DIO   SMD SOT23, Standard, BAS19, 200mA, 120V, On Semi      BAS19LT1G
+DIOST56K900-PA    DIO   SMD SMB, Tvs,120V 600W  P6SMBJ120,  Panjit      P6SMBJ120CA(S)_R1_00001
+DIOST56M1900-PA   DIO   SMD SMB, Tvs, 600W, 120V, P6SMBJ120CA_R3_00001,  Panjit     P6SMBJ120CA_R3_00001
+DIOST56Z2600-TRU  DIO   SMD SMB, Tvs, SMBJ20A, 20V, 600W, TRUWATT (FITTELFUSE)      TRUWATT (SMBJ20A)
+DIOSV81V500-AOV   DIO   SMD SOD-523, Schottky, NSR0520V2, ANOVA (Onsemi)      560232-001 (NSR0520V2T1G)
+DIOSZ101Z500-L0   DIO   SMD SOD-123, Schottky, LMBR0520T1G, 20V, 500mA, LRC   LMBR0520T1G
+DIOSZ103E17AC-NP  DIO   SMD SOD-123 Zener, 20V, 500 mW, NZH20C,115, Automotive AEC-Q101 Nexperia      NZH20C,115
+DIOSZ41M600-HO    DIO   SMD SOD123, Schottky, MBR0520, 500mA, 20V, Hottech    MBR0520-HT
+DIOSZ41S1000-PA   DIO   SMD SOD123, Schottky, 20V, 500mA,, SS0520,  Panjit    SS0520_R1_00001
+DIOSZZ96Z7100-DTS DIO   SMD SOT-143, Tvs, 5VWM, 20VC, PSR05-LF-T7, DTSİS (UMW)      H010101005318 (PSR05-LF-T7)
+DIOST46B1300-LT   DIO   SMD SMA, Tvs, SMAJ30CA, 48.4V, 8.3A, Littelfuse SMAJ30CA
+DIOST46B13AC-YG   DIO   SMD SMA, Tvs, 48.4V, 8.3A, SMAJ30CA, Automotive AEC-Q101 Yageo    SMAJ30CA-AT/TR13
+
+DMB-00024   DMB   Tezgah (Yemekhane)      DMB-00024
+DMB-00025   DMB   Tepsi Arabası (Yemekhane)     DMB-00025
+DMB-00026   DMB   Evye El Yıkama (Yemekhane)    DMB-00026
+DMB-00027   DMB   Bersu Tezgah Paslanmaz (Yemekhane)  DMB-00027
+DMB-00028   DMB   Bersu Yarım Tezgah (Yemekhane)      DMB-00028
+DMB-00029   DMB   Tezgah Arkası +4 Buzdolabı (Yemekhane)    DMB-00029
+DMB-00030   DMB   Banket Arabası Paslanmaz (Yemekhane)      DMB-00030
+DMB-00031   DMB   Mikrodalga (Yemekhane)  DMB-00031
+DMB-00032   DMB   Ekmek Kesme Makinesi (Yemekhane)    DMB-00032
+DMB-00033   DMB   Tepsi Arabası (Yemekhane)     DMB-00033
+DMB-00034   DMB   Bar Masası (Yemekhane)  DMB-00034
+DMB-00035   DMB   Oturma Grubu Çift Taraflı (Yemekhane)     DMB-00035
+DMB-00036   DMB   Saksı Çiçek (Yemekhane) DMB-00036
+DMB-00037   DMB   Tezgah (Bulaşıkhane)    DMB-00037
+DMB-00038   DMB   Evye (Bulaşıkhane)      DMB-00038
+DMB-00039   DMB   Takım Bulaşık Makinesi Paslanmaz (Bulaşıkhane)  DMB-00039
+DMB-00040   DMB   Bulaşık Yıkama Basketi (Bulaşıkhane)      DMB-00040
+DMB-00041   DMB   Tabak Kurutma Rafı (Bulaşıkhane)    DMB-00041
+DMB-00042   DMB   Kombili İnaoksan Fırın (Yemekhane İç Kısım)     DMB-00042
+DMB-00043   DMB   Bir Takım Set Üstü Fritöz (Yemekhane İç Kısım)  DMB-00043
+DMB-00044   DMB   Hazırlık Küçük Tezgah (Yemekhane İç Kısım)      DMB-00044
+DMB-00045   DMB   Altılı Ocak Set (Yemekhane İç Kısım)      DMB-00045
+
+DSPTD4AA0029-MH   DSP   TH Karakter LCD, Beyaz, 8x2 Char,  Microtech    MTB0802A2
+DSPTD4AA0031-WS   DSP   TH Karakter LCD, Beyaz, 8x2 Char, Winstar Display     WH0802A1-TFH-ET#
+DSPTE0FE0057-YBO  DSP   TH 7 Segment Display, Full Color, 8 Digit, 4-MUX, YEEBO     GR-V0801A-A0
+DSPTE1BA0002-LO   DSP   TH 7 Segment Display, Kırmızı, 1 Digit, COM+, Liteon  LTS-2801AJE
+DSPTE1BA0007-SB   DSP   TH 7 Segment Display, Kırmızı, 1 Digit, COM+,  Strong Base  E1-1039-AUR-1
+DSPTE1BA0013-FO   DSP   TH 7 Segment Display, Kırmızı, 1 Digit, COM+,  Foryard      FYS-3911BUHR-21
+DSPTE1BC0001-BR   DSP   TH 7 Segment Display, Kırmızı, 2 Digit, COM+, Bright Led    BD-A54(6RI / UBRI)
+DSPTE1BC0005-AA   DSP   TH 7 Segment Display, Kırmızı, 2 Digit, COM+,  Avago  HDSP-521A
+DSPTE1BC0009-SB   DSP   TH 7 Segment Display, Kırmızı, 2 Digit, COM+,  Strong Base  E2-2039AUR1-P8.3
+DSPTE1BC0012-WX   DSP   TH 7 Segment Display, Kırmızı, 2 Digit, COM+,  Wuxi Compul  CPS03622BUR-21
+DSPTE1BC0014-SB   DSP   TH 7 Segment Display, Kırmızı, 2 Digit, COM+,  Strong Base  E3-2056ASR2
+DSPTE1BC0021-SB   DSP   TH 7 Segment Display, Kırmızı, 2 Digit, COM+,  Strong Base  E3-2056AUR2
+DSPTE1BC0023-KLY  DSP   TH 7 Segment Display, Kırmızı, 2 Digit, COM+,  Kinley KL03922WDGBSR
+DSPTE1BC0027-KLY  DSP   TH 7 Segment Display, Kırmızı, 2 Digit, COM+,  Kinley KL03622WDGBSR
+DSPTE1BE0025-KLY  DSP   TH 7 Segment Display, Kırmızı, 3 Digit, COM+,  Kinley KL03631WDGBSR
+DSPTE1BF0038-AS   DSP   TH 7 Segment Display, Kırmızı, 3 Digit, COM-,  Assemcorp    KL05632WDGAW
+DSPTE4BF0055-SM   DSP   TH 7 Segment Display, Beyaz, 3 Digit, COM-,  Semtech  2414A-DW-6
+DSPTE4BF0056-SM   DSP   TH 7 Segment Display, Beyaz, 3 Digit, COM-,  Semtech  2614A-DW-6
+DSPTE4BH0028-FO   DSP   TH 7 Segment Display, Beyaz, 4 Digit, COM-,  Foryard  FYQ-5643CUW-21
+DSPTE4BH0030-KLY  DSP   TH 7 Segment Display, Beyaz, 4 Digit, COM-,  Kinley   KL05643WDGAW1-0603
+DSPTE4BH0046-SM   DSP   TH 7 Segment Display, Beyaz, 4 Digit, COM-,  Semtech  ALS3819-21W
+DSPTH3AB0004-DV   DSP   TH Super-Twisted Nematic, Yeşil, 16x2 Char, Display Visions EA DOGM162E-A
+DSPTI5000006-DV   DSP   TH Led Backlighting, Sarı/Yeşil, Custom, Display Visions    EA LED55X31-G
+DSPTJ0FC0047-NT   DSP   TH HMI Display, Capacitive Touch, Full Color, 4.3" 480x272, 5V, GPIO, Nextion NX4827P043-011C-Y
+
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-10-21T17:34:29+03:00.
+</ADDITIONAL_METADATA>
