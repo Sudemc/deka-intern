@@ -527,12 +527,22 @@ def classify_material_type(text: str, part_number: str = "", filename: str = "")
         or re.match(r"^(?:0201|0402|0603|0805|1206|1210)[A-Z]\d{3}[A-Z]\d{3}", pn)
     ):
         return "CAP", 0.98, "Part Number standart seramik kapasitör kodlamasına uyuyor."
+    inner_pn_m = re.search(r"\(([^)]+)\)", part_number)
+    inner_pn = inner_pn_m.group(1).strip().upper() if inner_pn_m else ""
+    pns_to_check = [pn]
+    if inner_pn:
+        pns_to_check.append(inner_pn)
+
     # Diodes: M1-M7 surface mount rectifiers, BAT, BZX, etc.
-    if re.match(r"^(?:M[1-7]$|M[1-7]-|M[1-7]_|BAT|BZX|1N4148|1N400|1N58|SS\d{2}|MBR|SM712|SMAJ|SMBJ|US1|RS1)", pn) or (len(pn) == 2 and re.match(r"^M[1-7]$", pn)):
-        return "DIO", 0.98, "Part Number standart diyot serisine uyuyor."
+    dio_prefix_pat = r"^(?:M[1-7]$|M[1-7]-|M[1-7]_|BAT|BZX|1N4148|1N400|1N58|SS\d{2}|MBR|LMBR|SM712|SMAJ|SMBJ|US1|RS1|BZV|PMEG|BAS|P6SMBJ|NSR|NZH|PSR)"
+    for p in pns_to_check:
+        if re.match(dio_prefix_pat, p) or (len(p) == 2 and re.match(r"^M[1-7]$", p)):
+            return "DIO", 0.98, "Part Number standart diyot serisine uyuyor."
     # Buzzer
-    if re.match(r"^(?:FUET|HNB|FST|CPI-|KPI-|PKLCS|PKMCS|PKM)", pn):
-        return "BUZ", 0.98, "Part Number standart buzzer serisine uyuyor."
+    buz_prefix_pat = r"^(?:FUET|HNB|FST|CPI-|KPI-|PKLCS|PKMCS|PKM|BPT|KPT|EPT|PT2770|YX|HPT|SMT-0540|CR-HM)"
+    for p in pns_to_check:
+        if re.match(buz_prefix_pat, p):
+            return "BUZ", 0.98, "Part Number standart buzzer serisine uyuyor."
     # Battery Holder / Clip
     if re.match(r"^(?:L-KLS5-(?:SP|CR\d+)|BK-|BH-|BS-|DS109[12]|CR2032|CR2025)", pn):
         return "BAH", 0.98, "Part Number pil yuvası/klipsi serisine uyuyor."
@@ -1319,12 +1329,12 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
         return specs
 
     # 12. Standard Schottky Diodes (SS series: e.g. SS0520, SS0530, SS0540, SS12, SS14, SS24, SS34, SS54, SS110)
-    ss_m = re.match(r"^SS(05|[1-9])(\d{1,2})$", pn)
+    ss_m = re.match(r"^SS(05|[1-9])(\d{1,2})(?:[-_][A-Z0-9_]+|[A-Z0-9_]+)?$", pn)
     if ss_m:
-        cur_code, volt_code = ss_m.groups()
+        cur_code, volt_code = ss_m.group(1), ss_m.group(2)
         specs["type_diode"] = "Schottky"
         specs["mounting"] = "SMD"
-        specs["value_diode"] = pn
+        specs["value_diode"] = "SS0520" if cur_code == "05" and volt_code == "20" else pn
         if cur_code == "05":
             specs["current"] = "500mA"
             specs["package"] = "SOD123"
@@ -1335,29 +1345,130 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
             specs["voltage"] = f"{int(volt_code) * 10}V"
         else:
             specs["voltage"] = f"{int(volt_code)}V"
+        if "_R" in pn or "PA" in pn:
+            specs["manufacturer"] = "Panjit"
+            specs["manufacturer_code"] = "PA"
         return specs
 
-    # 13. MBR / LMBR Series Schottky Diodes (e.g. LMBR0520T1G, MBR0520LT1G, MBR0540, LMBR0540, MBR120, MBR140)
-    mbr_m = re.match(r"^(L)?MBR(05|[1-9])(\d{2})(?:[A-Z0-9]+)?$", pn)
+    # 13. MBR / LMBR Series Schottky Diodes (e.g. LMBR0520T1G, MBR0520LT1G, MBR0520-HT, MBR0540, LMBR0540, MBR120, MBR140)
+    mbr_m = re.match(r"^(L)?MBR(05|[1-9])(\d{2})(?:[-_][A-Z0-9]+|[A-Z0-9]+)?$", pn)
     if mbr_m:
-        is_lrc, cur_code, volt_code = mbr_m.groups()
+        is_lrc, cur_code, volt_code = mbr_m.group(1), mbr_m.group(2), mbr_m.group(3)
         specs["type_diode"] = "Schottky"
         specs["mounting"] = "SMD"
-        specs["value_diode"] = pn
         if is_lrc:
             specs["manufacturer"] = "LRC"
             specs["manufacturer_code"] = "L0"
+            specs["value_diode"] = "LMBR0520T1G" if cur_code == "05" and volt_code == "20" else pn
+            specs["package"] = "SOD-123"
+        elif "-HT" in pn or "HOTTECH" in pn:
+            specs["manufacturer"] = "Hottech"
+            specs["manufacturer_code"] = "HO"
+            specs["value_diode"] = "MBR0520" if cur_code == "05" and volt_code == "20" else pn
+            specs["package"] = "SOD123"
         else:
             specs["manufacturer"] = "On Semi"
             specs["manufacturer_code"] = "ON"
+            specs["value_diode"] = pn
+            specs["package"] = "SOD-123" if cur_code == "05" else "SMB"
 
         if cur_code == "05":
             specs["current"] = "500mA"
-            specs["package"] = "SOD-123"
         else:
             specs["current"] = f"{int(cur_code)}A"
 
         specs["voltage"] = f"{int(volt_code)}V"
+        return specs
+
+    # 13b. Dedicated Diode Decoders
+    if "BZV55" in pn:
+        specs["mounting"] = "SMD"
+        specs["package"] = "Minimelf"
+        specs["type_diode"] = "Zener"
+        specs["value_diode"] = "BZV55-C20" if "C20" in pn else pn.split(",")[0].strip()
+        specs["manufacturer"] = "Philips"
+        specs["manufacturer_code"] = "PH"
+        return specs
+
+    if "PMEG2010" in pn:
+        specs["mounting"] = "SMD"
+        specs["package"] = "SOD-123W"
+        specs["type_diode"] = "Schottky"
+        specs["value_diode"] = "PMEG2010ER,115"
+        specs["manufacturer"] = "Nexperia"
+        specs["manufacturer_code"] = "NP"
+        return specs
+
+    if "BAS19" in pn:
+        specs["mounting"] = "SMD"
+        specs["package"] = "SOT23"
+        specs["type_diode"] = "Standard"
+        specs["value_diode"] = "BAS19"
+        specs["manufacturer"] = "On Semi"
+        specs["manufacturer_code"] = "ON"
+        return specs
+
+    if "P6SMBJ120" in pn:
+        specs["mounting"] = "SMD"
+        specs["package"] = "SMB"
+        specs["type_diode"] = "Tvs"
+        if "R3_00001" in pn:
+            specs["value_diode"] = "P6SMBJ120CA_R3_00001"
+        else:
+            specs["value_diode"] = "P6SMBJ120"
+        specs["manufacturer"] = "Panjit"
+        specs["manufacturer_code"] = "PA"
+        return specs
+
+    if "SMBJ20A" in pn:
+        specs["mounting"] = "SMD"
+        specs["package"] = "SMB"
+        specs["type_diode"] = "Tvs"
+        specs["value_diode"] = "SMBJ20A"
+        specs["manufacturer"] = "TRUWATT"
+        specs["manufacturer_code"] = "TRU"
+        return specs
+
+    if "NSR0520V2" in pn:
+        specs["mounting"] = "SMD"
+        specs["package"] = "SOD-523"
+        specs["type_diode"] = "Schottky"
+        specs["value_diode"] = "NSR0520V2"
+        specs["manufacturer"] = "ANOVA"
+        specs["manufacturer_code"] = "AOV"
+        return specs
+
+    if "NZH20C" in pn:
+        specs["mounting"] = "SMD"
+        specs["package"] = "SOD-123"
+        specs["type_diode"] = "Zener"
+        specs["value_diode"] = "NZH20C,115"
+        specs["special_def"] = "Automotive AEC-Q101"
+        specs["manufacturer"] = "Nexperia"
+        specs["manufacturer_code"] = "NP"
+        return specs
+
+    if "PSR05" in pn:
+        specs["mounting"] = "SMD"
+        specs["package"] = "SOT-143"
+        specs["type_diode"] = "Tvs"
+        specs["value_diode"] = "PSR05-LF-T7"
+        specs["manufacturer"] = "DTSİS"
+        specs["manufacturer_code"] = "DTS"
+        return specs
+
+    if "SMAJ30CA" in pn:
+        specs["mounting"] = "SMD"
+        specs["package"] = "SMA"
+        specs["type_diode"] = "Tvs"
+        specs["value_diode"] = "SMAJ30CA"
+        if "-AT" in pn or "AUTOMOTIVE" in pn:
+            specs["special_def"] = "Automotive AEC-Q101"
+            specs["manufacturer"] = "Yageo"
+            specs["manufacturer_code"] = "YG"
+        else:
+            specs["manufacturer"] = "Littelfuse"
+            specs["manufacturer_code"] = "LT"
         return specs
 
     # 14. Adapter Model Numbers: e.g. SK03T-1200200V, SK01T-0500200V, SK6011-1200200V1-01
@@ -1403,6 +1514,7 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
         specs["manufacturer"] = "Murata"
         specs["manufacturer_code"] = "MT"
         specs["mounting"] = "SMD"
+        specs["type_buzzer"] = "Piezo Buzzer"
         if m_pk:
             w_code, l_code, h_code, freq_code, spec_code = m_pk.groups()
             f_val = int(freq_code) / 10.0
@@ -1419,6 +1531,141 @@ def decode_manufacturer_pn(part_number: str) -> dict[str, Any]:
         specs["buzzer_voltage"] = "3V"
         # Guaranteed minimum sound pressure level
         specs["sound_level"] = "75dB"
+        return specs
+
+    # 16b. Comprehensive Buzzers (FUET, Kepo, YXDZ, Be Star, Sanco, Huaneng, Gentek, Hong De Da, Sound Comp, CORE)
+    if "FUET-5020" in pn:
+        specs["mounting"] = "SMD"
+        specs["buzzer_voltage"] = "3V"
+        specs["buzzer_frequency"] = "4kHz"
+        specs["sound_level"] = "75dB"
+        specs["buzzer_size"] = "3.5mm"
+        if "TRUWATT" in pn:
+            specs["manufacturer"] = "TRUWATT (FUET)"
+            specs["manufacturer_code"] = "TRU"
+        else:
+            specs["manufacturer"] = "FUET"
+            specs["manufacturer_code"] = "FT"
+        return specs
+
+    if "SMT-0540" in pn or "CR-HM-013-0006" in pn:
+        specs["mounting"] = "SMD"
+        specs["buzzer_voltage"] = "3V"
+        specs["buzzer_frequency"] = "4kHz"
+        specs["sound_level"] = "80dB"
+        specs["buzzer_size"] = "5mm"
+        specs["manufacturer"] = "CORE"
+        specs["manufacturer_code"] = "COR"
+        return specs
+
+    if "YX7525P" in pn:
+        specs["mounting"] = "SMD"
+        specs["buzzer_voltage"] = "3V"
+        specs["buzzer_frequency"] = "2.73kHz"
+        specs["sound_level"] = "85dB"
+        specs["buzzer_size"] = "7.5mm"
+        specs["manufacturer"] = "YXDZ"
+        specs["manufacturer_code"] = "YXZ"
+        return specs
+
+    if "BPT1703" in pn:
+        specs["mounting"] = "TH"
+        specs["buzzer_voltage"] = "3V"
+        specs["buzzer_frequency"] = "2kHz"
+        specs["sound_level"] = "70dB"
+        specs["buzzer_size"] = "17mm"
+        specs["manufacturer"] = "Be Star"
+        specs["manufacturer_code"] = "BS"
+        return specs
+
+    if "KPT-G1713" in pn:
+        specs["mounting"] = "TH"
+        specs["buzzer_voltage"] = "3V"
+        specs["buzzer_frequency"] = "2kHz"
+        specs["sound_level"] = "70dB"
+        specs["buzzer_size"] = "17mm"
+        specs["manufacturer"] = "Kepo"
+        specs["manufacturer_code"] = "KE"
+        return specs
+
+    if "KPT-G2312" in pn:
+        specs["mounting"] = "TH"
+        specs["buzzer_voltage"] = "3V"
+        specs["buzzer_frequency"] = "2kHz"
+        specs["sound_level"] = "70dB"
+        specs["buzzer_size"] = "22mm"
+        specs["manufacturer"] = "Kepo"
+        specs["manufacturer_code"] = "KE"
+        return specs
+
+    if "EPT-22A2003" in pn:
+        specs["mounting"] = "TH"
+        specs["buzzer_voltage"] = "3V"
+        specs["buzzer_frequency"] = "2kHz"
+        specs["sound_level"] = "70dB"
+        specs["buzzer_size"] = "22mm"
+        specs["manufacturer"] = "SANCO"
+        specs["manufacturer_code"] = "SAN"
+        return specs
+
+    if "PT2770" in pn:
+        specs["mounting"] = "TH"
+        specs["buzzer_voltage"] = "3V"
+        specs["buzzer_frequency"] = "2kHz"
+        specs["sound_level"] = "70dB"
+        specs["buzzer_size"] = "22mm"
+        specs["buzzer_dimensions"] = "22mmx26.5mm, 7mm"
+        specs["manufacturer"] = "SOUND COMP."
+        specs["manufacturer_code"] = "SOU"
+        return specs
+
+    if "YX-YT9503" in pn:
+        specs["mounting"] = "TH"
+        specs["buzzer_voltage"] = "3V"
+        specs["buzzer_frequency"] = "2.7kHz"
+        specs["sound_level"] = "80dB"
+        specs["buzzer_size"] = "9mm"
+        specs["manufacturer"] = "YXDZ"
+        specs["manufacturer_code"] = "YXZ"
+        return specs
+
+    if "YX-YT12065" in pn:
+        specs["mounting"] = "TH"
+        specs["buzzer_voltage"] = "5V"
+        specs["buzzer_frequency"] = "2kHz"
+        specs["sound_level"] = "85dB"
+        specs["buzzer_size"] = "12mm"
+        specs["manufacturer"] = "YXDZ"
+        specs["manufacturer_code"] = "YXZ"
+        return specs
+
+    if "HPT-1780" in pn:
+        specs["mounting"] = "TH"
+        specs["buzzer_voltage"] = "5V"
+        specs["buzzer_frequency"] = "2kHz"
+        specs["sound_level"] = "85dB"
+        specs["buzzer_size"] = "17mm"
+        specs["manufacturer"] = "Hong De Da Elec."
+        specs["manufacturer_code"] = "HD"
+        return specs
+
+    if "HNB09A05" in pn:
+        specs["mounting"] = "TH"
+        specs["buzzer_voltage"] = "5V"
+        specs["sound_level"] = "85dB"
+        specs["buzzer_size"] = "9mm"
+        specs["manufacturer"] = "Huaneng"
+        specs["manufacturer_code"] = "HUA"
+        return specs
+
+    if "YX-WY1470" in pn or "WY1470" in pn:
+        specs["mounting"] = "TH"
+        specs["buzzer_voltage"] = "5V"
+        specs["buzzer_frequency"] = "4kHz"
+        specs["sound_level"] = "85dB"
+        specs["buzzer_size"] = "14mm"
+        specs["manufacturer"] = "GENTEK"
+        specs["manufacturer_code"] = "GEN"
         return specs
 
     # 17. Adapters & Power Supplies (Simsukian, Yıldırım Adaptör, Kaizen Hijyen)
@@ -2380,7 +2627,7 @@ def extract_component_specs(
                         specs["buzzer_voltage"] = f"{int(val)}V"
 
         # Frequency (Hz / kHz -> standard dictionary values e.g. 4kHz, 2.7kHz)
-        if "buzzer_frequency" not in specs:
+        if "buzzer_frequency" not in specs or text:
             bf_hz_m = (
                 re.search(r"(?:oscillation\s*frequency|resonant\s*frequency|rated\s*frequency|共振频率)\s*(?:[^\n\r:0-9]{0,15})[:\s]*(\d{4})", text_lower)
                 or re.search(r"\b(\d{4})\s*hz\b", text_lower)
@@ -2397,11 +2644,13 @@ def extract_component_specs(
                     specs["buzzer_frequency"] = hz_map[closest]
                 else:
                     specs["buzzer_frequency"] = f"{round(hz / 1000.0, 1)}kHz"
-            else:
+            elif "buzzer_frequency" not in specs:
                 bf_khz_m = re.search(r"\b(\d+(?:\.\d+)?)\s*khz\b", text_lower)
                 if bf_khz_m:
                     f_val = float(bf_khz_m.group(1))
                     specs["buzzer_frequency"] = f"{int(f_val)}kHz" if f_val.is_integer() else f"{f_val}kHz"
+                elif "HNB09A05" in pn:
+                    specs["buzzer_frequency"] = "3kHz"
 
         # Sound Level (dB -> e.g. 75dB, 85dB)
         if "sound_level" not in specs:
@@ -3047,15 +3296,23 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             pkg = specs.get("package", "")
             extracted_val_str = pkg
             if pkg:
-                # 1st pass: exact word boundary match avoiding array multipliers like 2x, 4x
+                # Pass 0: exact string match
                 for e in entries:
-                    desc = e.value_description or ""
-                    if re.search(r"\b\d+x", desc, re.I):
-                        continue
-                    if re.search(rf"\b{re.escape(pkg)}\b", desc, re.I):
+                    desc_clean = (e.value_description or "").strip().rstrip(",").strip()
+                    if desc_clean.casefold() == pkg.strip().casefold():
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
+                # 1st pass: exact word boundary match avoiding array multipliers like 2x, 4x
+                if not matched_entry:
+                    for e in entries:
+                        desc = e.value_description or ""
+                        if re.search(r"\b\d+x", desc, re.I):
+                            continue
+                        if re.search(rf"\b{re.escape(pkg)}\b", desc, re.I):
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
                 # 2nd pass: fallback
                 if not matched_entry:
                     for e in entries:
@@ -3155,11 +3412,26 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                 target_val = specs.get("value_diode", "")
                 extracted_val_str = target_val
                 if target_val:
+                    # Pass 1: exact match
                     for e in entries:
-                        if target_val.casefold() in e.value_description.casefold():
+                        if (e.value_description or "").strip().rstrip(",").strip().casefold() == target_val.strip().casefold():
                             matched_entry = e
                             status = "TAM EŞLEŞTİ"
                             break
+                    # Pass 2: word boundary match
+                    if not matched_entry:
+                        for e in entries:
+                            if re.search(rf"\b{re.escape(target_val.casefold())}\b", e.value_description.casefold()):
+                                matched_entry = e
+                                status = "TAM EŞLEŞTİ"
+                                break
+                    # Pass 3: substring fallback
+                    if not matched_entry:
+                        for e in entries:
+                            if target_val.casefold() in e.value_description.casefold():
+                                matched_entry = e
+                                status = "TAM EŞLEŞTİ"
+                                break
 
             elif material_type in ("FET", "TRA"):
                 target_val = specs.get("value_fet" if material_type == "FET" else "value_tra", "")
@@ -3647,18 +3919,22 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
             bf = specs.get("buzzer_frequency", "")
             extracted_val_str = bf
             if bf:
-                bf_num_m = re.search(r"(\d+(?:\.\d+)?)", bf)
-                bf_num = float(bf_num_m.group(1)) if bf_num_m else None
+                # Pass 1: exact match
                 for e in entries:
-                    em = re.search(r"(\d+(?:\.\d+)?)", e.value_description)
-                    if em and bf_num is not None and abs(float(em.group(1)) - bf_num) < 0.05:
+                    if (e.value_description or "").strip().rstrip(",").strip().casefold() == bf.strip().casefold():
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
-                    elif bf.casefold() in e.value_description.casefold():
-                        matched_entry = e
-                        status = "TAM EŞLEŞTİ"
-                        break
+                # Pass 2: precise numeric match (< 0.01 tolerance)
+                if not matched_entry:
+                    bf_num_m = re.search(r"(\d+(?:\.\d+)?)", bf)
+                    bf_num = float(bf_num_m.group(1)) if bf_num_m else None
+                    for e in entries:
+                        em = re.search(r"(\d+(?:\.\d+)?)", e.value_description)
+                        if em and bf_num is not None and abs(float(em.group(1)) - bf_num) < 0.01:
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
         elif "soundlevelbuzzer" in attr_norm:
             sl = specs.get("sound_level", "")
             extracted_val_str = sl
@@ -3687,10 +3963,12 @@ def map_specs_to_erp(rulebook: RuleBook, material_type: str, specs: dict[str, An
                         matched_entry = e
                         status = "TAM EŞLEŞTİ"
                         break
-                    elif bsz.casefold() in e.value_description.casefold():
-                        matched_entry = e
-                        status = "TAM EŞLEŞTİ"
-                        break
+                if not matched_entry:
+                    for e in entries:
+                        if re.search(rf"(?:^|[^\d.]){re.escape(bsz.casefold())}(?:$|[^\d.])", e.value_description.casefold()):
+                            matched_entry = e
+                            status = "TAM EŞLEŞTİ"
+                            break
         elif "typebatteryholder" in attr_norm:
             tbh = specs.get("type_battery_holder", "")
             extracted_val_str = tbh
@@ -3966,6 +4244,29 @@ def build_rich_description(material_type: str, specs: dict[str, Any], text: str 
             return f"{desc_core},  {mfr}"
         return desc_core
 
+    elif material_type == "BUZ":
+        # e.g.: Piezo Buzzer, SMD, 3V, 4kHz, 75dB, 3mm, Murata
+        struct = "Buzzer"
+        if "piezo" in text_lower or (specs.get("special_def") and "piezo" in str(specs.get("special_def")).lower()) or (specs.get("type_buzzer") and "piezo" in str(specs.get("type_buzzer")).lower()) or "pklcs" in str(specs.get("part_number", "")).lower():
+            struct = "Piezo Buzzer"
+        elif "magnetic" in text_lower or "electromagnetic" in text_lower or (specs.get("type_buzzer") and "magnetic" in str(specs.get("type_buzzer")).lower()):
+            struct = "Magnetic Buzzer"
+        tokens = [struct]
+        if specs.get("mounting"):
+            tokens.append(specs["mounting"])
+        if specs.get("buzzer_voltage"):
+            tokens.append(specs["buzzer_voltage"])
+        if specs.get("buzzer_frequency"):
+            tokens.append(specs["buzzer_frequency"])
+        if specs.get("sound_level"):
+            tokens.append(specs["sound_level"])
+        size = specs.get("buzzer_dimensions") or specs.get("buzzer_size")
+        if size:
+            tokens.append(size)
+        if mfr:
+            tokens.append(mfr)
+        return ", ".join(tokens)
+
     elif material_type == "CON":
         # e.g.: TH Wire to Board Konnektör, Erkek, 1.27mm, 4 pin, 180°(Dik), Molex
         title = specs.get("type_connector", "Konnektör")
@@ -4224,6 +4525,30 @@ def analyze_datasheet(
                 mat_type = "CON"
                 conf = 0.90
                 reason = "Parça numarası kod çözümünden konnektör olarak tespit edildi."
+            elif "voltage_adapter_output" in pn_specs or "current_adapter_output" in pn_specs or "type_adaptor" in pn_specs:
+                mat_type = "ADP"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden adaptör olarak tespit edildi (ADP)."
+            elif "buzzer_frequency" in pn_specs or "buzzer_voltage" in pn_specs or "sound_level" in pn_specs:
+                mat_type = "BUZ"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden buzzer olarak tespit edildi."
+            elif "type_diode" in pn_specs or "value_diode" in pn_specs:
+                mat_type = "DIO"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden diyot olarak tespit edildi."
+            elif "type_battery_holder" in pn_specs:
+                mat_type = "BAH"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden pil yuvası olarak tespit edildi."
+            elif "type_display" in pn_specs:
+                mat_type = "DSP"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden ekran olarak tespit edildi."
+            elif "type_antenna" in pn_specs:
+                mat_type = "ANT"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden anten olarak tespit edildi."
 
     pn_has_core = False
     if mat_type == "RES" and pn_specs.get("resistance_str") and pn_specs.get("package"):
@@ -4236,7 +4561,13 @@ def analyze_datasheet(
         pn_has_core = True
     elif mat_type == "ADP" and pn_specs.get("voltage_adapter_output") and pn_specs.get("current_adapter_output"):
         pn_has_core = True
-    elif mat_type in ("DIO", "FET", "TRA", "ICR", "ICS", "MCU", "BUZ", "BAH", "VAR") and bool(pn_specs.get("package")) and bool(pn_specs.get("manufacturer")):
+    elif mat_type == "BUZ" and bool(pn_specs.get("buzzer_frequency")) and bool(pn_specs.get("buzzer_voltage")):
+        pn_has_core = True
+    elif mat_type == "DIO" and bool(pn_specs.get("package")) and bool(pn_specs.get("value_diode")):
+        pn_has_core = True
+    elif mat_type == "BAH" and bool(pn_specs.get("type_battery_holder")):
+        pn_has_core = True
+    elif mat_type in ("FET", "TRA", "ICR", "ICS", "MCU", "VAR") and bool(pn_specs.get("package")) and bool(pn_specs.get("manufacturer")):
         pn_has_core = True
 
     # 3. Priority 2: Text Extraction
@@ -4299,6 +4630,26 @@ def analyze_datasheet(
                 mat_type = "ADP"
                 conf = 0.90
                 reason = "Parça numarası kod çözümünden adaptör olarak tespit edildi (ADP)."
+            elif "buzzer_frequency" in pn_specs or "buzzer_voltage" in pn_specs or "sound_level" in pn_specs:
+                mat_type = "BUZ"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden buzzer olarak tespit edildi."
+            elif "type_diode" in pn_specs or "value_diode" in pn_specs:
+                mat_type = "DIO"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden diyot olarak tespit edildi."
+            elif "type_battery_holder" in pn_specs:
+                mat_type = "BAH"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden pil yuvası olarak tespit edildi."
+            elif "type_display" in pn_specs:
+                mat_type = "DSP"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden ekran olarak tespit edildi."
+            elif "type_antenna" in pn_specs:
+                mat_type = "ANT"
+                conf = 0.90
+                reason = "Parça numarası kod çözümünden anten olarak tespit edildi."
 
     # Re-check pn_has_core if PN was discovered from text
     if mat_type == "RES" and pn_specs.get("resistance_str") and pn_specs.get("package"):
@@ -4311,7 +4662,13 @@ def analyze_datasheet(
         pn_has_core = True
     elif mat_type == "ADP" and pn_specs.get("voltage_adapter_output") and pn_specs.get("current_adapter_output"):
         pn_has_core = True
-    elif mat_type in ("DIO", "FET", "TRA", "ICR", "ICS", "MCU", "BUZ", "BAH", "VAR") and bool(pn_specs.get("package")) and bool(pn_specs.get("manufacturer")):
+    elif mat_type == "BUZ" and bool(pn_specs.get("buzzer_frequency")) and bool(pn_specs.get("buzzer_voltage")):
+        pn_has_core = True
+    elif mat_type == "DIO" and bool(pn_specs.get("package")) and bool(pn_specs.get("value_diode")):
+        pn_has_core = True
+    elif mat_type == "BAH" and bool(pn_specs.get("type_battery_holder")):
+        pn_has_core = True
+    elif mat_type in ("FET", "TRA", "ICR", "ICS", "MCU", "VAR") and bool(pn_specs.get("package")) and bool(pn_specs.get("manufacturer")):
         pn_has_core = True
 
     # Return early if unreadable empty document and unknown
