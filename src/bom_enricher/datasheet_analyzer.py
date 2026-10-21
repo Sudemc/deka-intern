@@ -2237,13 +2237,13 @@ def extract_component_specs(
         if "mounting" not in specs:
             specs["mounting"] = "SMD" if ("l-kls5" in pn.lower() or "ds109" in pn.lower() or re.search(r"\b(?:surface[\s-]mount|smd|smt)\b", text_lower)) else "TH"
         if "manufacturer" not in specs:
-            if "kls" in pn.lower() or re.search(r"\bkls\b", text_lower):
+            if re.search(r"\bkls\b", text_lower) or re.match(r"^(?:l-)?kls\b", pn, re.I):
                 specs["manufacturer"] = "Kls"
                 specs["manufacturer_code"] = "KL"
-            elif "ds10" in pn.lower() or "connfly" in text_lower:
+            elif re.search(r"\bconnfly\b", text_lower) or re.match(r"^ds109[12]\b", pn, re.I):
                 specs["manufacturer"] = "Connfly"
                 specs["manufacturer_code"] = "CF"
-            elif "eemb" in text_lower or "bh201" in pn.lower() or "bh201" in text_lower:
+            elif re.search(r"\beemb\b", text_lower) or re.match(r"^bh20[12]\b", pn, re.I) or re.search(r"\bbh20[12]\b", text_lower):
                 specs["manufacturer"] = "Eemb"
                 specs["manufacturer_code"] = "EM"
 
