@@ -253,9 +253,9 @@ def test_datasheet_analyze_api_works_with_missing_default_rules(client, monkeypa
     assert "analysis_method" in data
     assert data["analysis_method"] == "fast_path"
     assert data["material_type"] == "RES"
-
-
-def test_web_compares_dnp_items_and_returns_non_erp_count(tmp_path):
+ 
+ 
+def test_web_compares_dnp_items_and_returns_info_count(tmp_path):
     cust_bytes = _workbook_bytes(
         tmp_path, "cust_dnp.xlsx", "BOM",
         ["Parça", "FULL", "MIKTAR", "DTSIS KODU", "ÜRETİCİ KODU", "REFERANS", "DEĞER", "KILIF", "MontajTipi"],
@@ -278,7 +278,7 @@ def test_web_compares_dnp_items_and_returns_non_erp_count(tmp_path):
     data = response.json()
     assert data["row_count"] == 2
     assert data["clean_count"] == 1
-    assert data["non_erp_count"] == 1
+    assert data["info_count"] == 1
     assert data["warning_count"] == 0
     assert data["error_count"] == 0
 

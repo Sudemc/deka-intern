@@ -1165,7 +1165,7 @@
             <div class="metric-label">Uyarı (Sarı)</div>
           </div>
           <div class="metric">
-            <div class="metric-num" style="color:var(--blue)" id="metric-non-erp">0</div>
+            <div class="metric-num" style="color:var(--blue)" id="metric-info">0</div>
             <div class="metric-label">Montaj Dışı (Açık Mavi)</div>
           </div>
           <div class="metric">
@@ -1574,8 +1574,7 @@
       document.querySelector('#metric-total').textContent = data.row_count;
       document.querySelector('#metric-error').textContent = data.error_count;
       document.querySelector('#metric-warn').textContent = data.warning_count;
-      const nonErpEl = document.querySelector('#metric-non-erp');
-      if (nonErpEl) nonErpEl.textContent = data.non_erp_count || 0;
+      document.querySelector('#metric-info').textContent = data.info_count ?? 0;
       document.querySelector('#metric-clean').textContent = data.clean_count;
       document.querySelector('#download-link').href = data.download_url;
       document.querySelector('#results').classList.add('show');
@@ -1596,6 +1595,7 @@
         const durum = row['Durum'] || 'UYGUN';
         let badgeClass = 'pill-uygun';
         let rowBg = '#ffffff';
+        let badgeText = durum;
 
         const issueText = row['Hata/Uyarı Durumu'] || '';
         const isNonErp = issueText.includes('Montaj Dışı') || issueText.includes("ERP'ye Girilmez");
@@ -1607,16 +1607,15 @@
           if (isNonErp) {
             badgeClass = 'pill-blue';
             rowBg = '#f0f7ff';
+            badgeText = 'MONTAJ DIŞI';
           } else {
             badgeClass = 'pill-uyari';
             rowBg = '#fffdf7';
           }
         }
 
-        const displayStatus = isNonErp ? 'MONTAJ DIŞI' : durum;
-
         return `<tr style="background:${rowBg}">
-          <td><span class="pill ${badgeClass}">${escapeHtml(displayStatus)}</span></td>
+          <td><span class="pill ${badgeClass}">${escapeHtml(badgeText)}</span></td>
           <td><b>${escapeHtml(row['Müşteri Part Number'] || '—')}</b></td>
           <td><b>${escapeHtml(row['ERP Part Number'] || '—')}</b></td>
           <td>${escapeHtml(row['Müşteri Qty'] || '—')}</td>

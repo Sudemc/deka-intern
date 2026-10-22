@@ -124,17 +124,14 @@ async def compare_uploads(
     result_id = uuid4().hex
     _store_result(result_id, output_path, job_dir)
     status_counts: dict[str, int] = {}
-    def _is_non_erp(issue_text: str) -> bool:
-        return "Montaj Dışı" in issue_text or "ERP'ye Girilmez" in issue_text
-
     error_count = sum(1 for row in result.rows if row.get("Durum") == "HATA")
-    non_erp_count = sum(
+    info_count = sum(
         1 for row in result.rows
-        if row.get("Durum") == "UYARI" and _is_non_erp(row.get("Hata/Uyarı Durumu", ""))
+        if "Montaj Dışı" in row.get("Hata/Uyarı Durumu", "") or "ERP'ye Girilmez" in row.get("Hata/Uyarı Durumu", "")
     )
     warning_count = sum(
         1 for row in result.rows
-        if row.get("Durum") == "UYARI" and not _is_non_erp(row.get("Hata/Uyarı Durumu", ""))
+        if row.get("Durum") == "UYARI" and not ("Montaj Dışı" in row.get("Hata/Uyarı Durumu", "") or "ERP'ye Girilmez" in row.get("Hata/Uyarı Durumu", ""))
     )
     clean_count = sum(1 for row in result.rows if row.get("Durum") == "UYGUN")
 
@@ -150,7 +147,7 @@ async def compare_uploads(
         "total_part_count": result.total_part_count,
         "error_count": error_count,
         "warning_count": warning_count,
-        "non_erp_count": non_erp_count,
+        "info_count": info_count,
         "clean_count": clean_count,
         "issue_count": sum(status_counts.values()),
         "status_counts": status_counts,
