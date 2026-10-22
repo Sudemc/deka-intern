@@ -665,6 +665,38 @@ def test_generic_non_hardcoded_company_code_matching(tmp_path):
     assert "STM32F407VGT6" in row["Müşteri Part Number"]
 
 
+def test_real_user_dtsis_bom_comparison_snippet(tmp_path):
+    import io
+    import pandas as pd
+    from bom_enricher.comparison import compare_workbooks
+
+    csv_data = """Parça,FULL,MIKTAR,DTSIS KODU,ÜRETİCİ KODU,REFERANS,DEĞER,KILIF,MontajTipi,Revised: 03.09.2026
+37,+,2,H010101005006,MBR0540T1G,"D13,D15",MBR0540,smdmbr0540,SMD,
+44,+,8,H010101005052,SD12CT1G,"D29,D30,D34,D35,D41,D43,D44,D46",SD12CT1G,SOD-323_SD12CT,SMD,
+"""
+    df_cust = pd.read_csv(io.StringIO(csv_data))
+    cust_path = tmp_path / "user_cust.xlsx"
+    df_cust.to_excel(cust_path, index=False)
+
+    # In ERP, the Part Numbers are the customer's DTSIS codes!
+    df_erp = pd.DataFrame({
+        "Part Number": ["H010101005006", "H010101005052"],
+        "Description": ["MBR0540", "SD12CT1G"],
+        "Reference": ["D13,D15", "D29,D30,D34,D35,D41,D43,D44,D46"],
+        "Qty": [2, 8],
+    })
+    erp_path = tmp_path / "user_erp.xlsx"
+    df_erp.to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    assert len(res.rows) == 2
+    assert all(r["Durum"] == "UYGUN" for r in res.rows)
+    assert res.rows[0]["ERP Part Number"] == "H010101005006"
+    assert "H010101005006" in res.rows[0]["Müşteri Part Number"]
+    assert "MBR0540T1G" in res.rows[0]["Müşteri Part Number"]
+
+
+
 
 
 
