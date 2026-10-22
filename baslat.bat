@@ -23,7 +23,14 @@ if not exist ".venv\Scripts\python.exe" (
         exit /b 1
     )
     echo [2/3] Paketler yukleniyor, lutfen bekleyin...
-    ".venv\Scripts\python.exe" -m pip install -e ".[dev]"
+    ".venv\Scripts\python.exe" -m pip install -e ".[dev]" --trusted-host pypi.org --trusted-host files.pythonhosted.org
+    if errorlevel 1 (
+        echo.
+        echo [HATA] Paketler indirilemedi! Lutfen internet veya VPN baglantinizi kontrol edin.
+        echo Gecici olarak telefon hotspot'una baglanip tekrar deneyebilirsiniz.
+        pause
+        exit /b 1
+    )
 )
 
 echo [3/3] Web sunucusu baslatiliyor...
