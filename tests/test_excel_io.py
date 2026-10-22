@@ -169,3 +169,51 @@ def test_selects_bom_sheet_in_workbook_with_revision_cover(tmp_path):
         for row in rows
         for candidate in row.product_code_candidates
     )
+
+
+def test_turkish_header_normalization():
+    from bom_enricher.excel_io import _header_field, _normalize_header
+    assert _normalize_header("ÜRETİCİ KODU") == "uretici kodu"
+    assert _header_field("ÜRETİCİ KODU") == "part_number"
+    assert _header_field("REFERANS") == "part"
+    assert _header_field("DEĞER") == "value"
+
+
+def test_parca_and_referans_disambiguation(tmp_path):
+    import pandas as pd
+    from bom_enricher.excel_io import read_customer_bom
+
+    file_path = tmp_path / "customer_bom_with_parca_and_ref.xlsx"
+    df = pd.DataFrame({
+        "Parça": [37, 44],
+        "REFERANS": ["D13,D15", "D29,D30"],
+        "MIKTAR": [2, 8],
+        "ÜRETİCİ KODU": ["MBR0540T1G", "SD12CT1G"],
+        "DEĞER": ["MBR0540", "SD12CT1G"],
+    })
+    df.to_excel(file_path, index=False)
+    rows = read_customer_bom(file_path)
+    assert len(rows) == 2
+    assert rows[0].part == "D13,D15"
+    assert rows[1].part == "D29,D30"
+
+
+def test_generic_multi_code_candidate_detection(tmp_path):
+    from bom_enricher.excel_io import read_customer_bom
+    import pandas as pd
+    file_path = tmp_path / "multi_code_customer_bom.xlsx"
+    df = pd.DataFrame({
+        "Parça": [37],
+        "DTSIS KODU": ["H010101005006"],
+        "ÜRETİCİ KODU": ["MBR0540T1G"],
+        "REFERANS": ["D13,D15"],
+        "MIKTAR": [2],
+        "DEĞER": ["MBR0540"],
+    })
+    df.to_excel(file_path, index=False)
+    rows = read_customer_bom(file_path)
+    assert len(rows) == 1
+    candidate_values = {c.value for c in rows[0].product_code_candidates}
+    assert "H010101005006" in candidate_values
+    assert "MBR0540T1G" in candidate_values
+

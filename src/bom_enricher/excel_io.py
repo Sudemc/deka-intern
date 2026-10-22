@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 from typing import Any
+import unicodedata
 
 import pandas as pd
 from openpyxl import load_workbook
@@ -27,7 +28,10 @@ class ColumnMapping:
 def _normalize_header(value: Any) -> str:
     if value is None:
         return ""
-    return " ".join(str(value).split()).casefold()
+    text = str(value).replace("İ", "i").replace("I", "i").replace("ı", "i").lower()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    return " ".join(text.split())
 
 
 def _string_value(value: Any) -> str:
@@ -58,36 +62,39 @@ def _worksheet_name(path: Path, sheet_name: str | int) -> str:
 
 
 _HEADER_ALIASES = {
+    "item": {
+        "item", "item no", "line", "line no", "sira no", "kalem no", "no", "parca",
+    },
     "part": {
         "part", "reference", "ref", "refdes", "designator", "component",
-        "component reference", "reference designator", "position", "location", "item",
-        "parca", "parça", "referans", "pozisyon", "konum",
+        "component reference", "reference designator", "position", "location",
+        "referans", "pozisyon", "konum",
     },
     "qty": {
         "qty", "quantity", "quantity required", "required qty", "count", "amount",
-        "pcs", "pieces", "adet", "miktar", "sayi", "sayı",
+        "pcs", "pieces", "adet", "miktar", "sayi",
     },
     "value": {
         "value", "description", "desc", "spec", "specification", "details",
-        "aciklama", "açiklama", "açıklama", "deger", "değer", "teknik özellik",
+        "aciklama", "deger", "teknik ozellik",
     },
     "part_number": {
-        "part number", "part no", "part no.", "part n", "p n", "pn", "mpn",
+        "part number", "part no", "part n", "p n", "pn", "mpn",
         "manufacturer part number", "manufacturer part no", "manufacturer pn",
         "mfr pn", "mfr p n", "supplier part number", "vendor part number",
         "catalog number", "product id", "product code", "product number", "item code",
         "component code", "stock code", "stock number", "material number", "material no",
-        "code", "kod", "ürün kodu", "urun kodu", "ürün no", "urun no", "parça kodu",
-        "parca kodu", "üretici kodu", "uretici kodu", "malzeme kodu", "malzeme no",
+        "code", "kod", "urun kodu", "urun no", "parca kodu",
+        "uretici kodu", "malzeme kodu", "malzeme no",
     },
     "manufacturer": {
-        "manufacturer", "manufacture", "maker", "brand", "üretici", "uretici", "marka",
+        "manufacturer", "manufacture", "maker", "brand", "uretici", "marka",
     },
     "mounting": {
-        "mounting", "th/smd", "thsmd", "th smd", "montaj", "montaj tipi", "montaj sekli",
+        "mounting", "th/smd", "thsmd", "th smd", "montaj", "montaj tipi", "montaj sekli", "montajtipi",
     },
     "package": {
-        "package", "footprint", "case", "kilif", "kılıf", "paket", "size",
+        "package", "footprint", "case", "kilif", "paket", "size",
     },
 }
 _CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-]{3,63}$")
@@ -97,6 +104,14 @@ _REFERENCE_PATTERN = re.compile(
 )
 
 
+def _is_ref_like(val: Any) -> bool:
+    s = _string_value(val).strip()
+    if not s:
+        return False
+    first = re.split(r"[,;\s]+", s)[0]
+    return bool(re.match(r"^(?:R|C|L|D|Q|U|IC|J|CN|P|TP|SW|F|FB|T|LED|BT|Y|X|K|VR|ZD|TR|TH|MOV|TS|BRK|CON|DST|FL)\d+", first, re.IGNORECASE))
+
+
 def _header_field(value: Any) -> str | None:
     normalized = _normalize_header(value).replace("#", " number ")
     normalized = re.sub(r"[/._-]+", " ", normalized)
@@ -104,7 +119,17 @@ def _header_field(value: Any) -> str | None:
     for field, aliases in _HEADER_ALIASES.items():
         if normalized in aliases:
             return field
+    item_aliases = _HEADER_ALIASES.get("item", set())
+    if normalized not in item_aliases:
+        tokens = normalized.split()
+        if tokens:
+            last = tokens[-1]
+            if last in {"kodu", "kod", "code", "pn", "mpn"} or (
+                last in {"no", "number"} and not any(t in {"sira", "kalem", "line", "row", "item"} for t in tokens)
+            ):
+                return "part_number"
     return None
+
 
 
 def _code_like(value: Any) -> bool:
@@ -188,10 +213,39 @@ def _auto_layout(
             # first row as header and infer candidate-code columns from the rows below.
             best_row = 0
             best_fields = {}
+
+        # Disambiguate 'part' (reference designator) vs item/sequence numbers
+        if "part" in best_fields and len(best_fields["part"]) > 1:
+            ref_scores: dict[int, int] = {}
+            for col_idx in best_fields["part"]:
+                ref_score = sum(
+                    1 for r in sample_rows[best_row + 1:]
+                    if col_idx < len(r) and r[col_idx] and _is_ref_like(r[col_idx])
+                )
+                ref_scores[col_idx] = ref_score
+            sorted_by_ref = sorted(best_fields["part"], key=lambda c: ref_scores.get(c, 0), reverse=True)
+            if ref_scores[sorted_by_ref[0]] > ref_scores.get(sorted_by_ref[1], 0):
+                promoted = sorted_by_ref[0]
+                demoted = [c for c in best_fields["part"] if c != promoted]
+                best_fields["part"] = [promoted]
+                best_fields.setdefault("item", []).extend(demoted)
+
+        # If 'part' not found but 'item' exists, check if any 'item' column has circuit designators
+        if "part" not in best_fields and "item" in best_fields:
+            for col_idx in list(best_fields["item"]):
+                has_refs = any(
+                    col_idx < len(r) and r[col_idx] and _is_ref_like(r[col_idx])
+                    for r in sample_rows[best_row + 1:]
+                )
+                if has_refs:
+                    best_fields["part"] = [col_idx]
+                    best_fields["item"].remove(col_idx)
+                    break
+
         ambiguous_fields = {
             field: indexes
             for field, indexes in best_fields.items()
-            if field != "part_number" and len(indexes) > 1
+            if field != "part_number" and field != "item" and len(indexes) > 1
         }
         if ambiguous_fields:
             labels = [
@@ -210,22 +264,20 @@ def _auto_layout(
         }
         ambiguous_code_columns = best_fields.get("part_number", [])
         code_columns = list(ambiguous_code_columns)
-        if not code_columns:
-            excluded = set(resolved_fields.values())
-            nonempty_counts: dict[int, int] = {}
-            code_counts: dict[int, int] = {}
-            for values in sample_rows[best_row + 1:]:
-                for column_index, value in enumerate(values):
-                    if value is None or not str(value).strip() or column_index in excluded:
-                        continue
-                    nonempty_counts[column_index] = nonempty_counts.get(column_index, 0) + 1
-                    if _code_like(value):
-                        code_counts[column_index] = code_counts.get(column_index, 0) + 1
-            code_columns = [
-                column_index
-                for column_index, count in code_counts.items()
-                if count >= max(1, (nonempty_counts.get(column_index, 0) + 1) // 2)
-            ]
+        excluded = set(resolved_fields.values()) | set(code_columns)
+        nonempty_counts: dict[int, int] = {}
+        code_counts: dict[int, int] = {}
+        for values in sample_rows[best_row + 1:]:
+            for column_index, value in enumerate(values):
+                if value is None or not str(value).strip() or column_index in excluded:
+                    continue
+                nonempty_counts[column_index] = nonempty_counts.get(column_index, 0) + 1
+                if _code_like(value):
+                    code_counts[column_index] = code_counts.get(column_index, 0) + 1
+        for column_index, count in code_counts.items():
+            if count >= max(1, (nonempty_counts.get(column_index, 0) + 1) // 2):
+                if column_index not in code_columns:
+                    code_columns.append(column_index)
         return resolved_sheet, best_row, raw_headers, resolved_fields, code_columns
     finally:
         workbook.close()
@@ -357,7 +409,7 @@ def read_customer_bom(
                 continue
             if candidate_has_explicit_header and not _explicit_code_like(candidate_value):
                 continue
-            if candidate_has_explicit_header and part_number and candidate_value != part_number:
+            if candidate_has_explicit_header and column_index == part_number_column and part_number and candidate_value != part_number:
                 continue
             if mapping is None and not candidate_has_explicit_header and not _code_like(candidate_value):
                 continue
