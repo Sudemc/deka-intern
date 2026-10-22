@@ -13,7 +13,12 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .excel_io import clean_part_number, find_customer_bom_sheets, read_customer_bom
+from .excel_io import (
+    clean_part_number,
+    find_customer_bom_sheets,
+    read_customer_bom,
+    split_references,
+)
 from .semantic_parser import compare_descriptions, normalize_code_key, normalize_mounting
 
 
@@ -173,13 +178,13 @@ def _normalize_ref_token(token: str) -> str:
 def _normalize_ref_string(s: str) -> str:
     if not s:
         return ""
-    tokens = [r.strip() for r in re.split(r"[,;|\s/]+", s) if r.strip()]
-    return ", ".join(_normalize_ref_token(t) for t in tokens)
+    tokens = split_references(s)
+    return ", ".join(_normalize_ref_token(t) for t in tokens if t.strip())
 
 
 def _split_refs(s: str) -> set[str]:
-    """Split reference designators into normalized uppercase tokens."""
-    return {_normalize_ref_token(t) for t in re.split(r"[,;|\s/]+", s or "") if t.strip()}
+    """Split reference designators into normalized uppercase tokens, expanding ranges."""
+    return {_normalize_ref_token(t) for t in split_references(s or "") if t.strip()}
 
 
 def _ref_base_component(ref: str) -> tuple[str, str, str]:
@@ -872,6 +877,10 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
                         qty_val = _cell_text(row.qty).strip()
                         if qty_val.lower() == "nan":
                             qty_val = ""
+                        if not qty_val and row.part:
+                            refs = _split_refs(row.part)
+                            if refs:
+                                qty_val = str(len(refs))
                         all_records.append(PartRecord(
                             part_number=code,
                             description=row.value,
@@ -888,6 +897,12 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
                         ))
                     else:
                         qty_str = _cell_text(row.qty).strip()
+                        if qty_str.lower() == "nan":
+                            qty_str = ""
+                        if not qty_str and row.part:
+                            refs = _split_refs(row.part)
+                            if refs:
+                                qty_str = str(len(refs))
                         has_qty = bool(qty_str) and any(c.isdigit() for c in qty_str)
                         ref_str = (row.part or "").strip()
                         circuit_ref_pattern = r"^(?:R|C|L|D|Q|U|IC|J|CN|P|TP|SW|F|FB|T|LED|BT|Y|X|K|VR|ZD|TR|TH|MOV|TS|BRK)\d+"
@@ -1360,24 +1375,50 @@ def _find_column(headers: dict[str, str], role: str) -> str | None:
 
 def _header_field(header: str) -> str | None:
     key = _header_key(header)
-    if key in {"partnumber", "manufacturerpartnumber", "mpn", "productcode", "urunkodu", "malzemekodu", "stokkodu"}:
+    if key in {
+        "partnumber", "manufacturerpartnumber", "mpn", "productcode", "urunkodu",
+        "malzemekodu", "stokkodu", "ureticiparcakodu", "ureticikodu", "ordercode",
+        "orderingcode", "sipariskodu", "tedarikcikodu", "libref", "libraryreference",
+        "pn", "mfrpn", "mfrpartno", "mfrpartnumber", "partno", "itemcode", "catalogno",
+    }:
         return "part_number"
-    if key in {"part", "reference", "ref", "refdes", "designator", "parca", "referans"}:
+    if key in {
+        "part", "parts", "reference", "references", "ref", "refs", "refdes",
+        "designator", "designators", "parca", "referans", "referanslar", "devreelemani",
+        "sematikreferans", "locations", "location", "position", "positions", "eleman", "etiket",
+    }:
         return "reference"
     if key in {"malzemetipi", "materialtype", "componenttype", "parttype"}:
         return "material_type"
-    if key in {"value", "customerdescription", "musterivalue", "deger"}:
+    if key in {
+        "value", "customerdescription", "musterivalue", "deger", "val", "comment", "comments",
+        "device", "tanim", "stokadi", "malzemeadi", "elemandegeri", "partname", "devicedescription",
+    }:
         return "value"
-    if key in {"description", "erpdescription", "aciklama", "aciklama1", "urunaciklamasi"}:
+    if key in {
+        "description", "erpdescription", "aciklama", "aciklama1", "urunaciklamasi",
+        "desc", "spec", "specification", "details",
+    }:
         return "description"
-    if key in {"th/smd", "thsmd", "mounting", "montajtipi", "montaj", "montajsekli"}:
+    if key in {"thsmd", "mounting", "mountingtype", "montajtipi", "montaj", "montajsekli", "dizgitipi"}:
         return "mounting"
-    if key in {"qty", "quantity", "adet", "miktar", "sayi", "count"}:
+    if key in {
+        "qty", "quantity", "adet", "miktar", "sayi", "count", "totalqty", "birimadet",
+        "toplamadet", "parcaadedi", "amount", "pcs", "pieces", "sayisi", "adedi", "qtyboard",
+    }:
         return "qty"
-    if key in {"package", "footprint", "case", "kilif", "paket", "size"}:
+    if key in {
+        "package", "footprint", "pcbfootprint", "packagecase", "case", "kilif", "paket",
+        "size", "kasa", "boy", "govde",
+    }:
         return "package"
-    if key in {"manufacturer", "manufacture", "maker", "brand", "uretici", "marka"}:
+    if key in {"manufacturer", "manufacture", "maker", "brand", "uretici", "marka", "vendor", "supplier"}:
         return "manufacturer"
+    if key in {
+        "status", "durum", "fitted", "placement", "variant", "dnp", "np", "dnpnp",
+        "montajdurumu", "dizgidurumu", "dizim", "dizimdurumu", "populate", "population",
+    }:
+        return "status"
     return None
 
 
