@@ -164,7 +164,101 @@ def test_web_compares_multiple_customer_files(tmp_path):
     assert payload["clean_count"] == 1
 
 
+<<<<<<< HEAD
 def test_web_compares_dnp_items_and_returns_non_erp_count(tmp_path):
+=======
+def test_web_datasheet_analyze_with_rules_upload(tmp_path):
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas as rl_canvas
+    import io
+
+    # Create synthetic PDF
+    buf = io.BytesIO()
+    c = rl_canvas.Canvas(buf, pagesize=letter)
+    c.drawString(100, 750, "SAMSUNG ELECTRONICS MULTILAYER CAPACITOR")
+    c.drawString(100, 730, "Part Number: CL21B104KBCNNNC")
+    c.drawString(100, 710, "SMD 0805 100nF 50V X7R 10%")
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    rules_bytes = _files(tmp_path)["rules_file"][1]
+
+    multipart = [
+        ("datasheet_files", ("CL21B104KBCNNNC.pdf", pdf_bytes, "application/pdf")),
+        ("rules_file", ("Malzeme_Tipleri.xlsx", rules_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+    ]
+
+    response = _request("POST", "/api/datasheet-analyze", files=multipart)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["count"] == 1
+    analysis = data["analyses"][0]
+    assert analysis["part_number"] == "CL21B104KBCNNNC"
+    assert analysis["material_type"] == "CAP"
+    assert analysis["inferred_mounting"] == "SMD"
+    assert "0805 Package" in analysis["suggested_description"]
+
+    # Download report
+    downloaded = _request("GET", data["download_url"])
+    assert downloaded.status_code == 200
+    assert downloaded.content.startswith(b"PK")
+
+
+def test_web_datasheet_analyze_rejects_non_pdf(tmp_path):
+    rules_bytes = _files(tmp_path)["rules_file"][1]
+    multipart = [
+        ("datasheet_files", ("document.txt", b"plain text", "text/plain")),
+        ("rules_file", ("Malzeme_Tipleri.xlsx", rules_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+    ]
+    response = _request("POST", "/api/datasheet-analyze", files=multipart)
+    assert response.status_code == 400
+    assert "PDF" in response.json()["detail"]
+
+
+def test_datasheet_analyze_api_returns_analysis_method(client):
+    from reportlab.pdfgen import canvas
+    import io
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "Test Resistor 10k 0805")
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    response = client.post(
+        "/api/datasheet-analyze",
+        files={"file": ("test.pdf", pdf_bytes, "application/pdf")},
+        data={"part_number": "RC0805FR-0710KL", "material_type": "RES"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "analysis_method" in data
+    assert data["material_type"] == "RES"
+
+
+def test_datasheet_analyze_api_works_with_missing_default_rules(client, monkeypatch, tmp_path):
+    from reportlab.pdfgen import canvas
+    import io
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "Test Resistor 10k 0805")
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    monkeypatch.setattr("bom_enricher.web.DEFAULT_RULES_PATH", tmp_path / "nonexistent_rules.xlsx")
+
+    response = client.post(
+        "/api/datasheet-analyze",
+        files={"file": ("test.pdf", pdf_bytes, "application/pdf")},
+        data={"part_number": "   RC0805FR-0710KL   ", "material_type": "   "}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "analysis_method" in data
+    assert data["analysis_method"] == "fast_path"
+    assert data["material_type"] == "RES"
+
+
+def test_web_compares_dnp_items_and_returns_info_count(tmp_path):
     cust_bytes = _workbook_bytes(
         tmp_path, "cust_dnp.xlsx", "BOM",
         ["Parça", "FULL", "MIKTAR", "DTSIS KODU", "ÜRETİCİ KODU", "REFERANS", "DEĞER", "KILIF", "MontajTipi"],
@@ -187,7 +281,7 @@ def test_web_compares_dnp_items_and_returns_non_erp_count(tmp_path):
     data = response.json()
     assert data["row_count"] == 2
     assert data["clean_count"] == 1
-    assert data["non_erp_count"] == 1
+    assert data["info_count"] == 1
     assert data["warning_count"] == 0
     assert data["error_count"] == 0
 
