@@ -696,6 +696,67 @@ def test_real_user_dtsis_bom_comparison_snippet(tmp_path):
     assert "MBR0540T1G" in res.rows[0]["Müşteri Part Number"]
 
 
+def test_dnp_and_unpopulated_items_flagged_as_warning_not_error(tmp_path):
+    """Items explicitly marked DNP/NP or without codes should be classified as UYARI when missing from ERP."""
+    import io
+    import pandas as pd
+    from bom_enricher.comparison import compare_workbooks
+
+    cust_csv = """Parça,FULL,MIKTAR,DTSIS KODU,ÜRETİCİ KODU,REFERANS,DEĞER,KILIF,MontajTipi
+1,+,2,H010101005006,MBR0540T1G,"D13,D15",MBR0540,smdmbr0540,SMD
+2,DNP,1,,,ANT1,JCA201 GPS ANTENNA,DUMMY,MECH
+3,DNP,3,,,"C3,C15,C20",DNP,SMC0603,SMD
+4,NP,2,,,"C178,C181",2u2/50V,SMC1206,SMD
+5,+,8,,,FL_STD1,FIDUCIAL,fl_std2,SMD
+6,+,1,,,DISPLAY1,RB070D50N15B,DUMMY,MECH
+7,+,1,REAL_CODE,REAL_MPN,U99,REAL_IC,SOIC8,SMD
+"""
+    cust_path = tmp_path / "cust_dnp.xlsx"
+    pd.read_csv(io.StringIO(cust_csv)).to_excel(cust_path, index=False)
+
+    erp_csv = """No,Part,Qty,Value,Part Number,Manufacturer
+1,"D13, D15",2.0,"SMD SOD-123 Schottky",H010101005006,Onsemi
+"""
+    erp_path = tmp_path / "erp_dnp.xlsx"
+    pd.read_csv(io.StringIO(erp_csv)).to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    find_row = lambda ref: next(r for r in res.rows if ref in r["Müşteri Referans"])
+
+    # 1. Real matched item
+    row_d13 = find_row("D13")
+    assert row_d13["Durum"] == "UYGUN"
+
+    # 2. DNP items should be UYARI (warning), not HATA (error)
+    row_ant1 = find_row("ANT1")
+    assert row_ant1["Durum"] == "UYARI"
+    assert "Montaj Dışı / ERP'ye Girilmez" in row_ant1["Hata/Uyarı Durumu"]
+
+    row_c3 = find_row("C3")
+    assert row_c3["Durum"] == "UYARI"
+    assert "Montaj Dışı / ERP'ye Girilmez" in row_c3["Hata/Uyarı Durumu"]
+
+    # 3. NP item should be UYARI
+    row_c178 = find_row("C178")
+    assert row_c178["Durum"] == "UYARI"
+    assert "Montaj Dışı / ERP'ye Girilmez" in row_c178["Hata/Uyarı Durumu"]
+
+    # 4. Fiducial optical mark should be UYARI
+    row_fl = find_row("FL_STD1")
+    assert row_fl["Durum"] == "UYARI"
+    assert "Fiducial" in row_fl["Hata/Uyarı Durumu"]
+
+    # 5. Dummy mechanical display should be UYARI
+    row_disp = find_row("DISPLAY1")
+    assert row_disp["Durum"] == "UYARI"
+    assert "Mekanik" in row_disp["Hata/Uyarı Durumu"]
+
+    # 6. Real assembly component with code that is missing in ERP MUST remain HATA!
+    row_u99 = find_row("U99")
+    assert row_u99["Durum"] == "HATA"
+    assert "Sistemde Yok: ERP dosyasında bulunamadı" in row_u99["Hata/Uyarı Durumu"]
+
+
 
 
 

@@ -72,6 +72,7 @@ class PartRecord:
     unmapped_prefix: bool = False
     all_codes: tuple[str, ...] = ()
     code_labels: dict[str, str] = field(default_factory=dict)
+    status: str = ""
 
 
 
@@ -367,6 +368,9 @@ def _qualify_customer_references(
                 source_sheet=rec.source_sheet,
                 source_breakdown=rec.source_breakdown,
                 unmapped_prefix=is_unmapped,
+                all_codes=rec.all_codes,
+                code_labels=rec.code_labels,
+                status=rec.status,
             ))
             continue
 
@@ -403,8 +407,60 @@ def _qualify_customer_references(
             source_sheet=rec.source_sheet,
             source_breakdown=rec.source_breakdown,
             unmapped_prefix=False,
+            all_codes=rec.all_codes,
+            code_labels=rec.code_labels,
+            status=rec.status,
         ))
     return updated
+
+
+def _check_certain_non_assembly(record: PartRecord) -> tuple[bool, str]:
+    """Determine with certainty if an item should not be entered in the PCB assembly ERP BOM.
+
+    Returns (True, reason) only when there is unequivocal evidence that the item
+    is not intended for board assembly (e.g. explicit DNP/NP, Fiducial optical marks,
+    or dummy mechanical accessories without product codes).
+    """
+    status_upper = (record.status or "").strip().upper()
+    val_upper = (record.description or "").strip().upper()
+    ref_upper = (record.reference or "").strip().upper()
+    pkg_upper = (record.package or "").strip().upper()
+    mount_upper = (record.mounting or "").strip().upper()
+    has_code = bool((record.part_number or "").strip()) or bool(record.all_codes)
+
+    # 1. Explicit DNP / NP marker in status column (e.g. FULL column = DNP / NP)
+    dnp_statuses = {
+        "DNP", "NP", "N.P.", "D.N.P.", "DO NOT POPULATE", "NOT POPULATED",
+        "NO POP", "DİZİLMEYECEK", "DİZİLMEZ", "MONTAJ YOK",
+    }
+    if status_upper in dnp_statuses:
+        return True, f"DNP/NP Montaj Dışı ({record.status.strip()})"
+
+    # 2. Fiducial optical camera alignment markers (PCB copper features, not components)
+    if (
+        ref_upper.startswith("FL_STD")
+        or ref_upper.startswith("FID")
+        or val_upper == "FIDUCIAL"
+        or pkg_upper.startswith("FL_STD")
+    ):
+        return True, "Fiducial / Optik Hizalama İşareti (Fiziksel parça değildir)"
+
+    # 3. Explicit DNP / NP in Description/Value or Mounting without any product code
+    if not has_code:
+        if (
+            val_upper in dnp_statuses
+            or mount_upper in {"DNP", "NP"}
+            or any(tag in val_upper for tag in ("(DNP)", "[DNP]", "(NP)", "[NP]", "NOT POPULATED", "DO NOT POPULATE"))
+        ):
+            return True, "DNP / Monte Edilmeyecek Parça (ERP'ye girilmedi)"
+
+    # 4. Purely mechanical accessories / dummy items without any product code
+    if not has_code:
+        if mount_upper == "MECH" or pkg_upper in {"DUMMY", "DGHT PCB"}:
+            detail = f"{record.package or record.mounting}".strip()
+            return True, f"Mekanik / Harici Montaj Parçası ({detail})" if detail else "Mekanik / Harici Montaj Parçası"
+
+    return False, ""
 
 
 def compare_workbooks(
@@ -626,9 +682,13 @@ def compare_workbooks(
         if customer_record is None:
             issues.append("Sistemde Yok: müşteri dosyasında bulunamadı")
         elif erp_record is None:
-            issues.append("Sistemde Yok: ERP dosyasında bulunamadı")
-            if not c_pn:
-                issues.append("Part Number eksik (Müşteri dosyasında Part Number belirtilmemiş)")
+            is_non_erp, non_erp_reason = _check_certain_non_assembly(customer_record)
+            if is_non_erp:
+                issues.append(f"Montaj Dışı / ERP'ye Girilmez: {non_erp_reason}")
+            else:
+                issues.append("Sistemde Yok: ERP dosyasında bulunamadı")
+                if not c_pn:
+                    issues.append("Part Number eksik (Müşteri dosyasında Part Number belirtilmemiş)")
 
         if customer_record and customer_record.duplicate:
             issues.append("Müşteri dosyasında yinelenen Part Number")
@@ -824,6 +884,7 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
                             source_sheet=sheet,
                             all_codes=all_codes,
                             code_labels=code_labels,
+                            status=row.status,
                         ))
                     else:
                         qty_str = _cell_text(row.qty).strip()
@@ -842,6 +903,7 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
                                 package=row.package,
                                 source_file=file_path.name,
                                 source_sheet=sheet,
+                                status=row.status,
                             ))
         if not all_records:
             first_name = paths[0].name if paths else "Müşteri dosyası"
@@ -1236,6 +1298,7 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
 
         merged_all_codes = tuple(dict.fromkeys(c for item in group for c in item.all_codes if c))
         merged_code_labels = {k: v for item in group for k, v in item.code_labels.items()}
+        merged_status = " | ".join(dict.fromkeys(item.status for item in group if item.status))
 
         result[normalized] = PartRecord(
             part_number=group[0].part_number,
@@ -1253,6 +1316,7 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
             unmapped_prefix=is_unmapped,
             all_codes=merged_all_codes,
             code_labels=merged_code_labels,
+            status=merged_status,
         )
     return result
 

@@ -27,6 +27,7 @@ class CustomerBomRow:
     source_row: int = 0
     source_sheet: str = ""
     source_file: str = ""
+    status: str = ""
 
 
 @dataclass(frozen=True)
