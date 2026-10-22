@@ -720,7 +720,8 @@ def test_dnp_and_unpopulated_items_flagged_as_warning_not_error(tmp_path):
     erp_path = tmp_path / "erp_dnp.xlsx"
     pd.read_csv(io.StringIO(erp_csv)).to_excel(erp_path, index=False)
 
-    res = compare_workbooks(cust_path, erp_path)
+    output_path = tmp_path / "report_dnp.xlsx"
+    res = compare_workbooks(cust_path, erp_path, output_path=output_path)
     find_row = lambda ref: next(r for r in res.rows if ref in r["Müşteri Referans"])
 
     # 1. Real matched item
@@ -755,6 +756,23 @@ def test_dnp_and_unpopulated_items_flagged_as_warning_not_error(tmp_path):
     row_u99 = find_row("U99")
     assert row_u99["Durum"] == "HATA"
     assert "Sistemde Yok: ERP dosyasında bulunamadı" in row_u99["Hata/Uyarı Durumu"]
+
+    # 7. Verify Excel report coloring (light blue for non-assembly, red for errors)
+    from openpyxl import load_workbook
+    wb = load_workbook(output_path)
+    sheet = wb.active
+    # Find row with ANT1 and row with U99 in Excel
+    ant1_fill = None
+    u99_fill = None
+    for r in sheet.iter_rows(min_row=2):
+        row_vals = [str(c.value or '') for c in r]
+        if any("ANT1" in v for v in row_vals):
+            ant1_fill = r[0].fill.fgColor.rgb
+        if any("U99" in v for v in row_vals):
+            u99_fill = r[0].fill.fgColor.rgb
+
+    assert ant1_fill == "00D9E1F2" or ant1_fill == "D9E1F2"  # Light blue
+    assert u99_fill == "00FCE8E6" or u99_fill == "FCE8E6"    # Light red
 
 
 

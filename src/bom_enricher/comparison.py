@@ -1188,17 +1188,22 @@ def write_comparison_report(rows: list[dict[str, str]], output_path: Path) -> No
         cell.alignment = Alignment(vertical="center", wrap_text=True)
 
     red_fill = PatternFill("solid", fgColor="FCE8E6")     # Yanlış bilgi / hata için açık kırmızı
-    yellow_fill = PatternFill("solid", fgColor="FFF2CC")  # Uyarı için açık sarı
+    yellow_fill = PatternFill("solid", fgColor="FFF2CC")  # Standart uyarı için açık sarı
+    blue_fill = PatternFill("solid", fgColor="D9E1F2")    # Normalde girilmemesi gereken / montaj dışı satırlar için açık mavi
 
     for row in rows:
         sheet.append([row.get(header, "") for header in OUTPUT_HEADERS])
         current_row = sheet[sheet.max_row]
         durum = row.get("Durum", "UYGUN")
+        issues_text = row.get("Hata/Uyarı Durumu", "")
         row_fill = None
         if durum == "HATA":
             row_fill = red_fill
         elif durum == "UYARI":
-            row_fill = yellow_fill
+            if "Montaj Dışı" in issues_text or "ERP'ye Girilmez" in issues_text:
+                row_fill = blue_fill
+            else:
+                row_fill = yellow_fill
 
         for cell in current_row:
             if row_fill:

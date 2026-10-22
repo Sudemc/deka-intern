@@ -1591,12 +1591,20 @@
         let badgeClass = 'pill-uygun';
         let rowBg = '#ffffff';
 
+        const issueText = row['Hata/Uyarı Durumu'] || '';
+        const isNonErp = issueText.includes('Montaj Dışı') || issueText.includes("ERP'ye Girilmez");
+
         if (durum === 'HATA') {
           badgeClass = 'pill-hata';
           rowBg = '#fffbfb';
         } else if (durum === 'UYARI') {
-          badgeClass = 'pill-uyari';
-          rowBg = '#fffdf7';
+          if (isNonErp) {
+            badgeClass = 'pill-blue';
+            rowBg = '#f0f7ff';
+          } else {
+            badgeClass = 'pill-uyari';
+            rowBg = '#fffdf7';
+          }
         }
 
         return `<tr style="background:${rowBg}">
