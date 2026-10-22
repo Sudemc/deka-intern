@@ -574,6 +574,98 @@ def test_rulebook_manufacturer_registry(tmp_path):
     assert lengths == sorted(lengths, reverse=True)
 
 
+def test_cross_matching_with_customer_internal_code_in_erp(tmp_path):
+    from bom_enricher.comparison import compare_workbooks
+    import pandas as pd
+
+    cust_path = tmp_path / "customer_internal.xlsx"
+    pd.DataFrame({
+        "Parça": [37],
+        "DTSIS KODU": ["H010101005006"],
+        "ÜRETİCİ KODU": ["MBR0540T1G"],
+        "REFERANS": ["D13,D15"],
+        "MIKTAR": [2],
+        "DEĞER": ["MBR0540"],
+    }).to_excel(cust_path, index=False)
+
+    erp_path = tmp_path / "erp_internal.xlsx"
+    pd.DataFrame({
+        "Part Number": ["H010101005006"],
+        "Description": ["MBR0540 SMD DIYOT"],
+        "Reference": ["D13,D15"],
+        "Qty": [2],
+    }).to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    assert len(res.rows) == 1
+    row = res.rows[0]
+    assert row["Durum"] == "UYGUN"
+    assert "H010101005006" in row["Müşteri Part Number"]
+    assert "MBR0540T1G" in row["Müşteri Part Number"]
+    assert row["ERP Part Number"] == "H010101005006"
+
+
+def test_cross_matching_with_manufacturer_code_in_erp(tmp_path):
+    from bom_enricher.comparison import compare_workbooks
+    import pandas as pd
+
+    cust_path = tmp_path / "customer_mfr.xlsx"
+    pd.DataFrame({
+        "Parça": [37],
+        "DTSIS KODU": ["H010101005006"],
+        "ÜRETİCİ KODU": ["MBR0540T1G"],
+        "REFERANS": ["D13,D15"],
+        "MIKTAR": [2],
+        "DEĞER": ["MBR0540"],
+    }).to_excel(cust_path, index=False)
+
+    erp_path = tmp_path / "erp_mfr.xlsx"
+    pd.DataFrame({
+        "Part Number": ["MBR0540T1G"],
+        "Description": ["MBR0540 SMD DIYOT"],
+        "Reference": ["D13,D15"],
+        "Qty": [2],
+    }).to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    assert len(res.rows) == 1
+    row = res.rows[0]
+    assert row["Durum"] == "UYGUN"
+    assert "MBR0540T1G" in row["Müşteri Part Number"]
+    assert row["ERP Part Number"] == "MBR0540T1G"
+
+
+def test_generic_non_hardcoded_company_code_matching(tmp_path):
+    from bom_enricher.comparison import compare_workbooks
+    import pandas as pd
+
+    cust_path = tmp_path / "customer_generic.xlsx"
+    pd.DataFrame({
+        "Parça": [1],
+        "VESTEL KODU": ["V-998877"],
+        "MANUFACTURER PART NUMBER": ["STM32F407VGT6"],
+        "REFERANS": ["U1"],
+        "MIKTAR": [1],
+        "DEĞER": ["STM32F407"],
+    }).to_excel(cust_path, index=False)
+
+    erp_path = tmp_path / "erp_generic.xlsx"
+    pd.DataFrame({
+        "Part Number": ["V-998877"],
+        "Description": ["STM32 MCU LQFP100"],
+        "Reference": ["U1"],
+        "Qty": [1],
+    }).to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    assert len(res.rows) == 1
+    row = res.rows[0]
+    assert row["Durum"] == "UYGUN"
+    assert "V-998877" in row["Müşteri Part Number"]
+    assert "STM32F407VGT6" in row["Müşteri Part Number"]
+
+
+
 
 
 

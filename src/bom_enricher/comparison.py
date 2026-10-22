@@ -70,6 +70,9 @@ class PartRecord:
     source_sheet: str = ""
     source_breakdown: str = ""
     unmapped_prefix: bool = False
+    all_codes: tuple[str, ...] = ()
+    code_labels: dict[str, str] = field(default_factory=dict)
+
 
 
 @dataclass(frozen=True)
@@ -476,9 +479,23 @@ def compare_workbooks(
     unmatched_cust: dict[str, PartRecord] = dict(customer_by_code)
     unmatched_erp: dict[str, PartRecord] = dict(erp_by_code)
 
-    for code in list(unmatched_cust.keys()):
-        if not code.startswith("__NO_CODE_") and code in unmatched_erp:
-            matched_pairs.append((unmatched_cust.pop(code), unmatched_erp.pop(code)))
+    for ck in list(unmatched_cust.keys()):
+        if ck.startswith("__NO_CODE_"):
+            continue
+        c_rec = unmatched_cust.get(ck)
+        if not c_rec:
+            continue
+        if ck in unmatched_erp:
+            matched_pairs.append((unmatched_cust.pop(ck), unmatched_erp.pop(ck)))
+            continue
+        matched_ek = None
+        for alt_code in c_rec.all_codes:
+            alt_norm = _normalize_code(alt_code)
+            if alt_norm in unmatched_erp:
+                matched_ek = alt_norm
+                break
+        if matched_ek:
+            matched_pairs.append((unmatched_cust.pop(ck), unmatched_erp.pop(matched_ek)))
 
     # Aşama 2: RefDes eşleme (Part Number farklı fakat devre pozisyonu aynı olanlar)
     # Önce tam eşleşenler (exact match crefs == erefs), ardından kısmi örtüşenler
@@ -566,9 +583,19 @@ def compare_workbooks(
         c_pn = customer_record.part_number.strip() if customer_record else ""
         e_pn = erp_record.part_number.strip() if erp_record else ""
 
+        pn_matches = False
+        if customer_record and erp_record and e_pn:
+            e_norm = _normalize_code(e_pn)
+            if c_pn and _normalize_code(c_pn) == e_norm:
+                pn_matches = True
+            elif any(_normalize_code(c) == e_norm for c in customer_record.all_codes):
+                pn_matches = True
+
         # Part Number gösterimi
         if customer_record and erp_record:
-            if c_pn and e_pn and _normalize_code(c_pn) != _normalize_code(e_pn):
+            if pn_matches:
+                display_code = c_pn or e_pn
+            elif c_pn and e_pn and _normalize_code(c_pn) != _normalize_code(e_pn):
                 display_code = f"{c_pn} / {e_pn}"
             else:
                 display_code = c_pn or e_pn
@@ -612,11 +639,11 @@ def compare_workbooks(
             issues.append(f"Önek Eşleşemedi: ERP kart öneki tespit edilemedi ({src})")
 
         # Part Number eksik uyarısı (müşteri ve ERP eşleşti ama müşteri part number boş)
-        if customer_record and erp_record and not c_pn:
+        if customer_record and erp_record and not c_pn and not customer_record.all_codes:
             issues.append("Part Number eksik (Müşteri dosyasında Part Number belirtilmemiş)")
 
         pn_diff_note = ""
-        if customer_record and erp_record and c_pn and e_pn and _normalize_code(c_pn) != _normalize_code(e_pn):
+        if customer_record and erp_record and c_pn and e_pn and not pn_matches:
             pn_diff_note = f"Part Number farklı (Müşteri: {c_pn}, ERP: {e_pn})"
 
         if customer_record and erp_record:
@@ -696,7 +723,19 @@ def compare_workbooks(
         durum = _classify_severity(issues)
         issue_str = "; ".join(dict.fromkeys(issues))
 
-        customer_pn = c_pn or (customer_record.reference if customer_record else "")
+        if customer_record:
+            if len(customer_record.all_codes) > 1:
+                codes_list = list(customer_record.all_codes)
+                if e_pn and any(_normalize_code(c) == _normalize_code(e_pn) for c in codes_list):
+                    matched_c = next(c for c in codes_list if _normalize_code(c) == _normalize_code(e_pn))
+                    other_codes = [c for c in codes_list if c != matched_c]
+                    customer_pn = f"{matched_c} [{' / '.join(other_codes)}]"
+                else:
+                    customer_pn = " / ".join(codes_list)
+            else:
+                customer_pn = c_pn or customer_record.reference
+        else:
+            customer_pn = ""
         erp_pn = e_pn
         source_label = (
             (customer_record.source_breakdown or customer_record.source_file)
@@ -746,13 +785,28 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
                         for candidate in row.product_code_candidates
                         if candidate.value.strip()
                     ))
-                    if not code and len(candidates) == 1:
-                        code = candidates[0]
-                    elif not code and len(candidates) > 1:
-                        raise ValueError(
-                            f"{file_path.name} ({sheet}), satır {row.source_row}: birden fazla ürün kodu adayı bulundu. "
-                            "Part Number sütun başlığını netleştirin."
-                        )
+                    code_labels: dict[str, str] = {}
+                    for candidate in row.product_code_candidates:
+                        val = candidate.value.strip()
+                        if val and val not in code_labels:
+                            code_labels[val] = candidate.source_column
+
+                    if not code:
+                        if len(candidates) == 1:
+                            code = candidates[0]
+                        elif len(candidates) > 1:
+                            mpn_cand = next(
+                                (c for c in candidates if any(k in code_labels.get(c, "").lower() for k in ("üretici", "uretici", "mfr", "manufacturer", "mpn"))),
+                                None
+                            )
+                            code = mpn_cand or candidates[0]
+
+                    all_codes_list = [code] if code else []
+                    for c in candidates:
+                        if c not in all_codes_list:
+                            all_codes_list.append(c)
+                    all_codes = tuple(clean_part_number(c) for c in all_codes_list if clean_part_number(c))
+
                     if code:
                         code = clean_part_number(code)
                         qty_val = _cell_text(row.qty).strip()
@@ -768,6 +822,8 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
                             package=row.package,
                             source_file=file_path.name,
                             source_sheet=sheet,
+                            all_codes=all_codes,
+                            code_labels=code_labels,
                         ))
                     else:
                         qty_str = _cell_text(row.qty).strip()
@@ -1178,6 +1234,9 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
 
         is_unmapped = any(item.unmapped_prefix for item in group)
 
+        merged_all_codes = tuple(dict.fromkeys(c for item in group for c in item.all_codes if c))
+        merged_code_labels = {k: v for item in group for k, v in item.code_labels.items()}
+
         result[normalized] = PartRecord(
             part_number=group[0].part_number,
             description=" | ".join(descriptions),
@@ -1192,6 +1251,8 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
             source_sheet=", ".join(dict.fromkeys(item.source_sheet for item in group if item.source_sheet)),
             source_breakdown=source_breakdown,
             unmapped_prefix=is_unmapped,
+            all_codes=merged_all_codes,
+            code_labels=merged_code_labels,
         )
     return result
 
