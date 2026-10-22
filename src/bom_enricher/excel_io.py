@@ -96,6 +96,10 @@ _HEADER_ALIASES = {
     "package": {
         "package", "footprint", "case", "kilif", "paket", "size",
     },
+    "status": {
+        "status", "durum", "full", "dnp", "populate", "populated", "population",
+        "montaj durumu", "dizgi durumu", "montajdurumu", "dizgidurumu",
+    },
 }
 _CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-]{3,63}$")
 _EXPLICIT_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-]{1,63}$")
@@ -423,11 +427,11 @@ def read_customer_bom(
             column_index = columns.get("part_number", -1)
             header = raw_headers[column_index] if 0 <= column_index < len(raw_headers) else mapping.part_number if mapping else "Part Number"
             candidates.append(PartNumberCandidate(part_number, _string_value(header).strip()))
-        row_values = (get_value(field) for field in ("part", "qty", "value", "manufacturer", "mounting", "package"))
-        part, qty, value, manufacturer, mounting, package = row_values
+        row_values = (get_value(field) for field in ("part", "qty", "value", "manufacturer", "mounting", "package", "status"))
+        part, qty, value, manufacturer, mounting, package, status = row_values
         if not any(
             item is not None and str(item).strip()
-            for item in (part, qty, value, manufacturer, mounting, package, part_number)
+            for item in (part, qty, value, manufacturer, mounting, package, status, part_number)
         ) and not candidates:
             continue
         rows.append(
@@ -443,6 +447,7 @@ def read_customer_bom(
                 source_row=header_row + dataframe_index + 2,
                 source_sheet=str(resolved_sheet),
                 source_file=workbook_path.name,
+                status=_string_value(status),
             )
         )
     return rows
