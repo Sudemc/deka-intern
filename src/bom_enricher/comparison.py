@@ -103,10 +103,12 @@ class RuleBook:
     entries: tuple[RuleEntry, ...] = ()
     by_type_attribute: dict[str, dict[str, tuple[RuleEntry, ...]]] = field(default_factory=dict)
     by_attribute: dict[str, tuple[RuleEntry, ...]] = field(default_factory=dict)
+    manufacturers: tuple[tuple[str, str, str], ...] = ()
 
     @property
     def material_types(self) -> set[str]:
         return set(self.by_type_attribute)
+
 
 
 def _is_product_code_token(token: str) -> bool:
@@ -885,6 +887,154 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
     return records
 
 
+KNOWN_MANUFACTURERS: tuple[tuple[str, str, str], ...] = (
+    ("samsung", "Samsung", "SS"),
+    ("yageo", "Yageo", "YG"),
+    ("murata", "Murata", "MT"),
+    ("tdk", "TDK", "TD"),
+    ("kemet", "Kemet", "KM"),
+    ("royal ohm", "Royal Ohm", "RO"),
+    ("royal", "Royal Ohm", "RO"),
+    ("vishay", "Vishay", "VH"),
+    ("panasonic", "Panasonic", "PS"),
+    ("avx", "AVX", "AV"),
+    ("bourns", "Bourns", "BO"),
+    ("diodes inc", "Diodes Inc", "DI"),
+    ("diodes incorporated", "Diodes Inc", "DI"),
+    ("mdd", "MDD", "DD"),
+    ("stmicroelectronics", "ST", "ST"),
+    ("stmicro", "ST", "ST"),
+    ("texas instruments", "TI", "TI"),
+    ("on semiconductor", "On Semi", "ON"),
+    ("onsemi", "On Semi", "ON"),
+    ("infineon", "Infineon", "IN"),
+    ("microchip", "Microchip", "MC"),
+    ("nexperia", "Nexperia", "NP"),
+    ("littelfuse", "Littelfuse", "LT"),
+    ("rohm", "Rohm", "ROH"),
+    ("taiwo yuden", "Taiyo Yuden", "TY"),
+    ("taiyo", "Taiyo Yuden", "TY"),
+    ("wuerth", "Wurth", "WU"),
+    ("würth", "Wurth", "WU"),
+    ("kls", "Kls", "KL"),
+    ("molex", "Molex", "MO"),
+    ("phoenix contact", "Phoenix", "PNX"),
+    ("ttaf", "Ttaf", "TT"),
+    ("jst", "JST", "JST"),
+    ("amphenol", "Amphenol", "AM"),
+    ("te connectivity", "TE Connectivity", "TC"),
+    ("tyco electronics", "TE Connectivity", "TC"),
+    ("tyco", "TE Connectivity", "TC"),
+    ("fusheng", "FUET", "FT"),
+    ("fuet", "FUET", "FT"),
+    ("huaneng", "Huaneng", "HUA"),
+    ("huawha", "Huaneng", "HUA"),
+    ("hottech", "Hottech", "HO"),
+    ("cui devices", "Same Sky", "SKY"),
+    ("same sky", "Same Sky", "SKY"),
+    ("cui", "Same Sky", "SKY"),
+    ("yixinzy", "YIXINZY", "YIX"),
+    ("epcos", "Epcos", "EP"),
+    ("multicomp pro", "Multicomp Pro", "MCP"),
+    ("multicomp", "Multicomp Pro", "MCP"),
+    ("amtek", "Amtek", "AH"),
+    ("wago", "Wago", "WA"),
+    ("harting", "Harting", "HR"),
+    ("hirose", "Hirose", "HIR"),
+    ("samtec", "Samtec", "ZZ3"),
+    ("raltron", "Raltron", "RA"),
+    ("foryard", "Foryard", "FO"),
+    ("panjit semiconductor", "Panjit", "PA"),
+    ("panjit", "Panjit", "PA"),
+    ("ezurio", "Ezurio", "EZU"),
+    ("laird connectivity", "Ezurio", "EZU"),
+    ("laird", "Ezurio", "EZU"),
+    ("simsukian", "SIMSUKIAN", "SMK"),
+    ("connfly", "Connfly", "CF"),
+    ("eemb", "Eemb", "EM"),
+    ("stocko", "Stocko", "SC"),
+    ("gaosong", "Gaosong", "GA"),
+    ("hirose electric", "Hirose Electric", "HRE"),
+    ("gct", "GCT", "ZZ6"),
+    ("xunpu", "XUNPU", "XUN"),
+    ("iriso", "IRISO", "IR"),
+    ("tianli", "Tianli", "TL"),
+    ("oupiin", "Oupiin", "OP"),
+    ("on shore", "On Shore", "MIK"),
+    ("ismak", "İsmak", "ISM"),
+    ("i\u0307smak", "İsmak", "ISM"),
+    ("core", "CORE", "COR"),
+    ("dtsis", "DTSİS", "DTS"),
+    ("dts", "DTSİS", "DTS"),
+    ("mikrodev", "Mikrodev", "MIK"),
+    ("enervon", "Enervon", "ENV"),
+    ("isipark", "Isipark", "ISP"),
+)
+
+_CORPORATE_SUFFIX_RE = re.compile(
+    r"\b(?:Inc\.?|Co\.?,\s*Ltd\.?|Co\.?\s*Ltd\.?|Ltd\.?|Corp\.?|Corporation|Cor\.?|Electronics?|Elec\.?|Elektronik|Semiconductor|Semi|Technologies|Technology|Connectors?|Components?|LLC|GmbH|ALT\s*\d+|ALT\d+)\b",
+    flags=re.IGNORECASE,
+)
+
+_DISALLOWED_MFR_TERMS = {
+    "diode", "diodes", "resistor", "resistors", "capacitor", "capacitors",
+    "connector", "connectors", "inductor", "inductors", "relay", "relays",
+    "switch", "switches", "fuse", "fuses", "transformer", "transformers",
+    "taiwan", "china", "japan", "korea", "germany", "usa", "turkey", "europe", "asia",
+    "on", "it", "at", "in", "to", "by", "of", "or", "as", "is", "an", "am",
+    "if", "so", "no", "we", "the", "and", "top",
+}
+
+
+def _clean_mfr_term(term: str) -> str:
+    cleaned = re.sub(r"[\s,.-]+$", "", term).strip()
+    cleaned = re.sub(r"^[\s,.-]+", "", cleaned).strip()
+    return re.sub(r"\s+", " ", cleaned)
+
+
+def _build_manufacturer_registry(parsed: list[RuleEntry]) -> tuple[tuple[str, str, str], ...]:
+    """Build dynamic universal manufacturer registry from rules.xlsx merged with curated aliases.
+
+    Returns tuple of (search_term, display_name, erp_code) sorted by search_term length descending.
+    """
+    registry: dict[str, tuple[str, str, str]] = {}
+
+    # 1. Curated aliases from KNOWN_MANUFACTURERS take precedence
+    for kw, name, code in KNOWN_MANUFACTURERS:
+        term_clean = kw.lower().strip()
+        if term_clean and term_clean not in registry:
+            registry[term_clean] = (term_clean, name, code)
+
+    # 2. Extract dynamic entries from rules.xlsx
+    for entry in parsed:
+        if entry.attribute_name in ("Q", "Manufacturer") and entry.value and entry.value_description:
+            code = entry.value.strip()
+            raw_desc = entry.value_description.strip().rstrip(",").strip()
+            if not code or not raw_desc:
+                continue
+
+            display_name = re.sub(r"\s+", " ", raw_desc)
+            raw_lower = _clean_mfr_term(display_name.lower())
+            no_parens = re.sub(r"\([^)]*\)", "", display_name).strip()
+            stripped = _CORPORATE_SUFFIX_RE.sub("", no_parens).strip()
+            stripped_lower = _clean_mfr_term(stripped.lower())
+
+            for term in (raw_lower, stripped_lower):
+                if not term or len(term) < 3:
+                    continue
+                if term in _DISALLOWED_MFR_TERMS:
+                    continue
+                if code.upper() == "DI" and term in ("diode", "diodes"):
+                    continue
+                if term not in registry:
+                    registry[term] = (term, display_name, code)
+                elif "alt" in registry[term][1].lower() and "alt" not in display_name.lower():
+                    registry[term] = (term, display_name, code)
+
+    # Sort manufacturer match entries by search term length descending
+    return tuple(sorted(registry.values(), key=lambda item: len(item[0]), reverse=True))
+
+
 def load_rulebook(path: Path) -> RuleBook:
     """Read every populated rule field from the combined materials dictionary."""
     with pd.ExcelFile(path) as workbook:
@@ -941,7 +1091,7 @@ def load_rulebook(path: Path) -> RuleBook:
         for material_type, attributes in grouped.items()
     }
     all_attributes = {name: tuple(entries) for name, entries in by_attribute.items()}
-    return RuleBook(tuple(parsed), indexed, all_attributes)
+    return RuleBook(tuple(parsed), indexed, all_attributes, _build_manufacturer_registry(parsed))
 
 
 def validate_erp_rules(record: PartRecord, rulebook: RuleBook) -> list[str]:
