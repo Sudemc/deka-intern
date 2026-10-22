@@ -2672,32 +2672,35 @@ def extract_component_specs(
                     # Strip out mating sections so mating part references do not invert gender
                     text_no_mates = re.split(r"\b(?:mates\s+with|mating\s+part|mating\s+connector|use\s+with)\b", text_lower)[0]
 
-                    # Check for explicit header/wafer/plug in component type or title
-                    is_header = bool(re.search(
-                        r"\b(?:component\s+type[:\s]+pcb\s+header|pcb\s+headers?|pin\s+headers?|box\s+headers?|"
-                        r"shrouded\s+headers?|headers?|wafers?|plugs?|erkek)\b",
-                        text_no_mates
-                    ))
-                    is_receptacle = bool(re.search(
-                        r"\b(?:receptacles?|sockets?|crimp\s+housing|female|dişi)\b",
-                        text_no_mates
-                    ))
+                    # Specific compound phrases take highest priority
+                    if re.search(r"\b(?:socket\s+headers?|female\s+headers?)\b", text_no_mates):
+                        specs["pin_type"] = "Dişi"
+                    elif re.search(r"\b(?:pin\s+headers?|shrouded\s+headers?)\b", text_no_mates):
+                        specs["pin_type"] = "Erkek"
+                    else:
+                        is_header = bool(re.search(
+                            r"\b(?:component\s+type[:\s]+pcb\s+header|pcb\s+headers?|box\s+headers?|"
+                            r"headers?|wafers?|plugs?|erkek)\b",
+                            text_no_mates
+                        ))
+                        is_receptacle = bool(re.search(
+                            r"\b(?:receptacles?|sockets?|crimp\s+housing|female|dişi)\b",
+                            text_no_mates
+                        ))
 
-                    if is_header and not is_receptacle:
-                        specs["pin_type"] = "Erkek"
-                    elif is_receptacle and not is_header:
-                        specs["pin_type"] = "Dişi"
-                    elif is_header and is_receptacle:
-                        # Category line like "PCB Headers and Receptacles" contains both.
-                        # Look at specific title/headline or component type:
-                        if re.search(r"\b(?:header|wafer|plug)\b", text_no_mates):
+                        if is_header and not is_receptacle:
                             specs["pin_type"] = "Erkek"
-                        else:
+                        elif is_receptacle and not is_header:
                             specs["pin_type"] = "Dişi"
-                    elif any(k in text_no_mates for k in ("male", "erkek")):
-                        specs["pin_type"] = "Erkek"
-                    elif any(k in text_no_mates for k in ("female", "dişi")):
-                        specs["pin_type"] = "Dişi"
+                        elif is_header and is_receptacle:
+                            if re.search(r"\b(?:receptacle|socket|female)\b", text_no_mates):
+                                specs["pin_type"] = "Dişi"
+                            else:
+                                specs["pin_type"] = "Erkek"
+                        elif any(k in text_no_mates for k in ("male", "erkek")):
+                            specs["pin_type"] = "Erkek"
+                        elif any(k in text_no_mates for k in ("female", "dişi")):
+                            specs["pin_type"] = "Dişi"
 
         # Pitch
         if "pitch" not in specs:
