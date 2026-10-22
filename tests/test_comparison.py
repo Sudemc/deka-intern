@@ -538,6 +538,135 @@ def test_ref_diff_details_in_issue_message(tmp_path):
     assert "ERP: " in issue
 
 
+def test_rulebook_manufacturer_registry(tmp_path):
+    rules_file = tmp_path / "Rules.xlsx"
+    _write_book(rules_file, "BİRLEŞTİRİLMİŞ", [
+        "MALZEME TİPİ", "ÖZELLİK (ATTRIBUTE)", "ÖZELLİK AÇIKLAMASI", "VALUE",
+        "VALUE AÇIKLAMASI", "LANGU", "SIRALAMA (SORTNO)", "PREFIX", "SUFFIX",
+    ], [
+        ["CAP", 1, "Mounting", "S", "SMD", "T", 0, "CAP", None],
+        ["CAP", 105, "Package", "S3", "0805 Package,", "T", 10, None, None],
+        ["CAP", 16, "Value Capacitors", "A1", "10uF,", "T", 20, None, None],
+        ["CAP", 10, "Voltage", "C7", "25V,", "T", 30, None, None],
+        ["DIO", 7, "Q", "DI", "Diodes", "T", 80, "-", None],
+        ["DIO", 7, "Q", "CR", "Cree Inc.", "T", 80, "-", None],
+        ["RES", 7, "Q", "QA", "Qualitek Delta,", "T", 80, "-", None],
+        ["RES", 7, "Q", "TWS", "Taiwan Semiconductor", "T", 80, "-", None],
+        ["CON", 7, "Q", "SL", "Sullins Connector", "T", 80, "-", None],
+    ])
+    rulebook = load_rulebook(rules_file)
+    terms = [item[0] for item in rulebook.manufacturers]
+
+    # Curated aliases from KNOWN_MANUFACTURERS present
+    assert "diodes inc" in terms
+    assert "diodes incorporated" in terms
+    # Bare generic 'diodes' must NOT be in terms
+    assert "diodes" not in terms
+    # Country 'taiwan' alone must NOT be in terms
+    assert "taiwan" not in terms
+    assert "taiwan semiconductor" in terms
+    # Stripped suffixes
+    assert "cree" in terms
+    assert "qualitek delta" in terms
+    assert "sullins" in terms
+    # Sorted descending by length
+    lengths = [len(t) for t in terms]
+    assert lengths == sorted(lengths, reverse=True)
+
+
+def test_cross_matching_with_customer_internal_code_in_erp(tmp_path):
+    from bom_enricher.comparison import compare_workbooks
+    import pandas as pd
+
+    cust_path = tmp_path / "customer_internal.xlsx"
+    pd.DataFrame({
+        "Parça": [37],
+        "DTSIS KODU": ["H010101005006"],
+        "ÜRETİCİ KODU": ["MBR0540T1G"],
+        "REFERANS": ["D13,D15"],
+        "MIKTAR": [2],
+        "DEĞER": ["MBR0540"],
+    }).to_excel(cust_path, index=False)
+
+    erp_path = tmp_path / "erp_internal.xlsx"
+    pd.DataFrame({
+        "Part Number": ["H010101005006"],
+        "Description": ["MBR0540 SMD DIYOT"],
+        "Reference": ["D13,D15"],
+        "Qty": [2],
+    }).to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    assert len(res.rows) == 1
+    row = res.rows[0]
+    assert row["Durum"] == "UYGUN"
+    assert "H010101005006" in row["Müşteri Part Number"]
+    assert "MBR0540T1G" in row["Müşteri Part Number"]
+    assert row["ERP Part Number"] == "H010101005006"
+
+
+def test_cross_matching_with_manufacturer_code_in_erp(tmp_path):
+    from bom_enricher.comparison import compare_workbooks
+    import pandas as pd
+
+    cust_path = tmp_path / "customer_mfr.xlsx"
+    pd.DataFrame({
+        "Parça": [37],
+        "DTSIS KODU": ["H010101005006"],
+        "ÜRETİCİ KODU": ["MBR0540T1G"],
+        "REFERANS": ["D13,D15"],
+        "MIKTAR": [2],
+        "DEĞER": ["MBR0540"],
+    }).to_excel(cust_path, index=False)
+
+    erp_path = tmp_path / "erp_mfr.xlsx"
+    pd.DataFrame({
+        "Part Number": ["MBR0540T1G"],
+        "Description": ["MBR0540 SMD DIYOT"],
+        "Reference": ["D13,D15"],
+        "Qty": [2],
+    }).to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    assert len(res.rows) == 1
+    row = res.rows[0]
+    assert row["Durum"] == "UYGUN"
+    assert "MBR0540T1G" in row["Müşteri Part Number"]
+    assert row["ERP Part Number"] == "MBR0540T1G"
+
+
+def test_generic_non_hardcoded_company_code_matching(tmp_path):
+    from bom_enricher.comparison import compare_workbooks
+    import pandas as pd
+
+    cust_path = tmp_path / "customer_generic.xlsx"
+    pd.DataFrame({
+        "Parça": [1],
+        "VESTEL KODU": ["V-998877"],
+        "MANUFACTURER PART NUMBER": ["STM32F407VGT6"],
+        "REFERANS": ["U1"],
+        "MIKTAR": [1],
+        "DEĞER": ["STM32F407"],
+    }).to_excel(cust_path, index=False)
+
+    erp_path = tmp_path / "erp_generic.xlsx"
+    pd.DataFrame({
+        "Part Number": ["V-998877"],
+        "Description": ["STM32 MCU LQFP100"],
+        "Reference": ["U1"],
+        "Qty": [1],
+    }).to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    assert len(res.rows) == 1
+    row = res.rows[0]
+    assert row["Durum"] == "UYGUN"
+    assert "V-998877" in row["Müşteri Part Number"]
+    assert "STM32F407VGT6" in row["Müşteri Part Number"]
+
+
+
+
 
 
 
