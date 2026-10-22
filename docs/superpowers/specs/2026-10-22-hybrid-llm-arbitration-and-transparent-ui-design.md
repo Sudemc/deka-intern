@@ -95,27 +95,51 @@ The analysis return dictionary and `DatasheetAnalysisResult` will include:
 - `regex_specs`: dict of raw regex extractions
 
 ### B. Trigger & Arbitration Logic in `datasheet_analyzer.py`
-1. **Trigger Condition:**
+1. **Auditor Trigger Conditions:**
+   The text LLM acts as an active **Quality Auditor & Semantic Validator**. It engages whenever:
+   - **Category-Mandatory Audit:** Any component belonging to complex, ambiguous, or multi-manufacturer categories (`CON`, `SWT`, `REL`, `ICR`, `TRA`, `IND`, `DSP`, `DIO`, `FUS`, etc.) automatically triggers the LLM auditor when Ollama is available.
+   - **Semantic Contradiction / Red-Flag Heuristic:** Regardless of confidence score, if any textual keyword contradicts deterministic extraction (e.g. text has "socket", "receptacle", "female" but regex assigned "Erkek"; or text has "through hole", "dip", "tht", "leaded" but regex defaulted to "SMD"), trigger LLM immediately.
+   - **Ambiguity & Missing Fields:** `conf < 0.98`, missing core attributes, catalog documents, or unresolved part numbers.
+   - **Fast-Path Exemption (Pure Speed):** ONLY standard chip passive components (`RES`, `CAP`) whose part number is 100% mathematically decoded by algorithmic rules with confidence >= 0.98 bypass the LLM.
+
    ```python
+   # Exemption check: purely standard chip passives resolved by exact mathematical PN decoders
+   is_pure_passive = mat_type in ("RES", "CAP") and pn_has_core and conf >= 0.98 and not is_catalog
+   
+   # Red-flag contradiction check
+   has_gender_conflict = (
+       specs.get("pin_type") == "Erkek" and any(w in clean_text.casefold() for w in ("socket", "receptacle", "female"))
+   ) or (
+       specs.get("pin_type") == "Dişi" and any(w in clean_text.casefold() for w in ("male header", "pin header", "plug"))
+   )
+   has_mounting_conflict = (
+       specs.get("mounting") == "SMD" and any(w in clean_text.casefold() for w in ("through hole", "tht", " dip ", "leaded"))
+   ) or (
+       specs.get("mounting") == "TH" and any(w in clean_text.casefold() for w in ("surface mount", "smd", "smt"))
+   )
+   has_red_flag = has_gender_conflict or has_mounting_conflict
+
    should_trigger_text_llm = (
        vlm.is_available()
        and bool(clean_text)
        and (
-           is_complex_or_ambiguous
+           has_red_flag
+           or not is_pure_passive
+           or is_complex_or_ambiguous
            or are_critical_missing
            or is_catalog
            or not pn
            or pn.startswith("media_")
-           or conf < 0.95
-           or any(k in clean_text.casefold() for k in ("detect pin", "detection switch", "sim card", "microsd", "socket header", "receptacle"))
+           or conf < 0.98
        )
    )
    ```
+
 2. **Arbitration Rules:**
    - **`pin_type` (Connector Gender):**
      If LLM identifies `Dişi` or `Erkek` with high contextual cues (e.g. text contains "socket", "receptacle", "female"), and regex extracted `Erkek` or `Dişi`, the LLM overrides regex, logging: `"LLM bağlamsal analiz ile pin_type değerini güncelledi"`.
    - **`mounting` (Montaj Tipi):**
-     If LLM extracts explicit mounting (`"TH"` or `"SMD"`) from package or lead descriptions with textual evidence (e.g. "through hole", "dip", "tht", "surface mount"), and conflicts with regex, LLM arbitrates and logs the rationale.
+     If LLM extracts explicit mounting (`"TH"` or `"SMD"`) with textual evidence and conflicts with regex, LLM arbitrates and logs the rationale.
    - **`type_connector` & `style` & `pin_number`:**
      Specialized connectors (e.g., SIM/MicroSD Push-Push, Card Socket, Pin Header, Terminal Block) and compound pin counts detected by LLM take precedence over generic regex guesses.
    - **Non-Connector Categories (`SWT`, `REL`, `ICR`, `DIO`, etc.):**
