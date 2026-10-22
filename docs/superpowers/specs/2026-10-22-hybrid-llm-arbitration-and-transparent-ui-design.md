@@ -62,7 +62,10 @@ The analysis results should remain clean and uncluttered by default. The full LL
 
 - **Platform & Environment:** Windows 11, local Python virtualenv (`.\\.venv\\Scripts\\python.exe`), local Ollama (`http://127.0.0.1:11434`).
 - **Dependencies:** FastAPI, Uvicorn, Jinja2/Static HTML, PyMuPDF, pdfplumber, httpx. No new external package dependencies.
-- **Performance:** LLM timeout set to 5.0 seconds maximum to prevent hanging the web interface during batch processing. If timed out, fall back gracefully to deterministic specs with an arbitration log entry.
+- **Performance & Timeouts:** 
+  - Fast Text LLM (`llama3.2:3b`): 5.0 seconds maximum timeout.
+  - Multimodal Vision LLM (`moondream`): 30.0 seconds timeout (page rendering + image processing on CPU).
+  - If a timeout occurs, fall back gracefully to deterministic specs with an arbitration log entry recording `llm_status = "timeout"`.
 
 ---
 
@@ -81,7 +84,12 @@ class ArbitrationEvent:
     source: str  # "llm_override", "regex_retained", "llm_filled_empty", "regex_default"
 ```
 The analysis return dictionary and `DatasheetAnalysisResult` will include:
-- `llm_status`: `"active"` | `"offline"` | `"timeout"` | `"error"`
+- `llm_status`: 
+  - `"active"`: LLM executed and contributed/arbitrated specs.
+  - `"standby"`: Ollama is online and healthy, but component was resolved deterministically with high confidence (>= 0.95), so LLM was not needed.
+  - `"offline"`: Ollama server is not running on localhost.
+  - `"timeout"`: LLM execution timed out (gracefully fallen back to regex).
+  - `"error"`: LLM call or JSON parsing encountered an issue.
 - `llm_trace`: list of `ArbitrationEvent` dicts
 - `llm_specs`: dict of raw LLM extractions
 - `regex_specs`: dict of raw regex extractions
@@ -105,15 +113,20 @@ The analysis return dictionary and `DatasheetAnalysisResult` will include:
    ```
 2. **Arbitration Rules:**
    - **`pin_type` (Connector Gender):**
-     If LLM identifies `Dişi` or `Erkek` with high contextual cues (e.g. text contains "socket", "receptacle", "female"), and regex extracted `Erkek` or `Dişi`, the LLM can override regex, logging: `"LLM bağlamsal analiz ile pin_type değerini güncelledi"`.
+     If LLM identifies `Dişi` or `Erkek` with high contextual cues (e.g. text contains "socket", "receptacle", "female"), and regex extracted `Erkek` or `Dişi`, the LLM overrides regex, logging: `"LLM bağlamsal analiz ile pin_type değerini güncelledi"`.
    - **`mounting` (Montaj Tipi):**
-     If regex is uncertain or defaulted to SMD, and LLM extracted `TH` or `SMD` from package descriptions, LLM overrides and logs the decision.
-   - **`type_connector` & `style`:**
-     Specialized connectors (e.g., SIM/MicroSD Push-Push, Card Socket, Pin Header, Terminal Block) detected by LLM take precedence over generic "Header" regex guesses.
+     If LLM extracts explicit mounting (`"TH"` or `"SMD"`) from package or lead descriptions with textual evidence (e.g. "through hole", "dip", "tht", "surface mount"), and conflicts with regex, LLM arbitrates and logs the rationale.
+   - **`type_connector` & `style` & `pin_number`:**
+     Specialized connectors (e.g., SIM/MicroSD Push-Push, Card Socket, Pin Header, Terminal Block) and compound pin counts detected by LLM take precedence over generic regex guesses.
+   - **Non-Connector Categories (`SWT`, `REL`, `ICR`, `DIO`, etc.):**
+     LLM fills empty/unextracted fields (`source: "llm_filled_empty"`) and discovers part numbers and manufacturers. Conflicting non-connector values retain regex (`source: "regex_retained"`) to guarantee zero regression risk for existing benchmark suites.
    - **Empty / None Fields:**
-     LLM fills any missing fields that regex failed to extract.
+     LLM fills any missing fields that regex failed to extract across all categories.
 
-### C. Backend API Update in `web.py`
+### C. Client Status Contract in `VisionLLMClient`
+`VisionLLMClient` exposes `last_status` (`"success"`, `"timeout"`, `"connection_error"`, `"parse_error"`). This allows `datasheet_analyzer.py` to determine exact `llm_status` cleanly without breaking existing method signatures or test contracts.
+
+### D. Backend API Update in `web.py`
 1. Endpoint `GET /api/health/llm`:
    Calls `vlm.is_available()` and checks models (`llama3.2:3b`, `moondream`), returning:
    ```json
@@ -126,18 +139,18 @@ The analysis return dictionary and `DatasheetAnalysisResult` will include:
    ```
 2. In `analyze_single_datasheet`, propagate `llm_trace`, `llm_status`, `llm_specs`, and `regex_specs` into the JSON payload returned to the frontend.
 
-### D. Frontend Collapsible UI in `static/index.html`
+### E. Frontend Collapsible UI in `static/index.html`
 In `static/index.html` within the component card rendering template:
 ```html
 <details class="llm-trace-accordion">
   <summary class="llm-trace-summary">
     <span>🔍 Yapay Zeka (LLM) & Karar Geçmişi</span>
-    <span class="llm-trace-pill ${item.llm_status === 'active' ? 'pill-green' : 'pill-yellow'}">
-      ${item.llm_status === 'active' ? '🟢 LLM Aktif' : '🟡 Kural Motoru'}
+    <span class="llm-trace-pill ${item.llm_status === 'active' ? 'pill-green' : (item.llm_status === 'standby' ? 'pill-blue' : 'pill-yellow')}">
+      ${item.llm_status === 'active' ? '🟢 LLM Aktif' : (item.llm_status === 'standby' ? '🔵 Standby (Kural Motoru)' : '🟡 Ollama Kapalı')}
     </span>
   </summary>
   <div class="llm-trace-content">
-    <!-- Status & Info -->
+    <!-- Status & Info Banner -->
     <div class="llm-status-banner">...</div>
     <!-- Arbitration Decisions Table -->
     ${arbitrationTableHtml}
@@ -157,5 +170,5 @@ Styling:
 ## 5. What's Left to the Builder
 
 - Exact CSS styles and transition animations for `<details>` in `index.html`.
-- Fine-tuning the specific text prompts in `VisionLLMClient` if additional attribute extraction fields are desired.
-- Unit test coverage for `ArbitrationEvent` and arbitration overrides.
+- Unit test coverage for `ArbitrationEvent`, status lifecycles, and arbitration overrides.
+
