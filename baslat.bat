@@ -35,6 +35,9 @@ if not exist ".venv\Scripts\python.exe" (
 
 echo [3/3] Web sunucusu baslatiliyor...
 echo.
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do (
+    taskkill /f /pid %%a >nul 2>nul
+)
 echo Tarayicinizda aciliyor: http://127.0.0.1:8000
 start http://127.0.0.1:8000
 ".venv\Scripts\python.exe" -m bom_enricher.web
