@@ -41,11 +41,12 @@ def test_missing_and_duplicate_headers(tmp_path):
     sheet.append(["C1", 1, "first", "second", "SYN-001"])
     workbook.save(duplicate_path)
 
-    with pytest.raises(ValueError) as duplicate_error:
-        read_customer_bom(duplicate_path)
-    assert "duplicate.xlsx" in str(duplicate_error.value)
-    assert "Duplicate Fields" in str(duplicate_error.value)
-    assert "Value" in str(duplicate_error.value)
+    duplicate_rows = read_customer_bom(duplicate_path)
+    assert len(duplicate_rows) == 1
+    assert duplicate_rows[0].part == "C1"
+    assert duplicate_rows[0].qty == 1
+    assert duplicate_rows[0].value == "first - second"
+    assert duplicate_rows[0].part_number == "SYN-001"
 
 
 def test_custom_column_mapping(tmp_path):
@@ -216,4 +217,92 @@ def test_generic_multi_code_candidate_detection(tmp_path):
     candidate_values = {c.value for c in rows[0].product_code_candidates}
     assert "H010101005006" in candidate_values
     assert "MBR0540T1G" in candidate_values
+
+
+def test_altium_bom_format(tmp_path):
+    import pandas as pd
+    from bom_enricher.excel_io import read_customer_bom
+
+    file_path = tmp_path / "altium_bom.xlsx"
+    df = pd.DataFrame({
+        "Comment": ["100nF", "10k"],
+        "Description": ["CAP CER 100NF 50V X7R 0603", "RES 10K 1% 0603"],
+        "Designator": ["C1, C2", "R1"],
+        "Footprint": ["0603", "0603"],
+        "LibRef": ["CAP_0603_100NF", "RES_0603_10K"],
+        "Quantity": [2, 1],
+    })
+    df.to_excel(file_path, index=False)
+    rows = read_customer_bom(file_path)
+    assert len(rows) == 2
+    assert rows[0].part == "C1, C2"
+    assert rows[0].qty == 2
+    assert rows[0].value == "100nF - CAP CER 100NF 50V X7R 0603"
+    assert rows[0].part_number == "CAP_0603_100NF"
+    assert rows[0].package == "0603"
+
+
+def test_kicad_bom_format_with_inferred_qty(tmp_path):
+    import pandas as pd
+    from bom_enricher.excel_io import read_customer_bom
+
+    file_path = tmp_path / "kicad_bom.xlsx"
+    # KiCad BOM often has no Quantity column, Qty is implicit in Reference count
+    df = pd.DataFrame({
+        "Reference": ["C1, C2, C3", "U1"],
+        "Value": ["100nF", "STM32F401RET6"],
+        "Footprint": ["Capacitor_SMD:C_0603", "Package_QFP:LQFP-64"],
+    })
+    df.to_excel(file_path, index=False)
+    rows = read_customer_bom(file_path)
+    assert len(rows) == 2
+    assert rows[0].part == "C1, C2, C3"
+    assert rows[0].qty == 3
+    assert rows[0].value == "100nF"
+    assert rows[1].part == "U1"
+    assert rows[1].qty == 1
+    assert rows[1].part_number == "STM32F401RET6"
+
+
+def test_refdes_range_expansion_and_qty_inference(tmp_path):
+    import pandas as pd
+    from bom_enricher.excel_io import read_customer_bom, split_references
+
+    assert split_references("R1-R5, R8, C10-C12") == [
+        "R1", "R2", "R3", "R4", "R5", "R8", "C10", "C11", "C12"
+    ]
+
+    file_path = tmp_path / "range_bom.xlsx"
+    df = pd.DataFrame({
+        "Designator": ["R1-R5", "C10-C14"],
+        "Val": ["10k", "100nF"],
+        "P/N": ["RC0603FR-0710KL", "CC0603KRX7R9BB104"],
+    })
+    df.to_excel(file_path, index=False)
+    rows = read_customer_bom(file_path)
+    assert len(rows) == 2
+    assert rows[0].qty == 5
+    assert rows[0].part_number == "RC0603FR-0710KL"
+    assert rows[1].qty == 5
+    assert rows[1].part_number == "CC0603KRX7R9BB104"
+
+
+def test_dual_package_columns_combination(tmp_path):
+    import pandas as pd
+    from bom_enricher.excel_io import read_customer_bom
+
+    file_path = tmp_path / "dual_pkg_bom.xlsx"
+    df = pd.DataFrame({
+        "Part": ["U1"],
+        "Qty": [1],
+        "Part Number": ["MAX3232ESE+"],
+        "Value": ["RS232 Transceiver"],
+        "Footprint": ["SOIC-16"],
+        "Package": ["SMD"],
+    })
+    df.to_excel(file_path, index=False)
+    rows = read_customer_bom(file_path)
+    assert len(rows) == 1
+    assert rows[0].package == "SOIC-16 SMD"
+
 

@@ -64,40 +64,52 @@ def _worksheet_name(path: Path, sheet_name: str | int) -> str:
 _HEADER_ALIASES = {
     "item": {
         "item", "item no", "line", "line no", "sira no", "kalem no", "no", "parca",
+        "sira", "kalem", "row", "row no", "entry",
     },
     "part": {
-        "part", "reference", "ref", "refdes", "designator", "component",
-        "component reference", "reference designator", "position", "location",
-        "referans", "pozisyon", "konum",
+        "part", "parts", "reference", "references", "ref", "refs", "refdes", "ref des",
+        "designator", "designators", "component", "components",
+        "component reference", "reference designator", "position", "positions",
+        "location", "locations", "component locations",
+        "referans", "referanslar", "pozisyon", "konum", "devre elemani",
+        "sematik referans", "eleman", "etiket", "sematik etiket",
     },
     "qty": {
         "qty", "quantity", "quantity required", "required qty", "count", "amount",
-        "pcs", "pieces", "adet", "miktar", "sayi",
+        "pcs", "pieces", "adet", "miktar", "sayi", "total qty", "qty board",
+        "birim adet", "toplam adet", "parca adedi", "adedi", "sayisi",
     },
     "value": {
-        "value", "description", "desc", "spec", "specification", "details",
-        "aciklama", "deger", "teknik ozellik",
+        "value", "val", "description", "desc", "spec", "specification", "details",
+        "comment", "comments", "device", "part name", "device description",
+        "aciklama", "deger", "tanim", "stok adi", "malzeme adi", "eleman degeri",
+        "teknik ozellik",
     },
     "part_number": {
         "part number", "part no", "part n", "p n", "pn", "mpn",
         "manufacturer part number", "manufacturer part no", "manufacturer pn",
-        "mfr pn", "mfr p n", "supplier part number", "vendor part number",
+        "mfr pn", "mfr p n", "mfr part number", "mfr part no", "supplier part number",
+        "vendor part number", "order code", "ordering code", "siparis kodu",
+        "tedarikci kodu", "libref", "library reference",
         "catalog number", "product id", "product code", "product number", "item code",
         "component code", "stock code", "stock number", "material number", "material no",
         "code", "kod", "urun kodu", "urun no", "parca kodu",
-        "uretici kodu", "malzeme kodu", "malzeme no",
+        "uretici kodu", "uretici parca kodu", "malzeme kodu", "malzeme no",
     },
     "manufacturer": {
-        "manufacturer", "manufacture", "maker", "brand", "uretici", "marka",
+        "manufacturer", "manufacture", "maker", "brand", "uretici", "marka", "vendor", "supplier",
     },
     "mounting": {
-        "mounting", "th/smd", "thsmd", "th smd", "montaj", "montaj tipi", "montaj sekli", "montajtipi",
+        "mounting", "mounting type", "th smd", "thsmd", "th/smd", "montaj", "montaj tipi",
+        "montaj sekli", "montajtipi", "dizgi tipi", "dizgitipi",
     },
     "package": {
         "package", "footprint", "case", "kilif", "paket", "size",
+        "pcb footprint", "package case", "kasa", "boy", "govde",
     },
     "status": {
-        "status", "durum", "full", "dnp", "populate", "populated", "population",
+        "status", "durum", "full", "dnp", "np", "dnp np", "populate", "populated", "population",
+        "fitted", "placement", "variant", "dizim", "dizim durumu",
         "montaj durumu", "dizgi durumu", "montajdurumu", "dizgidurumu",
     },
 }
@@ -105,6 +117,9 @@ _CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-]{3,63}$")
 _EXPLICIT_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-]{1,63}$")
 _REFERENCE_PATTERN = re.compile(
     r"(?i)^(?:(?:R|C|L|D|Q|U|J|FB|LS|LED|TP|SW)\s*\d+[A-Z]?)(?:\s*,\s*(?:(?:R|C|L|D|Q|U|J|FB|LS|LED|TP|SW)\s*\d+[A-Z]?))*$"
+)
+_ELECTRICAL_VALUE_PATTERN = re.compile(
+    r"(?i)^\d+(?:[.,]\d+)?\s*(?:[pnumkMG]?F|[kMGT]?Hz|[kMGT]?ohm|[kMR]?|V|A|W)(?:\s*[/_\s].*)?$"
 )
 
 
@@ -187,6 +202,39 @@ def _explicit_code_like(value: Any) -> bool:
 
 
 
+def expand_ref_range(token: str) -> list[str]:
+    """Expand designator ranges like 'R1-R5' or 'C10-C14' into ['R1', 'R2', 'R3', 'R4', 'R5']."""
+    raw = token.strip()
+    match = re.match(r"^([A-Za-z]+)(\d+)\s*[-~]\s*([A-Za-z]+)?(\d+)$", raw)
+    if not match:
+        return [raw]
+    p1, n1_s, p2, n2_s = match.groups()
+    if p2 and p1.upper() != p2.upper():
+        return [raw]
+    try:
+        n1, n2 = int(n1_s), int(n2_s)
+    except ValueError:
+        return [raw]
+    if n1 > n2 or n2 - n1 > 500:
+        return [raw]
+    prefix = p1.upper()
+    return [f"{prefix}{i}" for i in range(n1, n2 + 1)]
+
+
+def split_references(s: str) -> list[str]:
+    """Split reference designator string (supporting commas, spaces, semicolons, and ranges)."""
+    if not s:
+        return []
+    raw_tokens = [t.strip() for t in re.split(r"[,;|\s/]+", s) if t.strip()]
+    refs: list[str] = []
+    for tok in raw_tokens:
+        expanded = expand_ref_range(tok)
+        for r in expanded:
+            if r and r not in refs:
+                refs.append(r)
+    return refs
+
+
 def _auto_layout(
     path: Path, sheet_name: str | int
 ) -> tuple[str, int, list[Any], dict[str, int], list[int]]:
@@ -233,6 +281,8 @@ def _auto_layout(
                 demoted = [c for c in best_fields["part"] if c != promoted]
                 best_fields["part"] = [promoted]
                 best_fields.setdefault("item", []).extend(demoted)
+            else:
+                best_fields["part"] = [sorted_by_ref[0]]
 
         # If 'part' not found but 'item' exists, check if any 'item' column has circuit designators
         if "part" not in best_fields and "item" in best_fields:
@@ -246,29 +296,86 @@ def _auto_layout(
                     best_fields["item"].remove(col_idx)
                     break
 
-        ambiguous_fields = {
-            field: indexes
-            for field, indexes in best_fields.items()
-            if field != "part_number" and field != "item" and len(indexes) > 1
-        }
-        if ambiguous_fields:
-            labels = [
-                str(sample_rows[best_row][indexes[0]])
-                for indexes in ambiguous_fields.values()
-            ]
-            raise ValueError(
-                f"Workbook '{path}', worksheet '{resolved_sheet}' has ambiguous "
-                f"column(s): {', '.join(labels)}. Rename duplicate columns before processing."
-            )
+        # If 'part' still not found, check all unmapped columns for reference-like values
+        if "part" not in best_fields:
+            candidate_part_scores: dict[int, int] = {}
+            mapped_cols = {c for idxs in best_fields.values() for c in idxs}
+            for col_idx in range(len(sample_rows[best_row])):
+                if col_idx in mapped_cols:
+                    continue
+                score = sum(
+                    1 for r in sample_rows[best_row + 1:]
+                    if col_idx < len(r) and r[col_idx] and _is_ref_like(r[col_idx])
+                )
+                if score >= 2:
+                    candidate_part_scores[col_idx] = score
+            if candidate_part_scores:
+                best_fields["part"] = [max(candidate_part_scores, key=candidate_part_scores.get)]
+
+        # Disambiguate 'qty'
+        if "qty" in best_fields and len(best_fields["qty"]) > 1:
+            qty_scores: dict[int, int] = {}
+            for col_idx in best_fields["qty"]:
+                score = sum(
+                    1 for r in sample_rows[best_row + 1:]
+                    if col_idx < len(r) and r[col_idx] is not None and any(c.isdigit() for c in str(r[col_idx]))
+                )
+                qty_scores[col_idx] = score
+            def _qty_rank(c: int) -> tuple[int, int]:
+                hdr = _normalize_header(sample_rows[best_row][c]) if c < len(sample_rows[best_row]) else ""
+                is_total = 1 if ("toplam" in hdr or "total" in hdr) else 0
+                return (qty_scores.get(c, 0), is_total)
+            best_fields["qty"] = [max(best_fields["qty"], key=_qty_rank)]
+
+        # Disambiguate 'mounting'
+        if "mounting" in best_fields and len(best_fields["mounting"]) > 1:
+            mount_scores: dict[int, int] = {}
+            for col_idx in best_fields["mounting"]:
+                score = sum(
+                    1 for r in sample_rows[best_row + 1:]
+                    if col_idx < len(r) and r[col_idx] and re.search(r"(?i)\b(?:smd|th|tht|surface|through|hole)\b", str(r[col_idx]))
+                )
+                mount_scores[col_idx] = score
+            best_fields["mounting"] = [max(best_fields["mounting"], key=lambda c: mount_scores.get(c, 0))]
+
+        # Disambiguate 'status'
+        if "status" in best_fields and len(best_fields["status"]) > 1:
+            status_scores: dict[int, int] = {}
+            for col_idx in best_fields["status"]:
+                score = sum(
+                    1 for r in sample_rows[best_row + 1:]
+                    if col_idx < len(r) and r[col_idx] and re.search(r"(?i)\b(?:dnp|np|fitted|not fitted|fit|no fit|nc|montaj|dizim)\b", str(r[col_idx]))
+                )
+                status_scores[col_idx] = score
+            best_fields["status"] = [max(best_fields["status"], key=lambda c: status_scores.get(c, 0))]
+
+        # Preserve multi-column fields (e.g. Value and Description, Footprint and Package)
+        all_value_columns = list(best_fields.get("value", []))
+        all_package_columns = list(best_fields.get("package", []))
+
+        # Fallback resolution for any remaining duplicate columns (pick highest non-empty rate)
+        for field, indexes in list(best_fields.items()):
+            if field not in {"part_number", "item"} and len(indexes) > 1:
+                non_empty = {
+                    c: sum(1 for r in sample_rows[best_row + 1:] if c < len(r) and r[c] is not None and str(r[c]).strip())
+                    for c in indexes
+                }
+                best_fields[field] = [max(indexes, key=lambda c: non_empty.get(c, 0))]
+
         raw_headers = list(sample_rows[best_row])
         resolved_fields = {
             field: indexes[0]
             for field, indexes in best_fields.items()
             if len(indexes) == 1
         }
+        if all_value_columns:
+            resolved_fields["_value_columns"] = all_value_columns
+        if all_package_columns:
+            resolved_fields["_package_columns"] = all_package_columns
+
         ambiguous_code_columns = best_fields.get("part_number", [])
         code_columns = list(ambiguous_code_columns)
-        excluded = set(resolved_fields.values()) | set(code_columns)
+        excluded = {c for c in resolved_fields.values() if isinstance(c, int)} | set(code_columns) | set(all_value_columns) | set(all_package_columns)
         nonempty_counts: dict[int, int] = {}
         code_counts: dict[int, int] = {}
         for values in sample_rows[best_row + 1:]:
@@ -383,9 +490,9 @@ def read_customer_bom(
         )
     rows: list[CustomerBomRow] = []
     for dataframe_index, values in enumerate(dataframe.itertuples(index=False, name=None)):
-        get_value = lambda field: values[columns[field]] if field in columns else None
+        get_value = lambda field: values[columns[field]] if field in columns and isinstance(columns[field], int) else None
         part_number = _string_value(get_value("part_number")).strip()
-        part_number_column = columns.get("part_number", -1)
+        part_number_column = columns.get("part_number", -1) if isinstance(columns.get("part_number"), int) else -1
         explicit_code_header = (
             mapping is not None
             or (
@@ -424,25 +531,64 @@ def read_customer_bom(
                 )
             )
         if part_number and not candidates:
-            column_index = columns.get("part_number", -1)
+            column_index = columns.get("part_number", -1) if isinstance(columns.get("part_number"), int) else -1
             header = raw_headers[column_index] if 0 <= column_index < len(raw_headers) else mapping.part_number if mapping else "Part Number"
             candidates.append(PartNumberCandidate(part_number, _string_value(header).strip()))
-        row_values = (get_value(field) for field in ("part", "qty", "value", "manufacturer", "mounting", "package", "status"))
-        part, qty, value, manufacturer, mounting, package, status = row_values
+
+        # Combine multiple value columns (e.g. Value and Description) without duplication
+        val_cols = columns.get("_value_columns") or ([columns["value"]] if "value" in columns and isinstance(columns["value"], int) else [])
+        val_parts: list[str] = []
+        for col_idx in val_cols:
+            if col_idx < len(values):
+                val_txt = _string_value(values[col_idx]).strip()
+                if val_txt and val_txt.lower() != "nan" and val_txt not in val_parts:
+                    val_parts.append(val_txt)
+        combined_value = " - ".join(val_parts)
+
+        # In CAD exports without a dedicated Part Number column (e.g. KiCad / Eagle),
+        # check if the Value column holds a component part number rather than an electrical value
+        if not code_columns and mapping is None and not part_number and not candidates:
+            if combined_value and _code_like(combined_value) and not _ELECTRICAL_VALUE_PATTERN.match(combined_value):
+                candidates.append(PartNumberCandidate(combined_value, "Value"))
+                part_number = combined_value
+
+        # Combine multiple package columns (e.g. Footprint and Package)
+        pkg_cols = columns.get("_package_columns") or ([columns["package"]] if "package" in columns and isinstance(columns["package"], int) else [])
+        pkg_parts: list[str] = []
+        for col_idx in pkg_cols:
+            if col_idx < len(values):
+                pkg_txt = _string_value(values[col_idx]).strip()
+                if pkg_txt and pkg_txt.lower() != "nan" and pkg_txt not in pkg_parts:
+                    pkg_parts.append(pkg_txt)
+        combined_package = " ".join(pkg_parts)
+
+        part = get_value("part")
+        qty = get_value("qty")
+        manufacturer = get_value("manufacturer")
+        mounting = get_value("mounting")
+        status = get_value("status")
+
+        # Fallback: if qty is missing or empty, infer count from circuit references
+        part_str = _string_value(part).strip()
+        if (qty is None or str(qty).strip() == "" or str(qty).lower() == "nan") and part_str:
+            refs = split_references(part_str)
+            if refs:
+                qty = len(refs)
+
         if not any(
             item is not None and str(item).strip()
-            for item in (part, qty, value, manufacturer, mounting, package, status, part_number)
+            for item in (part, qty, combined_value, manufacturer, mounting, combined_package, status, part_number)
         ) and not candidates:
             continue
         rows.append(
             CustomerBomRow(
                 part=_string_value(part),
                 qty=qty,
-                value=_string_value(value),
+                value=combined_value,
                 part_number=part_number,
                 manufacturer=_string_value(manufacturer),
                 mounting=_string_value(mounting),
-                package=_string_value(package),
+                package=combined_package,
                 product_code_candidates=tuple(candidates),
                 source_row=header_row + dataframe_index + 2,
                 source_sheet=str(resolved_sheet),

@@ -775,6 +775,41 @@ def test_dnp_and_unpopulated_items_flagged_as_warning_not_error(tmp_path):
     assert u99_fill == "00FCE8E6" or u99_fill == "FCE8E6"    # Light red
 
 
+def test_varied_cad_bom_comparison(tmp_path):
+    import pandas as pd
+    from bom_enricher.comparison import compare_workbooks
+
+    # Customer BOM in Altium format with Comment, Description, Footprint, LibRef, and range designator
+    cust_path = tmp_path / "altium_customer.xlsx"
+    pd.DataFrame({
+        "Comment": ["10k", "100nF"],
+        "Description": ["RES 10K 1% 0603", "CAP CER 100NF 50V 0603"],
+        "Designator": ["R1-R3", "C1, C2"],
+        "Footprint": ["0603", "0603"],
+        "LibRef": ["RC0603FR-0710KL", "CC0603KRX7R9BB104"],
+        "Quantity": [3, 2],
+    }).to_excel(cust_path, index=False)
+
+    # ERP BOM with standard columns
+    erp_path = tmp_path / "erp_cad.xlsx"
+    pd.DataFrame({
+        "Part Number": ["RC0603FR-0710KL", "CC0603KRX7R9BB104"],
+        "Description": ["RES 10K 0603 SMD", "CAP 100NF 0603 SMD"],
+        "Reference": ["R1, R2, R3", "C1, C2"],
+        "Qty": [3, 2],
+        "Mounting": ["SMD", "SMD"],
+    }).to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    assert len(res.rows) == 2
+    assert all(r["Durum"] == "UYGUN" for r in res.rows)
+    r1 = next(r for r in res.rows if r["ERP Part Number"] == "RC0603FR-0710KL")
+    assert str(r1["Müşteri Qty"]) == "3"
+    assert "10k" in r1["Müşteri Value"]
+    assert "RES 10K 1% 0603" in r1["Müşteri Value"]
+
+
+
 
 
 
