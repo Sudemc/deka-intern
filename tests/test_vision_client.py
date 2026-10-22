@@ -206,3 +206,106 @@ def test_vision_client_heuristic_text_fallback():
         assert res["specs"]["mounting"] == "TH"
 
 
+def test_vision_llm_client_status_tracking():
+    from src.bom_enricher.vision_llm import VisionLLMClient
+    client = VisionLLMClient()
+    assert client.last_status == "uninitialized"
+
+
+def test_extract_specs_from_text_timeout_handling(monkeypatch):
+    import httpx
+    from src.bom_enricher.vision_llm import VisionLLMClient
+    client = VisionLLMClient()
+
+    def mock_post(*args, **kwargs):
+        raise httpx.TimeoutException("Read timed out")
+
+    monkeypatch.setattr(httpx, "post", mock_post)
+    res = client.extract_specs_from_text("WR-PHD SMT Socket Header", timeout=1.0)
+    assert res is None
+    assert client.last_status == "timeout"
+
+
+def test_extract_specs_from_text_connection_error_handling(monkeypatch):
+    import httpx
+    from src.bom_enricher.vision_llm import VisionLLMClient
+    client = VisionLLMClient()
+
+    def mock_post(*args, **kwargs):
+        raise httpx.ConnectError("Connection refused")
+
+    monkeypatch.setattr(httpx, "post", mock_post)
+    res = client.extract_specs_from_text("WR-PHD SMT Socket Header", timeout=1.0)
+    assert res is None
+    assert client.last_status == "connection_error"
+
+
+def test_extract_specs_from_text_empty_response(monkeypatch):
+    from unittest.mock import MagicMock
+    import httpx
+    from src.bom_enricher.vision_llm import VisionLLMClient
+    client = VisionLLMClient()
+
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = {"message": {"content": ""}}
+    monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: mock_resp)
+
+    res = client.extract_specs_from_text("WR-PHD SMT Socket Header", timeout=1.0)
+    assert res is None
+    assert client.last_status == "empty_response"
+
+
+def test_extract_specs_from_text_parse_error(monkeypatch):
+    from unittest.mock import MagicMock
+    import httpx
+    from src.bom_enricher.vision_llm import VisionLLMClient
+    client = VisionLLMClient()
+
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = {"message": {"content": "This is completely unparseable gibberish with no json"}}
+    monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: mock_resp)
+
+    res = client.extract_specs_from_text("WR-PHD SMT Socket Header", timeout=1.0)
+    assert res is None
+    assert client.last_status == "parse_error"
+
+
+def test_extract_specs_from_text_success_status(monkeypatch):
+    from unittest.mock import MagicMock
+    import httpx
+    from src.bom_enricher.vision_llm import VisionLLMClient
+    client = VisionLLMClient()
+
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = {
+        "message": {
+            "content": '{"material_type": "CON", "confidence": 0.95, "specs": {"pin_number": "4", "pin_type": "Dişi"}}'
+        }
+    }
+    monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: mock_resp)
+
+    res = client.extract_specs_from_text("WR-PHD SMT Socket Header", timeout=1.0)
+    assert res is not None
+    assert client.last_status == "success"
+    assert res["material_type"] == "CON"
+    assert res["specs"]["pin_type"] == "Dişi"
+
+
+def test_extract_specs_from_images_status_tracking():
+    from unittest.mock import MagicMock
+    import httpx
+    from src.bom_enricher.vision_llm import VisionLLMClient
+    client = VisionLLMClient()
+
+    with patch("httpx.post", side_effect=httpx.TimeoutException("Timeout")):
+        res = client.extract_specs_from_images(images=["dummy"], target_pn="PN-123")
+        assert res is None
+        assert client.last_status == "timeout"
+
+    with patch("httpx.post", side_effect=httpx.ConnectError("Refused")):
+        res = client.extract_specs_from_images(images=["dummy"], target_pn="PN-123")
+        assert res is None
+        assert client.last_status == "connection_error"
+
+
+

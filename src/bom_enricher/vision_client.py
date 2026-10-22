@@ -28,6 +28,7 @@ class VisionLLMClient:
         self._configured_model = model
         self.model = model or "llama3.2-vision:3b"
         self.timeout = float(timeout)
+        self.last_status: str = "uninitialized"
 
     def _resolve_model(self) -> str:
         """Resolve available vision model from Ollama, auto-detecting if preferred isn't set."""
@@ -214,6 +215,7 @@ class VisionLLMClient:
             raw_content = data.get("message", {}).get("content", "")
             if not raw_content or not isinstance(raw_content, str):
                 logger.warning("Empty content in Vision LLM response for %s", clean_pn)
+                self.last_status = "empty_response"
                 return None
 
             cleaned_content = raw_content.strip()
@@ -222,6 +224,10 @@ class VisionLLMClient:
                 cleaned_content = re.sub(r"^```(?:json)?\s*", "", cleaned_content, flags=re.IGNORECASE)
                 cleaned_content = re.sub(r"\s*```$", "", cleaned_content)
                 cleaned_content = cleaned_content.strip()
+
+            if not cleaned_content:
+                self.last_status = "empty_response"
+                return None
 
             start_idx = cleaned_content.find("{")
             end_idx = cleaned_content.rfind("}")
@@ -293,6 +299,7 @@ class VisionLLMClient:
 
             if not isinstance(parsed, dict):
                 logger.warning("Vision LLM response could not be parsed into a dict for %s", clean_pn)
+                self.last_status = "parse_error"
                 return None
 
             # Validate schema
@@ -301,16 +308,27 @@ class VisionLLMClient:
                     parsed["material_type"] = material_type_hint
                 else:
                     logger.warning("Missing or invalid 'material_type' in Vision LLM response for %s", clean_pn)
+                    self.last_status = "parse_error"
                     return None
 
             if "specs" not in parsed or not isinstance(parsed["specs"], dict):
                 parsed["specs"] = {}
 
             # Normalize property keys to internal schema & filter out placeholder strings
+            self.last_status = "success"
             return self._normalize_parsed_response(parsed, clean_pn)
 
+        except httpx.TimeoutException:
+            logger.warning("Vision LLM extraction timed out for %s", clean_pn)
+            self.last_status = "timeout"
+            return None
+        except httpx.ConnectError:
+            logger.warning("Vision LLM connection error for %s", clean_pn)
+            self.last_status = "connection_error"
+            return None
         except Exception as e:
             logger.warning("Vision LLM extraction failed for %s: %s", clean_pn, e)
+            self.last_status = "error"
             return None
 
     def _normalize_parsed_response(self, parsed: dict[str, Any], clean_pn: str) -> dict[str, Any]:
@@ -414,8 +432,9 @@ class VisionLLMClient:
     def extract_specs_from_text(
         self,
         text: str,
-        target_pn: str = "",
+        target_pn: str | None = None,
         material_type_hint: str | None = None,
+        timeout: float = 5.0,
     ) -> dict[str, Any] | None:
         """Extract structured component specifications from datasheet text using local LLM.
 
@@ -423,6 +442,7 @@ class VisionLLMClient:
             text: Extracted text from PDF (first pages summary).
             target_pn: Target manufacturer part number.
             material_type_hint: Optional material type hint (e.g. "CON", "RES", "CAP", "DIO").
+            timeout: Maximum timeout in seconds (default: 5.0s).
 
         Returns:
             Dictionary matching the unified schema or None if extraction fails or times out.
@@ -496,20 +516,26 @@ class VisionLLMClient:
         }
 
         try:
-            resp = httpx.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
+            resp = httpx.post(f"{self.base_url}/api/chat", json=payload, timeout=timeout)
             if resp.status_code != 200:
                 payload.pop("format", None)
-                resp = httpx.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
+                resp = httpx.post(f"{self.base_url}/api/chat", json=payload, timeout=timeout)
             resp.raise_for_status()
             data = resp.json()
             raw_content = data.get("message", {}).get("content", "")
             if not raw_content or not isinstance(raw_content, str):
+                self.last_status = "empty_response"
                 return None
 
             cleaned_content = raw_content.strip()
             if cleaned_content.startswith("```"):
                 cleaned_content = re.sub(r"^```(?:json)?\s*", "", cleaned_content, flags=re.IGNORECASE)
                 cleaned_content = re.sub(r"\s*```$", "", cleaned_content)
+                cleaned_content = cleaned_content.strip()
+
+            if not cleaned_content:
+                self.last_status = "empty_response"
+                return None
 
             start_idx = cleaned_content.find("{")
             end_idx = cleaned_content.rfind("}")
@@ -524,8 +550,24 @@ class VisionLLMClient:
             except Exception:
                 parsed = self._try_repair_json(json_candidate)
 
-            if isinstance(parsed, dict):
+            if isinstance(parsed, dict) and ("material_type" in parsed or "specs" in parsed):
+                self.last_status = "success"
                 return self._normalize_parsed_response(parsed, clean_pn)
+            elif isinstance(parsed, dict):
+                self.last_status = "success"
+                return self._normalize_parsed_response(parsed, clean_pn)
+
+            self.last_status = "parse_error"
+            return None
+        except httpx.TimeoutException:
+            logger.debug("Local text LLM extraction timed out after %.1fs", timeout)
+            self.last_status = "timeout"
+            return None
+        except httpx.ConnectError:
+            logger.debug("Local text LLM connection error")
+            self.last_status = "connection_error"
+            return None
         except Exception as e:
             logger.debug("Local text LLM extraction failed: %s", e)
-        return None
+            self.last_status = "error"
+            return None
