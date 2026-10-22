@@ -629,7 +629,7 @@
     /* Metrics Strip */
     .metrics {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(5, 1fr);
       border-bottom: 1px solid var(--gray-200);
       background: var(--gray-50);
     }
@@ -1165,6 +1165,10 @@
             <div class="metric-label">Uyarı (Sarı)</div>
           </div>
           <div class="metric">
+            <div class="metric-num" style="color:var(--blue)" id="metric-non-erp">0</div>
+            <div class="metric-label">Montaj Dışı (Açık Mavi)</div>
+          </div>
+          <div class="metric">
             <div class="metric-num" style="color:var(--green)" id="metric-clean">0</div>
             <div class="metric-label">Sorunsuz (Uygun)</div>
           </div>
@@ -1570,6 +1574,8 @@
       document.querySelector('#metric-total').textContent = data.row_count;
       document.querySelector('#metric-error').textContent = data.error_count;
       document.querySelector('#metric-warn').textContent = data.warning_count;
+      const nonErpEl = document.querySelector('#metric-non-erp');
+      if (nonErpEl) nonErpEl.textContent = data.non_erp_count || 0;
       document.querySelector('#metric-clean').textContent = data.clean_count;
       document.querySelector('#download-link').href = data.download_url;
       document.querySelector('#results').classList.add('show');
@@ -1607,8 +1613,10 @@
           }
         }
 
+        const displayStatus = isNonErp ? 'MONTAJ DIŞI' : durum;
+
         return `<tr style="background:${rowBg}">
-          <td><span class="pill ${badgeClass}">${escapeHtml(durum)}</span></td>
+          <td><span class="pill ${badgeClass}">${escapeHtml(displayStatus)}</span></td>
           <td><b>${escapeHtml(row['Müşteri Part Number'] || '—')}</b></td>
           <td><b>${escapeHtml(row['ERP Part Number'] || '—')}</b></td>
           <td>${escapeHtml(row['Müşteri Qty'] || '—')}</td>

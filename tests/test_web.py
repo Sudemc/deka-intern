@@ -164,5 +164,31 @@ def test_web_compares_multiple_customer_files(tmp_path):
     assert payload["clean_count"] == 1
 
 
+def test_web_compares_dnp_items_and_returns_non_erp_count(tmp_path):
+    cust_bytes = _workbook_bytes(
+        tmp_path, "cust_dnp.xlsx", "BOM",
+        ["Parça", "FULL", "MIKTAR", "DTSIS KODU", "ÜRETİCİ KODU", "REFERANS", "DEĞER", "KILIF", "MontajTipi"],
+        [
+            [1, "+", 2, "H0101", "MBR0540", "D13,D15", "MBR0540", "SOD123", "SMD"],
+            [2, "DNP", 1, None, None, "ANT1", "GPS ANTENNA", "DUMMY", "MECH"],
+        ]
+    )
+    erp_bytes = _workbook_bytes(
+        tmp_path, "erp_dnp.xlsx", "ERP",
+        ["Part Number", "Description", "Part", "Qty"],
+        [["H0101", "MBR0540", "D13, D15", 2]]
+    )
+    files = {
+        "customer_file": ("cust_dnp.xlsx", cust_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        "erp_file": ("erp_dnp.xlsx", erp_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    }
+    response = _request("POST", "/api/compare", files=files)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["row_count"] == 2
+    assert data["clean_count"] == 1
+    assert data["non_erp_count"] == 1
+    assert data["warning_count"] == 0
+    assert data["error_count"] == 0
 
 
