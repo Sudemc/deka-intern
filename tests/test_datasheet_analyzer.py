@@ -2014,6 +2014,66 @@ def test_standard_chip_passive_bypasses_llm_with_standby_status(rulebook):
     assert res["specs"]["capacitance_str"] == "100nF"
 
 
+def test_llm_fills_empty_mounting_and_pin_type(rulebook):
+    from unittest.mock import MagicMock, patch
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+
+    pdf_bytes = _create_sample_pdf(
+        "GENERIC SWITCH",
+        "SW-GENERIC-101",
+        ["Switch Component", "Current: 1A"],
+    )
+    mock_client = MagicMock()
+    mock_client.is_available.return_value = True
+    mock_client.extract_specs_from_text.return_value = {
+        "material_type": "SWT",
+        "confidence": 0.9,
+        "specs": {
+            "mounting": "SMD",
+            "pin_type": "Erkek",
+        },
+    }
+
+    with patch("bom_enricher.datasheet_analyzer.extract_component_specs", return_value={"typeswitch": "Tactile"}):
+        res = analyze_datasheet(pdf_bytes, part_number="SW-GENERIC-101", rulebook=rulebook, client=mock_client)
+        assert res["specs"]["mounting"] == "SMD"
+        assert any(
+            t["attribute"] == "mounting" and t["source"] == "llm_filled_empty" and t["final_val"] == "SMD"
+            for t in res["llm_trace"]
+        )
 
 
+def test_vision_ai_populates_llm_specs(rulebook):
+    from unittest.mock import MagicMock, patch
+    import io
+    from reportlab.pdfgen import canvas as rl_canvas
+    from reportlab.lib.pagesizes import letter
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+
+    # Empty canvas PDF to produce is_text_empty = True without corruption
+    buf = io.BytesIO()
+    c = rl_canvas.Canvas(buf, pagesize=letter)
+    c.save()
+    empty_pdf_bytes = buf.getvalue()
+
+    mock_client = MagicMock()
+    mock_client.is_available.return_value = True
+    mock_client.extract_specs_from_images.return_value = {
+        "material_type": "CON",
+        "confidence": 0.92,
+        "manufacturer": "Degson",
+        "specs": {
+            "pitch": "5.08mm",
+            "pin_number": "3 pin",
+            "mounting": "TH",
+        },
+    }
+
+    with patch("bom_enricher.datasheet_analyzer.select_and_render_pages", return_value=[{"base64_png": "dummy"}]):
+        res = analyze_datasheet(empty_pdf_bytes, part_number="UNKNOWN-PART", rulebook=rulebook, client=mock_client)
+        assert res["llm_status"] == "active"
+        assert res["analysis_method"] == "hybrid_vision"
+        assert res["llm_specs"]["pitch"] == "5.08mm"
+        assert res["llm_specs"]["pin_number"] == "3 pin"
+        assert res["specs"]["pitch"] == "5.08mm"
 

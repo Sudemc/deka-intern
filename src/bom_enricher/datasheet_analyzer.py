@@ -5258,6 +5258,7 @@ def analyze_datasheet(
                 vlm_res = vlm.extract_specs_from_images(images, target_pn=pn, material_type_hint=vlm_hint)
                 if vlm_res:
                     vlm_specs = vlm_res.get("specs") or {}
+                    llm_raw_specs = vlm_specs
                     # Merge specs: deterministic/PN specs take precedence, VLM fills any empty/None field
                     for k, v in vlm_specs.items():
                         if v is not None and (k not in specs or specs[k] is None or specs[k] == ""):
@@ -5324,8 +5325,18 @@ def analyze_datasheet(
 
                 # a) pin_type arbitration
                 if llm_raw_specs.get("pin_type") in ("Dişi", "Erkek"):
-                    if specs.get("pin_type") != llm_raw_specs["pin_type"]:
-                        old_v = specs.get("pin_type")
+                    old_v = specs.get("pin_type")
+                    if not old_v:
+                        specs["pin_type"] = llm_raw_specs["pin_type"]
+                        llm_trace.append({
+                            "attribute": "pin_type",
+                            "regex_val": None,
+                            "llm_val": specs["pin_type"],
+                            "final_val": specs["pin_type"],
+                            "reason": "LLM pin tipini doldurdu",
+                            "source": "llm_filled_empty",
+                        })
+                    elif old_v != llm_raw_specs["pin_type"]:
                         specs["pin_type"] = llm_raw_specs["pin_type"]
                         llm_trace.append({
                             "attribute": "pin_type",
@@ -5338,12 +5349,22 @@ def analyze_datasheet(
 
                 # b) mounting arbitration
                 if llm_raw_specs.get("mounting") in ("SMD", "TH"):
-                    if specs.get("mounting") != llm_raw_specs["mounting"] and has_mounting_conflict:
-                        old_v = specs.get("mounting")
+                    old_m = specs.get("mounting")
+                    if not old_m:
                         specs["mounting"] = llm_raw_specs["mounting"]
                         llm_trace.append({
                             "attribute": "mounting",
-                            "regex_val": old_v,
+                            "regex_val": None,
+                            "llm_val": specs["mounting"],
+                            "final_val": specs["mounting"],
+                            "reason": "LLM montaj tipini doldurdu",
+                            "source": "llm_filled_empty",
+                        })
+                    elif old_m != llm_raw_specs["mounting"] and has_mounting_conflict:
+                        specs["mounting"] = llm_raw_specs["mounting"]
+                        llm_trace.append({
+                            "attribute": "mounting",
+                            "regex_val": old_m,
                             "llm_val": specs["mounting"],
                             "final_val": specs["mounting"],
                             "reason": "LLM metin kanıtıyla montaj tipini güncelledi",

@@ -20,7 +20,7 @@ class VisionLLMClient:
 
     def __init__(
         self,
-        base_url: str = "http://localhost:11434",
+        base_url: str = "http://127.0.0.1:11434",
         model: str | None = None,
         timeout: float = 60.0,
     ) -> None:
