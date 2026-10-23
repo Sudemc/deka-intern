@@ -53,8 +53,12 @@ def _classify_severity(issues: list[str]) -> str:
         "Kılıf/Paket farklı",
         "yinelenen Part Number",
         "TH/SMD ile Description",
+        "Kart Ön Eki",
+        "LED ve Renkler",
     )
     for issue in issues:
+        if any(tag in issue for tag in ("Montaj Dışı", "ERP'ye Girilmez", "ERP Sarf Malzemesi", "Ham PCB Kalemi", "Dummy")):
+            continue
         if any(keyword in issue for keyword in error_keywords):
             return "HATA"
     return "UYARI"
@@ -153,14 +157,22 @@ def _split_multi_code(raw: str) -> list[str]:
     cleaned = re.sub(r"[,;|\n\r]+", " ", raw)
     cleaned = re.sub(r"\s+/\s+", " ", cleaned)
     tokens = cleaned.split()
-    if len(tokens) <= 1:
-        return expand_parentheses_variants(raw.strip())
 
-    valid = [t for t in tokens if _is_product_code_token(t)]
-    if len(valid) >= 2:
-        results: list[str] = []
-        for v in valid:
-            results.extend(expand_parentheses_variants(v))
+    results: list[str] = []
+    for t in tokens:
+        m = re.match(r"^([A-Za-z0-9._/+()\-]+)\((.+)\)$", t)
+        if m:
+            outer = m.group(1).strip()
+            inner = m.group(2).strip()
+            if _is_product_code_token(outer):
+                results.extend(expand_parentheses_variants(outer))
+            if _is_product_code_token(inner):
+                results.extend(expand_parentheses_variants(inner))
+            results.append(t)
+        elif _is_product_code_token(t):
+            results.extend(expand_parentheses_variants(t))
+
+    if len(results) >= 2:
         return list(dict.fromkeys(results))
 
     return expand_parentheses_variants(raw.strip())
@@ -178,13 +190,17 @@ def _normalize_ref_token(token: str) -> str:
 def _normalize_ref_string(s: str) -> str:
     if not s:
         return ""
-    tokens = split_references(s)
+    cleaned = re.sub(r"\b([A-Za-z0-9]+_)\s+([A-Za-z0-9]+)\b", r"\1\2", s)
+    tokens = split_references(cleaned)
     return ", ".join(_normalize_ref_token(t) for t in tokens if t.strip())
 
 
 def _split_refs(s: str) -> set[str]:
     """Split reference designators into normalized uppercase tokens, expanding ranges."""
-    return {_normalize_ref_token(t) for t in split_references(s or "") if t.strip()}
+    if not s:
+        return set()
+    cleaned = re.sub(r"\b([A-Za-z0-9]+_)\s+([A-Za-z0-9]+)\b", r"\1\2", s)
+    return {_normalize_ref_token(t) for t in split_references(cleaned) if t.strip()}
 
 
 def _ref_base_component(ref: str) -> tuple[str, str, str]:
@@ -282,6 +298,25 @@ def _resolve_record_prefix(
         if norm_sheet.startswith(norm_pfx) and len(norm_pfx) >= 2:
             return pfx
 
+    # 2b. Token & Acronym matching from sheet name (e.g. FOG1 PCB -> F1, FOGMAIN PCB -> FM, STOP TAIL 1 PCB -> ST1, TURN REV 2 PCB -> TR2)
+    cleaned_sheet = re.sub(r"(?i)\b(?:PCB|ASSY|BOARD|DEVRE|KART|PANEL|SHEET|SAYFA)\b", "", source_sheet).strip()
+    spaced_sheet = re.sub(r"(?i)(FOG|STOP|TAIL|TURN|REV|MAIN|LAMP|UPPER|LOWER|REAR|FRONT|LEFT|RIGHT)", r" \1 ", cleaned_sheet)
+    sheet_tokens = [t.strip().upper() for t in re.split(r"[\s_\-]+", spaced_sheet) if t.strip()]
+    if sheet_tokens:
+        sheet_acro = "".join(t if t.isdigit() else t[0] for t in sheet_tokens)
+        if sheet_acro in erp_prefixes:
+            return sheet_acro
+        if f"{sheet_acro}L" in erp_prefixes and f"{sheet_acro}R" in erp_prefixes:
+            return f"{sheet_acro}L+{sheet_acro}R"
+        raw_upper_sheet = "".join(c for c in cleaned_sheet if c.isupper() or c.isdigit()).upper()
+        if raw_upper_sheet in erp_prefixes:
+            return raw_upper_sheet
+        if f"{raw_upper_sheet}L" in erp_prefixes and f"{raw_upper_sheet}R" in erp_prefixes:
+            return f"{raw_upper_sheet}L+{raw_upper_sheet}R"
+        for pfx in erp_prefixes:
+            if sheet_acro.startswith(pfx) or pfx == sheet_acro:
+                return pfx
+
     # 3. Exact match on filename stem
     for pfx in erp_prefixes:
         norm_pfx = re.sub(r"[^A-Za-z0-9]", "", pfx.upper())
@@ -351,14 +386,75 @@ def _qualify_customer_references(
         if pfx:
             resolved_prefixes[key] = pfx
 
-    unmapped_keys = {key for key in sheet_refs if key not in resolved_prefixes}
+    satellite_pairs: dict[tuple[str, str], tuple[str, str]] = {}
+    for key, pfx in list(resolved_prefixes.items()):
+        if "+" in pfx:
+            parts = pfx.split("+")
+            satellite_pairs[key] = (parts[0], parts[1])
+
+    for key in sheet_refs:
+        if key not in resolved_prefixes:
+            src_file, src_sheet = key
+            cleaned = re.sub(r"(?i)\b(?:PCB|ASSY|BOARD|DEVRE|KART|PANEL|SHEET|SAYFA)\b", "", src_sheet).strip()
+            spaced = re.sub(r"(?i)(FOG|STOP|TAIL|TURN|REV|MAIN|LAMP|UPPER|LOWER|REAR|FRONT|LEFT|RIGHT)", r" \1 ", cleaned)
+            tokens = [t.strip().upper() for t in re.split(r"[\s_\-]+", spaced) if t.strip()]
+            if tokens:
+                acro = "".join(t if t.isdigit() else t[0] for t in tokens)
+                l_pfx, r_pfx = f"{acro}L", f"{acro}R"
+                if l_pfx in erp_prefixes and r_pfx in erp_prefixes:
+                    satellite_pairs[key] = (l_pfx, r_pfx)
+                    resolved_prefixes[key] = f"{l_pfx}+{r_pfx}"
+
+    unmapped_keys = {key for key in sheet_refs if key not in resolved_prefixes and key not in satellite_pairs}
 
     updated: list[PartRecord] = []
     for rec in customer_records:
         key = (rec.source_file, rec.source_sheet)
+        rec_refs = _split_refs(rec.reference)
+        already_qualified = bool(
+            rec_refs and any(
+                any(r.upper().startswith(f"{pfx.upper()}_") for pfx in erp_prefixes)
+                for r in rec_refs
+            )
+        )
+
+        if key in satellite_pairs and not already_qualified:
+            l_pfx, r_pfx = satellite_pairs[key]
+            clean_tokens = [r for r in rec_refs if "_" not in r]
+            if clean_tokens:
+                expanded = [f"{l_pfx}_{t}" for t in clean_tokens] + [f"{r_pfx}_{t}" for t in clean_tokens]
+                new_ref = ", ".join(expanded)
+                new_qty = rec.qty
+                if rec.qty:
+                    try:
+                        new_qty = str(int(float(rec.qty)) * 2)
+                    except (ValueError, TypeError):
+                        new_qty = str(len(expanded))
+                else:
+                    new_qty = str(len(expanded))
+                updated.append(PartRecord(
+                    part_number=rec.part_number,
+                    description=rec.description,
+                    mounting=rec.mounting,
+                    reference=new_ref,
+                    material_type=rec.material_type,
+                    qty=new_qty,
+                    manufacturer=rec.manufacturer,
+                    package=rec.package,
+                    duplicate=rec.duplicate,
+                    source_file=rec.source_file,
+                    source_sheet=rec.source_sheet,
+                    source_breakdown=rec.source_breakdown,
+                    unmapped_prefix=False,
+                    all_codes=rec.all_codes,
+                    code_labels=rec.code_labels,
+                    status=rec.status,
+                ))
+                continue
+
         pfx = resolved_prefixes.get(key)
-        is_unmapped = bool(unmapped_keys and key in unmapped_keys)
-        if not pfx or not rec.reference.strip():
+        is_unmapped = bool(unmapped_keys and key in unmapped_keys and not already_qualified)
+        if not pfx or not rec.reference.strip() or already_qualified:
             updated.append(PartRecord(
                 part_number=rec.part_number,
                 description=rec.description,
@@ -379,21 +475,23 @@ def _qualify_customer_references(
             ))
             continue
 
-        raw_tokens = re.split(r"([,;|\s/]+)", rec.reference)
+        clean_ref = re.sub(r"\b([A-Za-z0-9]+_)\s+([A-Za-z0-9]+)\b", r"\1\2", rec.reference)
+        raw_tokens = re.split(r"([,;|\s/]+)", clean_ref)
         new_tokens: list[str] = []
         erp_bases = erp_refs_by_prefix.get(pfx, set())
         for token in raw_tokens:
             stripped = _normalize_ref_token(token.strip().upper())
             if stripped and re.match(r"^[A-Z]+\d+", stripped):
                 if not stripped.startswith(f"{pfx}_") and "_" not in stripped:
-                    if stripped in erp_bases:
-                        new_tokens.append(f"{pfx}_{stripped}")
-                    else:
-                        new_tokens.append(stripped)
+                    new_tokens.append(f"{pfx}_{stripped}")
                 else:
                     new_tokens.append(stripped)
-            elif stripped and stripped.startswith(f"{pfx}_"):
+            elif stripped and re.match(r"^[A-Za-z0-9]+_[A-Za-z]+\d+", stripped):
                 new_tokens.append(stripped)
+            elif token in (",", ";", "|", "/", " "):
+                new_tokens.append(token)
+            elif not stripped or stripped.endswith("_"):
+                continue
             else:
                 new_tokens.append(token)
 
@@ -433,13 +531,14 @@ def _check_certain_non_assembly(record: PartRecord) -> tuple[bool, str]:
     mount_upper = (record.mounting or "").strip().upper()
     has_code = bool((record.part_number or "").strip()) or bool(record.all_codes)
 
-    # 1. Explicit DNP / NP marker in status column (e.g. FULL column = DNP / NP)
+    # 1. Explicit DNP / NP / NM marker in status column (e.g. FULL column = DNP / NP / Process = NM)
     dnp_statuses = {
         "DNP", "NP", "N.P.", "D.N.P.", "DO NOT POPULATE", "NOT POPULATED",
-        "NO POP", "DİZİLMEYECEK", "DİZİLMEZ", "MONTAJ YOK",
+        "NO POP", "DİZİLMEYECEK", "DİZİLMEZ", "DIZILMEYECEK", "DIZILMEZ", "MONTAJ YOK",
+        "MONTAJ DIŞI", "MONTAJ DISI", "NM", "N.M.", "NOT MOUNTED", "NOT MOUNT",
     }
     if status_upper in dnp_statuses:
-        return True, f"DNP/NP Montaj Dışı ({record.status.strip()})"
+        return True, f"Montaj Dışı / Dizilmez ({record.status.strip()})"
 
     # 2. Fiducial optical camera alignment markers (PCB copper features, not components)
     if (
@@ -449,6 +548,7 @@ def _check_certain_non_assembly(record: PartRecord) -> tuple[bool, str]:
         or pkg_upper.startswith("FL_STD")
     ):
         return True, "Fiducial / Optik Hizalama İşareti (Fiziksel parça değildir)"
+
 
     # 3. Explicit DNP / NP in Description/Value or Mounting without any product code
     if not has_code:
@@ -464,6 +564,28 @@ def _check_certain_non_assembly(record: PartRecord) -> tuple[bool, str]:
         if mount_upper == "MECH" or pkg_upper in {"DUMMY", "DGHT PCB"}:
             detail = f"{record.package or record.mounting}".strip()
             return True, f"Mekanik / Harici Montaj Parçası ({detail})" if detail else "Mekanik / Harici Montaj Parçası"
+
+    return False, ""
+
+
+def _check_erp_consumable_or_pcb(record: PartRecord) -> tuple[bool, str]:
+    """Check if an ERP record is an SMT consumable, bare PCB, or dummy component."""
+    ref_upper = (record.reference or "").strip().upper()
+    val_upper = (record.description or "").strip().upper()
+    pn_upper = (record.part_number or "").strip().upper()
+    combined = f"{ref_upper} {val_upper} {pn_upper}"
+
+    # Solder paste / production consumables
+    if any(k in combined for k in ("KREM LEHIM", "KREMLEHIM", "SOLDER PASTE", "LEHIM", "M705", "FLUX", "TINER", "THINNER", "SERIT", "TAPE", "SARF")):
+        return True, "Sarf Malzeme (Krem Lehim / SMT Üretim Sarfı)"
+
+    # Bare PCB
+    if any(k in combined for k in ("BARE PCB", "HAM PCB", "PCB ODAK", "FR4", "D047-", "D047", "BASKI DEVRE", "BASKI KART")) or ref_upper == "PCB":
+        return True, "Ham PCB Kalemi (Müşteri spesifikasyon dokümanında tanımlı çıplak devre kartı)"
+
+    # Dummy items
+    if "DUMMY" in combined or "NONE/PN" in combined or "DOLGU" in combined:
+        return True, "Dummy / Dolgu Kalemi (ERP üretim reçetesi yer tutucu malzeme)"
 
     return False, ""
 
@@ -510,6 +632,7 @@ def compare_workbooks(
                     package=rec.package,
                     source_file=rec.source_file,
                     source_sheet=rec.source_sheet,
+                    all_codes=tuple(codes),
                 ))
                 group.add(_normalize_code(code))
             sibling_groups.append({
@@ -540,23 +663,84 @@ def compare_workbooks(
     unmatched_cust: dict[str, PartRecord] = dict(customer_by_code)
     unmatched_erp: dict[str, PartRecord] = dict(erp_by_code)
 
-    for ck in list(unmatched_cust.keys()):
+    active_cust_keys = [k for k in unmatched_cust.keys() if not k.endswith("__NM")]
+    for ck in active_cust_keys:
         if ck.startswith("__NO_CODE_"):
             continue
         c_rec = unmatched_cust.get(ck)
         if not c_rec:
             continue
-        if ck in unmatched_erp:
-            matched_pairs.append((unmatched_cust.pop(ck), unmatched_erp.pop(ck)))
+        cand_keys = [ek for ek in unmatched_erp if ek == ck or ek.startswith(f"{ck}__sub_")]
+        if not cand_keys:
+            for alt_code in c_rec.all_codes:
+                alt_norm = _normalize_code(alt_code)
+                sub_cands = [ek for ek in unmatched_erp if ek == alt_norm or ek.startswith(f"{alt_norm}__sub_")]
+                if sub_cands:
+                    cand_keys = sub_cands
+                    break
+
+        if cand_keys:
+            best_ek = cand_keys[0]
+            if len(cand_keys) > 1 and c_rec.reference:
+                crefs = _split_refs(c_rec.reference)
+                for ek_cand in cand_keys:
+                    erefs = _split_refs(unmatched_erp[ek_cand].reference)
+                    if crefs == erefs:
+                        best_ek = ek_cand
+                        break
+            c_matched = unmatched_cust.pop(ck)
+            e_matched = unmatched_erp.pop(best_ek)
+
+            # Check if this ERP record aggregates multiple customer rows of alternative MPNs
+            # (e.g. 38 pcs Yageo + 2 pcs Vishay matching an ERP line of 40 pcs)
+            if c_matched.qty and e_matched.qty and e_matched.reference and c_matched.reference:
+                try:
+                    c_q = float(c_matched.qty)
+                    e_q = float(e_matched.qty)
+                    if c_q < e_q:
+                        erefs = _split_refs(e_matched.reference)
+                        crefs = _split_refs(c_matched.reference)
+                        missing_refs = erefs - crefs
+                        for other_ck, other_c in list(unmatched_cust.items()):
+                            if other_ck.endswith("__NM") or not other_c.reference:
+                                continue
+                            o_refs = _split_refs(other_c.reference)
+                            if o_refs and o_refs.issubset(missing_refs):
+                                e_codes = set(e_matched.all_codes) | set(_split_multi_code(e_matched.part_number))
+                                e_codes_norm = {_normalize_code(c) for c in e_codes if c}
+                                o_codes_norm = {_normalize_code(c) for c in other_c.all_codes if c}
+                                if (e_codes_norm & o_codes_norm) or _normalize_code(other_c.part_number) in e_codes_norm:
+                                    merged_refs = sorted(crefs | o_refs)
+                                    new_c_q = c_q + (float(other_c.qty) if other_c.qty else len(o_refs))
+                                    c_matched = PartRecord(
+                                        part_number=f"{c_matched.part_number} / {other_c.part_number}",
+                                        description=c_matched.description,
+                                        mounting=c_matched.mounting,
+                                        reference=", ".join(merged_refs),
+                                        material_type=c_matched.material_type,
+                                        qty=str(int(new_c_q)) if new_c_q.is_integer() else str(new_c_q),
+                                        package=c_matched.package,
+                                        manufacturer=f"{c_matched.manufacturer} / {other_c.manufacturer}" if other_c.manufacturer and other_c.manufacturer != c_matched.manufacturer else c_matched.manufacturer,
+                                        duplicate=c_matched.duplicate,
+                                        source_file=c_matched.source_file,
+                                        source_sheet=f"{c_matched.source_sheet}, {other_c.source_sheet}",
+                                        source_breakdown=f"{c_matched.source_breakdown}; {other_c.source_breakdown}",
+                                        unmapped_prefix=c_matched.unmapped_prefix,
+                                        all_codes=tuple(dict.fromkeys(c_matched.all_codes + other_c.all_codes)),
+                                        code_labels={**c_matched.code_labels, **other_c.code_labels},
+                                        status=c_matched.status,
+                                    )
+                                    crefs = set(merged_refs)
+                                    missing_refs = erefs - crefs
+                                    c_q = new_c_q
+                                    unmatched_cust.pop(other_ck)
+                                    if not missing_refs or c_q >= e_q:
+                                        break
+                except (ValueError, TypeError):
+                    pass
+
+            matched_pairs.append((c_matched, e_matched))
             continue
-        matched_ek = None
-        for alt_code in c_rec.all_codes:
-            alt_norm = _normalize_code(alt_code)
-            if alt_norm in unmatched_erp:
-                matched_ek = alt_norm
-                break
-        if matched_ek:
-            matched_pairs.append((unmatched_cust.pop(ck), unmatched_erp.pop(matched_ek)))
 
     # Aşama 2: RefDes eşleme (Part Number farklı fakat devre pozisyonu aynı olanlar)
     # Önce tam eşleşenler (exact match crefs == erefs), ardından kısmi örtüşenler
@@ -685,7 +869,11 @@ def compare_workbooks(
         issues: list[str] = []
 
         if customer_record is None:
-            issues.append("Sistemde Yok: müşteri dosyasında bulunamadı")
+            is_consumable, cons_reason = _check_erp_consumable_or_pcb(erp_record)
+            if is_consumable:
+                issues.append(f"Montaj Dışı / ERP Sarf Malzemesi: {cons_reason}")
+            else:
+                issues.append("Sistemde Yok: müşteri dosyasında bulunamadı")
         elif erp_record is None:
             is_non_erp, non_erp_reason = _check_certain_non_assembly(customer_record)
             if is_non_erp:
@@ -712,6 +900,9 @@ def compare_workbooks(
             pn_diff_note = f"Part Number farklı (Müşteri: {c_pn}, ERP: {e_pn})"
 
         if customer_record and erp_record:
+            if "NM" in (customer_record.status or "").upper():
+                issues.append("Montaj Dışı (Process: NM): Müşteri listesinde bu parça 'Process: NM' (Dizilmez) olarak tanımlıdır. SMT dizgide dizilmemelidir.")
+
             # 1. Qty (Miktar) Kıyaslaması
             if customer_qty and erp_qty:
                 try:
@@ -746,15 +937,26 @@ def compare_workbooks(
             if c_refs and e_refs and c_refs != e_refs:
                 c_only = sorted(c_refs - e_refs)
                 e_only = sorted(e_refs - c_refs)
-                diff_parts = []
-                if c_only:
-                    diff_parts.append(f"Müşteride Farklı/Fazla: {', '.join(c_only)}")
-                if e_only:
-                    diff_parts.append(f"ERP'de Farklı/Fazla: {', '.join(e_only)}")
-                diff_summary = f"Fark: {' | '.join(diff_parts)}; " if diff_parts else ""
-                issues.append(
-                    f"Dizgi/Referans farkı ({diff_summary}Müşteri: {customer_record.reference}, ERP: {erp_record.reference})"
-                )
+                c_bases = {_ref_base_component(r)[1]: _ref_base_component(r)[0] for r in c_only if _ref_base_component(r)[1]}
+                e_bases = {_ref_base_component(r)[1]: _ref_base_component(r)[0] for r in e_only if _ref_base_component(r)[1]}
+                prefix_mismatches = [
+                    f"{c_bases[b]}_{b} (Müşteri) vs {e_bases[b]}_{b} (ERP)"
+                    for b in c_bases if b in e_bases and c_bases[b] != e_bases[b]
+                ]
+                if prefix_mismatches:
+                    issues.append(
+                        f"Kart Ön Eki / Referans Uyuşmazlığı: {', '.join(prefix_mismatches)}"
+                    )
+                else:
+                    diff_parts = []
+                    if c_only:
+                        diff_parts.append(f"Müşteride Farklı/Fazla: {', '.join(c_only)}")
+                    if e_only:
+                        diff_parts.append(f"ERP'de Farklı/Fazla: {', '.join(e_only)}")
+                    diff_summary = f"Fark: {' | '.join(diff_parts)}; " if diff_parts else ""
+                    issues.append(
+                        f"Dizgi/Referans farkı ({diff_summary}Müşteri: {customer_record.reference}, ERP: {erp_record.reference})"
+                    )
 
             # 4. Müşteri Montaj vs ERP Montaj
             if customer_mounting and erp_mounting:
@@ -798,7 +1000,7 @@ def compare_workbooks(
                 else:
                     customer_pn = " / ".join(codes_list)
             else:
-                customer_pn = c_pn or customer_record.reference
+                customer_pn = c_pn
         else:
             customer_pn = ""
         erp_pn = e_pn
@@ -923,6 +1125,43 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
         if not all_records:
             first_name = paths[0].name if paths else "Müşteri dosyası"
             raise ValueError(f"{first_name}: ürün kodu veya malzeme satırı bulunamadı.")
+
+        # Cross-sheet internal stock code to MPN resolution
+        # If a row's part_number was filled from an internal stock code (e.g. 4E12000022),
+        # but other rows in the customer files with the same internal stock code have a real MPN,
+        # adopt that MPN so rows of the same component across sheets group seamlessly.
+        internal_to_mpn: dict[str, str] = {}
+        for r in all_records:
+            if r.part_number and not r.part_number.startswith("4E"):
+                for c in r.all_codes:
+                    if c.startswith("4E") and c not in internal_to_mpn:
+                        internal_to_mpn[c] = r.part_number
+        if internal_to_mpn:
+            updated_records: list[PartRecord] = []
+            for r in all_records:
+                if r.part_number in internal_to_mpn:
+                    updated_records.append(PartRecord(
+                        part_number=internal_to_mpn[r.part_number],
+                        description=r.description,
+                        mounting=r.mounting,
+                        reference=r.reference,
+                        material_type=r.material_type,
+                        qty=r.qty,
+                        package=r.package,
+                        manufacturer=r.manufacturer,
+                        duplicate=r.duplicate,
+                        source_file=r.source_file,
+                        source_sheet=r.source_sheet,
+                        source_breakdown=r.source_breakdown,
+                        unmapped_prefix=r.unmapped_prefix,
+                        all_codes=r.all_codes,
+                        code_labels=r.code_labels,
+                        status=r.status,
+                    ))
+                else:
+                    updated_records.append(r)
+            all_records = updated_records
+
         return all_records
 
     erp_path = Path(path[0]) if isinstance(path, (list, tuple)) else Path(path)
@@ -1215,7 +1454,7 @@ def write_comparison_report(rows: list[dict[str, str]], output_path: Path) -> No
         if durum == "HATA":
             row_fill = red_fill
         elif durum == "UYARI":
-            if "Montaj Dışı" in issues_text or "ERP'ye Girilmez" in issues_text:
+            if any(k in issues_text for k in ("Montaj Dışı", "ERP'ye Girilmez", "ERP Sarf Malzemesi", "Ham PCB", "Dummy")):
                 row_fill = blue_fill
             else:
                 row_fill = yellow_fill
@@ -1240,12 +1479,18 @@ def write_comparison_report(rows: list[dict[str, str]], output_path: Path) -> No
 def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
     grouped: dict[str, list[PartRecord]] = defaultdict(list)
     no_code_count = 0
+    dnp_statuses = {"NM", "N.M.", "NOT MOUNTED", "DNP", "NO POPULATE", "NC", "DO NOT POPULATE"}
     for record in records:
         if not record.part_number.strip():
             no_code_count += 1
             grouped[f"__NO_CODE_{no_code_count}__"].append(record)
         else:
-            grouped[_normalize_code(record.part_number)].append(record)
+            is_nm = (record.status or "").strip().upper() in dnp_statuses or "NOT MOUNTED" in (record.status or "").upper()
+            norm = _normalize_code(record.part_number)
+            if is_nm:
+                grouped[f"{norm}__NM"].append(record)
+            else:
+                grouped[norm].append(record)
     result: dict[str, PartRecord] = {}
     for normalized, group in grouped.items():
         descriptions = list(dict.fromkeys(item.description for item in group if item.description))

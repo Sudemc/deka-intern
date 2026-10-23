@@ -306,3 +306,46 @@ def test_dual_package_columns_combination(tmp_path):
     assert rows[0].package == "SOIC-16 SMD"
 
 
+def test_pair_lr_references():
+    from bom_enricher.excel_io import pair_lr_references
+
+    # Prefix L vs R
+    paired, pairs = pair_lr_references(["ST1L_B1", "ST1L_B2", "ST1R_B1", "ST1R_B2"])
+    assert paired is True
+    assert len(pairs) == 2
+
+    # Infix L vs R
+    paired, pairs = pair_lr_references(["ST_L_R1", "ST_R_R1"])
+    assert paired is True
+    assert len(pairs) == 1
+
+    # Suffix L vs R
+    paired, pairs = pair_lr_references(["R1_L", "R1_R", "R2_L", "R2_R"])
+    assert paired is True
+    assert len(pairs) == 2
+
+    # Unbalanced or non-symmetrical
+    paired, _ = pair_lr_references(["R1", "R2", "R3"])
+    assert paired is False
+
+    paired, _ = pair_lr_references(["ST1L_B1", "ST1R_B1", "ST1L_B2"])
+    assert paired is False
+
+
+def test_customer_bom_lr_symmetry_qty(tmp_path):
+    import pandas as pd
+    from bom_enricher.excel_io import read_customer_bom
+
+    file_path = tmp_path / "lr_bom.xlsx"
+    df = pd.DataFrame({
+        "Designator": ["ST1L_B1, ST1L_B2, ST1R_B1, ST1R_B2", "R1_L, R1_R"],
+        "Part Number": ["ZTL432AQFTA", "RC0603FR-0710KL"],
+        "Quantity": [2, 1],  # Customer entered single-lamp / per-side qty
+        "Description": ["Voltage Ref", "Resistor 10k"],
+    })
+    df.to_excel(file_path, index=False)
+    rows = read_customer_bom(file_path)
+    assert len(rows) == 2
+    # Inferred to total vehicle set quantity
+    assert rows[0].qty == 4
+    assert rows[1].qty == 2

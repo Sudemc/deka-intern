@@ -809,6 +809,59 @@ def test_varied_cad_bom_comparison(tmp_path):
     assert "RES 10K 1% 0603" in r1["Müşteri Value"]
 
 
+def test_comparison_lr_symmetry_reconciliation(tmp_path):
+    import pandas as pd
+    from bom_enricher.comparison import compare_workbooks
+
+    cust_path = tmp_path / "cust_lr.xlsx"
+    pd.DataFrame({
+        "Designator": ["ST1L_B1, ST1L_B2, ST1R_B1, ST1R_B2"],
+        "Part Number": ["ZTL432AQFTA"],
+        "Quantity": [2],  # per-lamp count
+        "Description": ["Voltage Reference SOT23"],
+    }).to_excel(cust_path, index=False)
+
+    erp_path = tmp_path / "erp_lr.xlsx"
+    pd.DataFrame({
+        "Part Number": ["ZTL432AQFTA"],
+        "Description": ["Voltage Reference SOT23"],
+        "Reference": ["ST1L_B1, ST1L_B2, ST1R_B1, ST1R_B2"],
+        "Qty": [4],  # total vehicle count
+    }).to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    assert len(res.rows) == 1
+    assert res.rows[0]["Durum"] == "UYGUN"
+    assert str(res.rows[0]["ERP Qty"]) == "4"
+
+
+def test_comparison_satellite_board_lr_expansion(tmp_path):
+    import pandas as pd
+    from bom_enricher.comparison import compare_workbooks
+
+    cust_path = tmp_path / "cust_multi.xlsx"
+    with pd.ExcelWriter(cust_path) as writer:
+        pd.DataFrame({
+            "Designator": ["C1, C2"],
+            "Part Number": ["AC0603KPX7R9BB102"],
+            "Quantity": [2],
+            "Description": ["CAP 1nF 50V 0603"],
+        }).to_excel(writer, sheet_name="STOP TAIL 2 PCB", index=False)
+
+    erp_path = tmp_path / "erp_multi.xlsx"
+    pd.DataFrame({
+        "Part Number": ["AC0603KPX7R9BB102"],
+        "Description": ["CAP 1nF 50V 0603"],
+        "Reference": ["ST2L_C1, ST2L_C2, ST2R_C1, ST2R_C2"],
+        "Qty": [4],
+    }).to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    assert len(res.rows) == 1
+    assert res.rows[0]["Durum"] == "UYGUN"
+    assert str(res.rows[0]["ERP Qty"]) == "4"
+
+
 
 
 
