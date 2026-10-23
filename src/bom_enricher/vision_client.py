@@ -550,10 +550,7 @@ class VisionLLMClient:
             except Exception:
                 parsed = self._try_repair_json(json_candidate)
 
-            if isinstance(parsed, dict) and ("material_type" in parsed or "specs" in parsed):
-                self.last_status = "success"
-                return self._normalize_parsed_response(parsed, clean_pn)
-            elif isinstance(parsed, dict):
+            if isinstance(parsed, dict):
                 self.last_status = "success"
                 return self._normalize_parsed_response(parsed, clean_pn)
 

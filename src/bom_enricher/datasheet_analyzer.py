@@ -5218,7 +5218,7 @@ def analyze_datasheet(
         specs.get("pin_type") == "Dişi" and any(w in clean_text.casefold() for w in ("male header", "pin header", "plug", "erkek"))
     )
     has_mounting_conflict = (
-        specs.get("mounting") == "SMD" and any(w in clean_text.casefold() for w in ("through hole", "tht", " dip ", "leaded", "pin header"))
+        specs.get("mounting") == "SMD" and any(w in clean_text.casefold() for w in ("through hole", "tht", " dip ", "leaded"))
     ) or (
         specs.get("mounting") == "TH" and any(w in clean_text.casefold() for w in ("surface mount", "smd", "smt"))
     )
@@ -5238,13 +5238,17 @@ def analyze_datasheet(
         and bool(clean_text)
         and (
             has_red_flag
-            or not is_pure_passive
-            or is_complex_or_ambiguous
-            or are_critical_missing
-            or is_catalog
-            or not pn
-            or pn.startswith("media_")
-            or conf < 0.98
+            or (
+                not is_pure_passive
+                and (
+                    is_complex_or_ambiguous
+                    or are_critical_missing
+                    or is_catalog
+                    or not pn
+                    or pn.startswith("media_")
+                    or conf < 0.98
+                )
+            )
         )
     )
     llm_status = "standby" if (vlm and vlm.is_available()) else "offline"
