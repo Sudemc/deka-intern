@@ -2099,5 +2099,7 @@ def test_wurth_socket_header_e2e_arbitration_and_trace(rulebook):
     assert res["erp_code"].startswith("CONSAPBD04")
     assert res["erp_code"].endswith("-WU")
     assert "llm_trace" in res
+    assert isinstance(res["llm_trace"], list)
     assert "llm_status" in res
+    assert isinstance(res["llm_status"], str)
 
