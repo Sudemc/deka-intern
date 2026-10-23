@@ -2077,3 +2077,27 @@ def test_vision_ai_populates_llm_specs(rulebook):
         assert res["llm_specs"]["pin_number"] == "3 pin"
         assert res["specs"]["pitch"] == "5.08mm"
 
+
+def test_wurth_socket_header_e2e_arbitration_and_trace(rulebook):
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+
+    pdf_bytes = _create_sample_pdf(
+        "WR-PHD 2.54mm SMT Socket Header",
+        "61000413321",
+        [
+            "WR-PHD 2.54mm SMT Dual Row Bottom Entry Socket Header",
+            "4 Pins (2x2)",
+            "Wurth Elektronik",
+            "Insulator Material: LCP, Contact Material: Copper Alloy",
+            "Current Rating: 3A, Operating Voltage: 250V AC",
+        ],
+    )
+
+    res = analyze_datasheet(pdf_bytes, part_number="61000413321", rulebook=rulebook)
+
+    assert res["specs"]["pin_type"] == "Dişi"
+    assert res["erp_code"].startswith("CONSAPBD04")
+    assert res["erp_code"].endswith("-WU")
+    assert "llm_trace" in res
+    assert "llm_status" in res
+
