@@ -52,7 +52,7 @@ def health() -> dict[str, str]:
 
 
 @app.get("/api/health/llm", tags=["Health"])
-async def get_llm_health() -> dict[str, object]:
+def get_llm_health() -> dict[str, object]:
     vlm = VisionLLMClient()
     is_online = vlm.is_available()
     return {
