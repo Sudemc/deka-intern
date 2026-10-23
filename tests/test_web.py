@@ -342,3 +342,27 @@ def test_datasheet_analyze_includes_llm_arbitration_trace(client):
     assert isinstance(item["llm_trace"], list)
     assert isinstance(item["llm_specs"], dict)
     assert isinstance(item["regex_specs"], dict)
+
+
+def test_index_html_contains_llm_accordion_template():
+    page = _request("GET", "/")
+    assert page.status_code == 200
+    assert "llm-trace-accordion" in page.text
+    assert "Yapay Zeka (LLM) & Karar Geçmişi" in page.text
+    assert "llm-trace-summary" in page.text
+    assert "🟢 LLM Aktif (Doğrulandı)" in page.text
+    assert "🔵 Standby (Kural Motoru Yeterli)" in page.text
+    assert "⏱️ Zaman Aşımı" in page.text
+    assert "🟡 Ollama Kapalı (Deterministik Mod)" in page.text
+    assert "(Tıklayarak inceleyin)" in page.text
+    assert "llm-trace-content" in page.text
+    assert "llm-table" in page.text
+    assert "Regex Değeri" in page.text
+    assert "LLM Değeri" in page.text
+    assert "Nihai Değer" in page.text
+    assert "Kaynak" in page.text
+    assert "Açıklama" in page.text
+    assert "Regex Parametreleri" in page.text
+    assert "LLM Parametreleri" in page.text
+
+

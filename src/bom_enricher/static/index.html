@@ -895,6 +895,182 @@
       border-bottom: none;
     }
 
+    /* LLM Arbitration & Trace Accordion */
+    .llm-trace-accordion {
+      margin-top: 14px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: #fafafa;
+      overflow: hidden;
+      font-size: 13px;
+    }
+    .llm-trace-summary {
+      padding: 10px 14px;
+      background: #f1f5f9;
+      cursor: pointer;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      user-select: none;
+      transition: background 0.15s;
+    }
+    .llm-trace-summary:hover {
+      background: #e2e8f0;
+    }
+    .llm-trace-summary-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .llm-trace-summary-hint {
+      font-size: 11px;
+      color: var(--gray-500);
+      font-weight: 400;
+    }
+    .llm-trace-content {
+      padding: 12px 14px;
+      border-top: 1px solid #e2e8f0;
+      background: #fff;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .llm-banner {
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      line-height: 1.45;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .llm-banner-active {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      color: #166534;
+    }
+    .llm-banner-standby {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      color: #1e40af;
+    }
+    .llm-banner-timeout {
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      color: #9a3412;
+    }
+    .llm-banner-offline {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      color: #92400e;
+    }
+    .llm-pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .llm-pill-active { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+    .llm-pill-standby { background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; }
+    .llm-pill-timeout { background: #ffedd5; color: #c2410c; border: 1px solid #fdba74; }
+    .llm-pill-offline { background: #fef3c7; color: #b45309; border: 1px solid #fcd34d; }
+
+    .llm-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-top: 6px;
+      border: 1px solid var(--gray-200);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .llm-table th, .llm-table td {
+      padding: 8px 10px;
+      border: 1px solid #e2e8f0;
+      text-align: left;
+    }
+    .llm-table th {
+      background: #f8fafc;
+      font-weight: 600;
+      color: var(--gray-700);
+      font-size: 11px;
+    }
+    .llm-table tbody tr:hover {
+      background: #f8fafc;
+    }
+    .llm-source-badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .source-regex { background: #e0e7ff; color: #3730a3; }
+    .source-llm { background: #fef08a; color: #854d0e; }
+    .source-confirmed { background: #dcfce7; color: #166534; }
+    .source-fallback { background: #fee2e2; color: #991b1b; }
+
+    .specs-comparison-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 6px;
+    }
+    @media (max-width: 768px) {
+      .specs-comparison-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .specs-pane {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 10px 12px;
+    }
+    .specs-pane-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--gray-600);
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .specs-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+    }
+    .specs-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 3px 0;
+      border-bottom: 1px dashed #e2e8f0;
+    }
+    .specs-item:last-child {
+      border-bottom: none;
+    }
+    .specs-item-key {
+      color: var(--gray-600);
+      font-weight: 500;
+    }
+    .specs-item-val {
+      color: var(--gray-800);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-weight: 600;
+    }
+
     .empty {
       text-align: center;
       padding: 36px;
@@ -2008,6 +2184,85 @@
           methodBadge = '<span class="pill pill-method-text" title="Deterministik Kural ve Metin Motoru">📋 Metin Motoru</span>';
         }
 
+        // LLM Status Pill & Explanatory Banner
+        let llmStatusPill = '';
+        let llmBanner = '';
+        if (item.llm_status === 'active') {
+          llmStatusPill = '<span class="llm-pill llm-pill-active">🟢 LLM Aktif (Doğrulandı)</span>';
+          llmBanner = '<div class="llm-banner llm-banner-active"><span>ℹ️</span><span><b>LLM Doğrulaması Devrede:</b> Metin ve tablo analizi yerel Ollama modeli tarafından gerçekleştirilmiş ve regex kural motoru çıktılarıyla arbitraj yapılmıştır.</span></div>';
+        } else if (item.llm_status === 'standby') {
+          llmStatusPill = '<span class="llm-pill llm-pill-standby">🔵 Standby (Kural Motoru Yeterli)</span>';
+          llmBanner = '<div class="llm-banner llm-banner-standby"><span>ℹ️</span><span><b>Kural Motoru Yeterli:</b> Deterministik kurallar %100 güven ile eşleştiği için LLM model çağrısına gerek duyulmamış, hızlı ve deterministik yol tercih edilmiştir.</span></div>';
+        } else if (item.llm_status === 'timeout') {
+          llmStatusPill = '<span class="llm-pill llm-pill-timeout">⏱️ Zaman Aşımı</span>';
+          llmBanner = '<div class="llm-banner llm-banner-timeout"><span>⚠️</span><span><b>LLM Zaman Aşımı:</b> Model yanıt süresi limiti aştığı için güvenli mod olarak deterministik regex motoru çıktıları esas alınmıştır.</span></div>';
+        } else {
+          llmStatusPill = '<span class="llm-pill llm-pill-offline">🟡 Ollama Kapalı (Deterministik Mod)</span>';
+          llmBanner = '<div class="llm-banner llm-banner-offline"><span>ℹ️</span><span><b>Deterministik Mod:</b> Ollama servisi kapalı veya erişilemediği için analiz kural motoru ve regex eşlemeleri ile güvenli şekilde tamamlanmıştır.</span></div>';
+        }
+
+        // LLM Trace Arbitration Decision Table
+        let traceHtml = '';
+        if (item.llm_trace && item.llm_trace.length > 0) {
+          const traceRows = item.llm_trace.map(t => {
+            let badgeClass = 'source-regex';
+            const s = String(t.source || '').toLowerCase();
+            if (s.includes('llm') || s.includes('vision')) badgeClass = 'source-llm';
+            if (s.includes('confirmed')) badgeClass = 'source-confirmed';
+            if (s.includes('conflict') || s.includes('fallback')) badgeClass = 'source-fallback';
+
+            return `
+              <tr>
+                <td><b>${escapeHtml(t.attribute || '—')}</b></td>
+                <td><code>${escapeHtml(t.regex_val !== null && t.regex_val !== undefined ? String(t.regex_val) : '—')}</code></td>
+                <td><code>${escapeHtml(t.llm_val !== null && t.llm_val !== undefined ? String(t.llm_val) : '—')}</code></td>
+                <td><b>${escapeHtml(t.final_val !== null && t.final_val !== undefined ? String(t.final_val) : '—')}</b></td>
+                <td><span class="llm-source-badge ${badgeClass}">${escapeHtml(t.source || '—')}</span></td>
+                <td>${escapeHtml(t.reason || '—')}</td>
+              </tr>
+            `;
+          }).join('');
+
+          traceHtml = `
+            <div>
+              <div style="font-weight: 700; font-size: 12px; color: var(--gray-700); margin-bottom: 6px;">
+                ⚖️ Hakemlik ve Değer Karar Tablosu (Arbitration Table):
+              </div>
+              <table class="llm-table">
+                <thead>
+                  <tr>
+                    <th>Özellik</th>
+                    <th>Regex Değeri</th>
+                    <th>LLM Değeri</th>
+                    <th>Nihai Değer</th>
+                    <th>Kaynak</th>
+                    <th>Açıklama</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${traceRows}
+                </tbody>
+              </table>
+            </div>
+          `;
+        }
+
+        // Raw Specs Side-by-Side (Regex Specs vs LLM Specs)
+        const formatSpecsList = (specsObj) => {
+          if (!specsObj || typeof specsObj !== 'object' || Object.keys(specsObj).length === 0) {
+            return '<div style="color:var(--gray-500); font-style:italic; font-size:11px; padding: 4px 0;">Değer tespit edilmedi</div>';
+          }
+          return Object.entries(specsObj).map(([k, v]) => `
+            <div class="specs-item">
+              <span class="specs-item-key">${escapeHtml(k)}:</span>
+              <span class="specs-item-val">${escapeHtml(v !== null && v !== undefined ? String(v) : '—')}</span>
+            </div>
+          `).join('');
+        };
+
+        const regexSpecsCount = Object.keys(item.regex_specs || {}).length;
+        const llmSpecsCount = Object.keys(item.llm_specs || {}).length;
+
         return `
           <article class="component-card">
             <div class="component-header">
@@ -2114,6 +2369,40 @@
                   </tbody>
                 </table>
               </div>
+
+              <!-- Collapsible LLM Arbitration Accordion (closed by default) -->
+              <details class="llm-trace-accordion">
+                <summary class="llm-trace-summary">
+                  <div class="llm-trace-summary-left">
+                    <span>🤖 Yapay Zeka (LLM) & Karar Geçmişi</span>
+                    ${llmStatusPill}
+                  </div>
+                  <span class="llm-trace-summary-hint">(Tıklayarak inceleyin)</span>
+                </summary>
+                <div class="llm-trace-content">
+                  ${llmBanner}
+                  ${traceHtml}
+                  <div>
+                    <div style="font-weight: 700; font-size: 12px; color: var(--gray-700); margin-bottom: 6px;">
+                      🔍 Ham Çıkarım Parametreleri Karşılaştırması:
+                    </div>
+                    <div class="specs-comparison-grid">
+                      <div class="specs-pane">
+                        <div class="specs-pane-title">📋 Regex Parametreleri (${regexSpecsCount})</div>
+                        <div class="specs-list">
+                          ${formatSpecsList(item.regex_specs)}
+                        </div>
+                      </div>
+                      <div class="specs-pane">
+                        <div class="specs-pane-title">🤖 LLM Parametreleri (${llmSpecsCount})</div>
+                        <div class="specs-list">
+                          ${formatSpecsList(item.llm_specs)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </details>
 
             </div>
           </article>
