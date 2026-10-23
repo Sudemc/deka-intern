@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from decimal import Decimal
 import io
@@ -140,6 +141,16 @@ def get_default_rulebook() -> RuleBook | None:
 
 
 @dataclass
+class ArbitrationEvent:
+    attribute: str
+    regex_val: Any
+    llm_val: Any
+    final_val: Any
+    reason: str
+    source: str
+
+
+@dataclass
 class PropertyMapping:
     """Mapping of a single electrical/physical property to an ERP dictionary attribute."""
     attribute_name: str
@@ -172,6 +183,10 @@ class DatasheetAnalysisResult:
     is_catalog: bool = False
     detected_part_numbers: list[str] = field(default_factory=list)
     analysis_method: str = "deterministic_text"
+    llm_status: str = "standby"
+    llm_trace: list[dict[str, Any]] = field(default_factory=list)
+    llm_specs: dict[str, Any] = field(default_factory=dict)
+    regex_specs: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -192,6 +207,10 @@ class DatasheetAnalysisResult:
             "is_catalog": self.is_catalog,
             "detected_part_numbers": self.detected_part_numbers,
             "analysis_method": self.analysis_method,
+            "llm_status": self.llm_status,
+            "llm_trace": self.llm_trace,
+            "llm_specs": self.llm_specs,
+            "regex_specs": self.regex_specs,
             "properties": [
                 {
                     "attribute_name": p.attribute_name,
@@ -5160,6 +5179,10 @@ def analyze_datasheet(
             "is_catalog": False,
             "detected_part_numbers": [],
             "analysis_method": "deterministic_text",
+            "llm_status": "error",
+            "llm_trace": [],
+            "llm_specs": {},
+            "regex_specs": {},
             "properties": [],
             "_mappings": [],
             "raw_specs": {},
@@ -5182,11 +5205,27 @@ def analyze_datasheet(
     # 5. Deep Hybrid Semantic Intelligence & Fusion
     # Automatically engages when local LLM is available:
     # 1. Scanned / empty text -> Vision LLM extracts from page renders
-    # 2. Digital text with ambiguity, missing specs, or complex component -> Text LLM semantic arbitrator
+    # 2. Digital text with red flags, ambiguity, complex categories -> Text LLM auditor & arbitrator
+    regex_specs = copy.deepcopy(specs)
+    llm_trace: list[dict[str, Any]] = []
+    llm_raw_specs: dict[str, Any] = {}
+
     is_text_empty = len(clean_text) == 0
     are_critical_missing = is_critical_spec_missing(mat_type, specs, is_text_empty)
+    has_gender_conflict = (
+        specs.get("pin_type") == "Erkek" and any(w in clean_text.casefold() for w in ("socket", "receptacle", "female", "dişi"))
+    ) or (
+        specs.get("pin_type") == "Dişi" and any(w in clean_text.casefold() for w in ("male header", "pin header", "plug", "erkek"))
+    )
+    has_mounting_conflict = (
+        specs.get("mounting") == "SMD" and any(w in clean_text.casefold() for w in ("through hole", "tht", " dip ", "leaded", "pin header"))
+    ) or (
+        specs.get("mounting") == "TH" and any(w in clean_text.casefold() for w in ("surface mount", "smd", "smt"))
+    )
+    has_red_flag = has_gender_conflict or has_mounting_conflict
+    is_pure_passive = mat_type in ("RES", "CAP") and pn_has_core and conf >= 0.98 and not is_catalog
     is_complex_or_ambiguous = (
-        mat_type in ("CON", "ICR", "ICS", "SWT", "REL", "TRF", "BİLİNMİYOR")
+        mat_type in ("CON", "SWT", "REL", "ICR", "ICS", "TRA", "IND", "DSP", "DIO", "FUS", "TRF", "BİLİNMİYOR")
         or any(k in clean_text.casefold() for k in ("detect pin", "detection switch", "sim card", "microsd", "memory card"))
         or conf < 0.95
     )
@@ -5194,111 +5233,277 @@ def analyze_datasheet(
     used_vision = False
     used_text_llm = False
     vlm = client if client is not None else VisionLLMClient()
-    if file_bytes and vlm.is_available():
+    should_trigger_text_llm = (
+        vlm.is_available()
+        and bool(clean_text)
+        and (
+            has_red_flag
+            or not is_pure_passive
+            or is_complex_or_ambiguous
+            or are_critical_missing
+            or is_catalog
+            or not pn
+            or pn.startswith("media_")
+            or conf < 0.98
+        )
+    )
+    llm_status = "standby" if (vlm and vlm.is_available()) else "offline"
+
+    if is_text_empty and file_bytes and vlm.is_available():
         try:
-            if is_text_empty:
-                rendered = select_and_render_pages(file_bytes, target_pn=pn, max_pages=2)
-                images = [p["base64_png"] for p in rendered if "base64_png" in p]
-                if images:
-                    vlm_hint = mat_type if mat_type != "BİLİNMİYOR" else None
-                    vlm_res = vlm.extract_specs_from_images(images, target_pn=pn, material_type_hint=vlm_hint)
-                    if vlm_res:
-                        vlm_specs = vlm_res.get("specs") or {}
-                        # Merge specs: deterministic/PN specs take precedence, VLM fills any empty/None field
-                        for k, v in vlm_specs.items():
-                            if v is not None and (k not in specs or specs[k] is None or specs[k] == ""):
-                                s_v = str(v).strip()
-                                if s_v and s_v not in ("...", "N/A", "null", "None", "<...>", "—") and not (s_v.startswith("<") and s_v.endswith(">")):
-                                    specs[k] = v
-
-                        vlm_mat = vlm_res.get("material_type")
-                        if vlm_mat:
-                            vlm_mat_clean = vlm_mat.strip().upper()
-                            vlm_mat_normalized = NORMALIZE_VLM_TYPE.get(vlm_mat_clean, vlm_mat_clean)
-                            if mat_type == "BİLİNMİYOR" or not mat_type:
-                                mat_type = vlm_mat_normalized
-                                conf = float(vlm_res.get("confidence", 0.85))
-                                reason = f"Vision AI tarafından tespit edildi ({MATERIAL_TYPE_NAMES.get(mat_type, mat_type)})."
-                        elif vlm_res.get("confidence"):
-                            conf = max(conf, float(vlm_res.get("confidence", 0.0)))
-
-                        if not specs.get("manufacturer") and vlm_res.get("manufacturer"):
-                            vlm_mfr = str(vlm_res["manufacturer"]).strip()
-                            if vlm_mfr and vlm_mfr not in ("...", "N/A", "null", "None", "<...>") and not (vlm_mfr.startswith("<") and vlm_mfr.endswith(">")):
-                                specs["manufacturer"] = vlm_mfr
-
-                        used_vision = True
-            elif is_complex_or_ambiguous or are_critical_missing or is_catalog or not pn or pn.startswith("media_"):
-                # Fast text semantic LLM arbitration
-                llm_res = vlm.extract_specs_from_text(clean_text[:4000], target_pn=pn, material_type_hint=mat_type)
-                if llm_res:
-                    # Part number discovery from LLM if missing/generic
-                    llm_pn = str(llm_res.get("part_number") or "").strip()
-                    if llm_pn and llm_pn not in ("...", "N/A", "null", "None", "<...>") and not is_catalog_document_name(llm_pn):
-                        if is_catalog or not part_number or pn.startswith("media_"):
-                            pn = llm_pn
-                            is_catalog = False
-
-                    llm_specs = llm_res.get("specs") or {}
-                    # 1. Specialized connector category arbitration
-                    llm_type_conn = llm_specs.get("type_connector")
-                    if llm_type_conn and llm_type_conn in CARD_OR_INTERFACE_CONNECTORS:
-                        specs["type_connector"] = llm_type_conn
-                    # 2. Compound pin count arbitration (e.g. 8 pin vs 6 pin)
-                    llm_pin = str(llm_specs.get("pin_number") or "").strip()
-                    if llm_pin and ("detect" in clean_text.casefold() or "switch" in clean_text.casefold()):
-                        if not llm_pin.endswith("pin"):
-                            llm_pin = f"{llm_pin} pin"
-                        curr_digits = re.search(r"\d+", specs.get("pin_number", "0"))
-                        llm_digits = re.search(r"\d+", llm_pin)
-                        curr_count = int(curr_digits.group(0)) if curr_digits else 0
-                        llm_count = int(llm_digits.group(0)) if llm_digits else 0
-                        if llm_count > curr_count or not specs.get("pin_number"):
-                            specs["pin_number"] = llm_pin
-                    # 3. Style and angle arbitration
-                    if llm_specs.get("style") and not specs.get("style"):
-                        cand_style = str(llm_specs["style"]).strip()
-                        if cand_style.casefold() not in ("through hole", "surface mount", "smd", "th", "none", "n/a", "standard"):
-                            # Card styles (Push-Push, Push-Pull, Hinged) only apply to card/memory sockets or relevant context
-                            if cand_style.casefold() in ("push-push", "push-pull", "hinged", "ejector"):
-                                if any(k in clean_text.casefold() for k in ("sim", "card", "microsd", "memory")) or specs.get("type_connector") in CARD_OR_INTERFACE_CONNECTORS:
-                                    specs["style"] = cand_style
-                            else:
-                                specs["style"] = cand_style
-                    if llm_specs.get("angle") and not specs.get("angle"):
-                        specs["angle"] = str(llm_specs["angle"]).strip()
-                    # 4. Fill any remaining unextracted properties across all material types
-                    for k, v in llm_specs.items():
-                        if k in ("style", "pin_number", "type_connector", "angle", "part_number"):
-                            continue
+            rendered = select_and_render_pages(file_bytes, target_pn=pn, max_pages=2)
+            images = [p["base64_png"] for p in rendered if "base64_png" in p]
+            if images:
+                vlm_hint = mat_type if mat_type != "BİLİNMİYOR" else None
+                vlm_res = vlm.extract_specs_from_images(images, target_pn=pn, material_type_hint=vlm_hint)
+                if vlm_res:
+                    vlm_specs = vlm_res.get("specs") or {}
+                    # Merge specs: deterministic/PN specs take precedence, VLM fills any empty/None field
+                    for k, v in vlm_specs.items():
                         if v is not None and (k not in specs or specs[k] is None or specs[k] == ""):
                             s_v = str(v).strip()
-                            if s_v and s_v not in ("...", "N/A", "null", "None", "<...>", "—"):
+                            if s_v and s_v not in ("...", "N/A", "null", "None", "<...>", "—") and not (s_v.startswith("<") and s_v.endswith(">")):
                                 specs[k] = v
-                    # 5. Manufacturer resolution via LLM with rulebook matching
-                    if not specs.get("manufacturer") and llm_res.get("manufacturer"):
-                        m_cand = str(llm_res["manufacturer"]).strip()
-                        if m_cand and m_cand not in ("...", "N/A", "null", "None", "<...>"):
-                            mfr_lower = m_cand.lower()
-                            matched_mfr, matched_code = None, None
-                            if rulebook and hasattr(rulebook, "manufacturers"):
-                                for s_term, d_name, e_code in rulebook.manufacturers:
-                                    if s_term in mfr_lower:
-                                        matched_mfr, matched_code = d_name, e_code
-                                        break
-                            if not matched_mfr:
-                                for kw, d_name, e_code in KNOWN_MANUFACTURERS:
-                                    if kw in mfr_lower:
-                                        matched_mfr, matched_code = d_name, e_code
-                                        break
-                            if matched_mfr:
-                                specs["manufacturer"] = matched_mfr
-                                specs["manufacturer_code"] = matched_code
-                            else:
-                                specs["manufacturer"] = m_cand
-                    used_text_llm = True
+                                llm_trace.append({
+                                    "attribute": k,
+                                    "regex_val": None,
+                                    "llm_val": v,
+                                    "final_val": v,
+                                    "reason": "Vision AI boş alanı doldurdu",
+                                    "source": "llm_filled_empty",
+                                })
+
+                    vlm_mat = vlm_res.get("material_type")
+                    if vlm_mat:
+                        vlm_mat_clean = vlm_mat.strip().upper()
+                        vlm_mat_normalized = NORMALIZE_VLM_TYPE.get(vlm_mat_clean, vlm_mat_clean)
+                        if mat_type == "BİLİNMİYOR" or not mat_type:
+                            mat_type = vlm_mat_normalized
+                            conf = float(vlm_res.get("confidence", 0.85))
+                            reason = f"Vision AI tarafından tespit edildi ({MATERIAL_TYPE_NAMES.get(mat_type, mat_type)})."
+                    elif vlm_res.get("confidence"):
+                        conf = max(conf, float(vlm_res.get("confidence", 0.0)))
+
+                    if not specs.get("manufacturer") and vlm_res.get("manufacturer"):
+                        vlm_mfr = str(vlm_res["manufacturer"]).strip()
+                        if vlm_mfr and vlm_mfr not in ("...", "N/A", "null", "None", "<...>") and not (vlm_mfr.startswith("<") and vlm_mfr.endswith(">")):
+                            specs["manufacturer"] = vlm_mfr
+                            llm_trace.append({
+                                "attribute": "manufacturer",
+                                "regex_val": None,
+                                "llm_val": vlm_mfr,
+                                "final_val": vlm_mfr,
+                                "reason": "Vision AI üreticiyi tespit etti",
+                                "source": "llm_filled_empty",
+                            })
+
+                    used_vision = True
+                    llm_status = "active"
+                else:
+                    if getattr(vlm, "last_status", None) == "timeout":
+                        llm_status = "timeout"
+                    elif getattr(vlm, "last_status", None) == "connection_error":
+                        llm_status = "offline"
+                    else:
+                        s = getattr(vlm, "last_status", "error")
+                        llm_status = s if s in ("active", "standby", "offline", "timeout", "error") else "error"
         except Exception:
-            pass
+            llm_status = "error"
+    elif should_trigger_text_llm:
+        try:
+            llm_res = vlm.extract_specs_from_text(clean_text[:4000], target_pn=pn, material_type_hint=mat_type, timeout=5.0)
+            if llm_res:
+                # Part number discovery from LLM if missing/generic
+                llm_pn = str(llm_res.get("part_number") or "").strip()
+                if llm_pn and llm_pn not in ("...", "N/A", "null", "None", "<...>") and not is_catalog_document_name(llm_pn):
+                    if is_catalog or not part_number or pn.startswith("media_"):
+                        pn = llm_pn
+                        is_catalog = False
+
+                llm_raw_specs = llm_res.get("specs") or {}
+
+                # a) pin_type arbitration
+                if llm_raw_specs.get("pin_type") in ("Dişi", "Erkek"):
+                    if specs.get("pin_type") != llm_raw_specs["pin_type"]:
+                        old_v = specs.get("pin_type")
+                        specs["pin_type"] = llm_raw_specs["pin_type"]
+                        llm_trace.append({
+                            "attribute": "pin_type",
+                            "regex_val": old_v,
+                            "llm_val": specs["pin_type"],
+                            "final_val": specs["pin_type"],
+                            "reason": "LLM bağlamsal analiziyle pin_type güncellendi",
+                            "source": "llm_override",
+                        })
+
+                # b) mounting arbitration
+                if llm_raw_specs.get("mounting") in ("SMD", "TH"):
+                    if specs.get("mounting") != llm_raw_specs["mounting"] and has_mounting_conflict:
+                        old_v = specs.get("mounting")
+                        specs["mounting"] = llm_raw_specs["mounting"]
+                        llm_trace.append({
+                            "attribute": "mounting",
+                            "regex_val": old_v,
+                            "llm_val": specs["mounting"],
+                            "final_val": specs["mounting"],
+                            "reason": "LLM metin kanıtıyla montaj tipini güncelledi",
+                            "source": "llm_override",
+                        })
+
+                # c) type_connector, style, pin_number, angle arbitration
+                llm_type_conn = llm_raw_specs.get("type_connector")
+                if llm_type_conn and (llm_type_conn in CARD_OR_INTERFACE_CONNECTORS or mat_type == "CON"):
+                    old_tc = specs.get("type_connector")
+                    if old_tc != llm_type_conn:
+                        specs["type_connector"] = llm_type_conn
+                        llm_trace.append({
+                            "attribute": "type_connector",
+                            "regex_val": old_tc,
+                            "llm_val": llm_type_conn,
+                            "final_val": llm_type_conn,
+                            "reason": "LLM arayüz/bağlantı konnektör tipini belirledi",
+                            "source": "llm_override" if old_tc else "llm_filled_empty",
+                        })
+
+                # Compound pin count arbitration (e.g. 8 pin vs 6 pin)
+                llm_pin = str(llm_raw_specs.get("pin_number") or "").strip()
+                if llm_pin:
+                    if not llm_pin.endswith("pin") and llm_pin.isdigit():
+                        llm_pin = f"{llm_pin} pin"
+                    old_pin = specs.get("pin_number")
+                    curr_digits = re.search(r"\d+", str(old_pin or "0"))
+                    llm_digits = re.search(r"\d+", llm_pin)
+                    curr_count = int(curr_digits.group(0)) if curr_digits else 0
+                    llm_count = int(llm_digits.group(0)) if llm_digits else 0
+                    if ("detect" in clean_text.casefold() or "switch" in clean_text.casefold()) and llm_count > curr_count:
+                        specs["pin_number"] = llm_pin
+                        llm_trace.append({
+                            "attribute": "pin_number",
+                            "regex_val": old_pin,
+                            "llm_val": llm_pin,
+                            "final_val": llm_pin,
+                            "reason": "LLM algılama anahtarı (detect pin) dahil gerçek pin sayısını güncelledi",
+                            "source": "llm_override" if old_pin else "llm_filled_empty",
+                        })
+                    elif not old_pin and llm_pin:
+                        specs["pin_number"] = llm_pin
+                        llm_trace.append({
+                            "attribute": "pin_number",
+                            "regex_val": None,
+                            "llm_val": llm_pin,
+                            "final_val": llm_pin,
+                            "reason": "LLM pin sayısını doldurdu",
+                            "source": "llm_filled_empty",
+                        })
+
+                # Style and angle arbitration
+                if llm_raw_specs.get("style"):
+                    cand_style = str(llm_raw_specs["style"]).strip()
+                    if cand_style.casefold() not in ("through hole", "surface mount", "smd", "th", "none", "n/a", "standard"):
+                        should_set_style = False
+                        if cand_style.casefold() in ("push-push", "push-pull", "hinged", "ejector"):
+                            if any(k in clean_text.casefold() for k in ("sim", "card", "microsd", "memory")) or specs.get("type_connector") in CARD_OR_INTERFACE_CONNECTORS:
+                                should_set_style = True
+                        else:
+                            should_set_style = True
+                        if should_set_style:
+                            old_style = specs.get("style")
+                            if old_style != cand_style:
+                                specs["style"] = cand_style
+                                llm_trace.append({
+                                    "attribute": "style",
+                                    "regex_val": old_style,
+                                    "llm_val": cand_style,
+                                    "final_val": cand_style,
+                                    "reason": "LLM stil bilgisini güncelledi" if old_style else "LLM stil bilgisini doldurdu",
+                                    "source": "llm_override" if old_style else "llm_filled_empty",
+                                })
+
+                if llm_raw_specs.get("angle") and specs.get("mounting") != "Cable":
+                    cand_angle = str(llm_raw_specs["angle"]).strip()
+                    has_angle_text = bool(re.search(r"\b(?:right[\s-]angle|90\s*deg(?:rees)?|90°|horizontal|yatık|vertical|straight|180\s*deg(?:rees)?|180°|dik)\b", clean_text.casefold()))
+                    is_card = specs.get("type_connector") in ("SIM Card", "MicroSIM Card", "MicroSD Card", "Memory Connectors")
+                    if has_angle_text or is_card:
+                        old_angle = specs.get("angle")
+                        if not old_angle:
+                            specs["angle"] = cand_angle
+                            llm_trace.append({
+                                "attribute": "angle",
+                                "regex_val": None,
+                                "llm_val": cand_angle,
+                                "final_val": cand_angle,
+                                "reason": "LLM açı bilgisini doldurdu",
+                                "source": "llm_filled_empty",
+                            })
+                        elif old_angle != cand_angle:
+                            specs["angle"] = cand_angle
+                            llm_trace.append({
+                                "attribute": "angle",
+                                "regex_val": old_angle,
+                                "llm_val": cand_angle,
+                                "final_val": cand_angle,
+                                "reason": "LLM açı bilgisini güncelledi",
+                                "source": "llm_override",
+                            })
+
+                # Manufacturer resolution via LLM with rulebook matching
+                if not specs.get("manufacturer") and llm_res.get("manufacturer"):
+                    m_cand = str(llm_res["manufacturer"]).strip()
+                    if m_cand and m_cand not in ("...", "N/A", "null", "None", "<...>"):
+                        mfr_lower = m_cand.lower()
+                        matched_mfr, matched_code = None, None
+                        if rulebook and hasattr(rulebook, "manufacturers"):
+                            for s_term, d_name, e_code in rulebook.manufacturers:
+                                if s_term in mfr_lower:
+                                    matched_mfr, matched_code = d_name, e_code
+                                    break
+                        if not matched_mfr:
+                            for kw, d_name, e_code in KNOWN_MANUFACTURERS:
+                                if kw in mfr_lower:
+                                    matched_mfr, matched_code = d_name, e_code
+                                    break
+                        final_mfr = matched_mfr if matched_mfr else m_cand
+                        specs["manufacturer"] = final_mfr
+                        if matched_code:
+                            specs["manufacturer_code"] = matched_code
+                        llm_trace.append({
+                            "attribute": "manufacturer",
+                            "regex_val": None,
+                            "llm_val": final_mfr,
+                            "final_val": final_mfr,
+                            "reason": "LLM üreticiyi tespit etti",
+                            "source": "llm_filled_empty",
+                        })
+
+                # d) Fill empty/None fields across all categories
+                for k, v in llm_raw_specs.items():
+                    if k in ("style", "pin_number", "type_connector", "angle", "pin_type", "mounting", "part_number", "manufacturer"):
+                        continue
+                    if v is not None and (specs.get(k) is None or specs.get(k) == ""):
+                        s_v = str(v).strip()
+                        if s_v and s_v not in ("...", "N/A", "null", "None", "<...>", "—") and not (s_v.startswith("<") and s_v.endswith(">")):
+                            specs[k] = v
+                            llm_trace.append({
+                                "attribute": k,
+                                "regex_val": None,
+                                "llm_val": v,
+                                "final_val": v,
+                                "reason": "LLM boş alanı doldurdu",
+                                "source": "llm_filled_empty",
+                            })
+
+                used_text_llm = True
+                llm_status = "active"
+            else:
+                if getattr(vlm, "last_status", None) == "timeout":
+                    llm_status = "timeout"
+                elif getattr(vlm, "last_status", None) == "connection_error":
+                    llm_status = "offline"
+                else:
+                    s = getattr(vlm, "last_status", "error")
+                    llm_status = s if s in ("active", "standby", "offline", "timeout", "error") else "error"
+        except Exception:
+            llm_status = "error"
 
     # 6. Analysis Method Determination
     if used_vision:
@@ -5358,6 +5563,10 @@ def analyze_datasheet(
         "is_catalog": is_catalog,
         "detected_part_numbers": detected_mpns,
         "analysis_method": analysis_method,
+        "llm_status": llm_status,
+        "llm_trace": llm_trace,
+        "llm_specs": llm_raw_specs,
+        "regex_specs": regex_specs,
         "properties": [
             {
                 "attribute_name": p.attribute_name,
@@ -5410,6 +5619,10 @@ def analyze_single_datasheet(
         is_catalog=res["is_catalog"],
         detected_part_numbers=res["detected_part_numbers"],
         analysis_method=res["analysis_method"],
+        llm_status=res.get("llm_status", "standby"),
+        llm_trace=res.get("llm_trace", []),
+        llm_specs=res.get("llm_specs", {}),
+        regex_specs=res.get("regex_specs", {}),
     )
 
 

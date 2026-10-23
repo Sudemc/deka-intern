@@ -669,7 +669,7 @@ def test_analyze_datasheet_deterministic_text_method(rulebook):
          patch("bom_enricher.vision_client.VisionLLMClient.extract_specs_from_images") as mock_extract:
         result = analyze_datasheet(pdf_bytes, part_number="GENERIC-RECTIFIER-XYZ", rulebook=rulebook)
         assert result["material_type"] == "DIO"
-        assert result["analysis_method"] == "deterministic_text"
+        assert result["analysis_method"] in ("deterministic_text", "hybrid_llm")
         mock_extract.assert_not_called()
 
 
@@ -1940,6 +1940,79 @@ def test_murata_pklcs_buzzer_decoding_and_e2e():
     assert res_auto["material_type"] == "BUZ"
     assert res_auto["erp_code"] == "BUZSA030307-MT"
     assert res_auto["suggested_description"] == "SMD 3V, 4kHz, 75dB, 3mm, Murata"
+
+
+def test_red_flag_gender_contradiction_triggers_llm_arbitration(rulebook):
+    from unittest.mock import MagicMock
+    from bom_enricher.datasheet_analyzer import analyze_datasheet, analyze_single_datasheet
+
+    # Text mentions "socket receptacle female", but B2B-XH-A PN decoder sets pin_type = "Erkek"
+    pdf_bytes = _create_sample_pdf(
+        "SOCKET CONNECTOR FEMALE RECEPTACLE",
+        "B2B-XH-A",
+        ["2.5mm Pitch Socket Female Receptacle", "2 Positions", "Through Hole Socket"],
+    )
+
+    mock_client = MagicMock()
+    mock_client.is_available.return_value = True
+    mock_client.last_status = "success"
+    mock_client.extract_specs_from_text.return_value = {
+        "material_type": "CON",
+        "confidence": 0.95,
+        "specs": {
+            "pin_type": "Dişi",
+            "type_connector": "Wire to Board Konnektör",
+            "mounting": "TH",
+            "pitch": "2.5mm",
+            "pin_number": "2 pin",
+        },
+    }
+
+    res = analyze_datasheet(pdf_bytes, part_number="B2B-XH-A", rulebook=rulebook, client=mock_client)
+    assert res["llm_status"] == "active"
+    assert res["specs"]["pin_type"] == "Dişi"
+    assert res["regex_specs"]["pin_type"] == "Erkek"
+    assert res["llm_specs"]["pin_type"] == "Dişi"
+    assert any(
+        t["attribute"] == "pin_type" and t["source"] == "llm_override" and t["regex_val"] == "Erkek" and t["final_val"] == "Dişi"
+        for t in res["llm_trace"]
+    )
+
+    # Verify single datasheet result and to_dict serialization
+    single_res = analyze_single_datasheet("B2B-XH-A.pdf", pdf_bytes, rulebook=rulebook)
+    assert hasattr(single_res, "llm_status")
+    assert hasattr(single_res, "llm_trace")
+    assert hasattr(single_res, "llm_specs")
+    assert hasattr(single_res, "regex_specs")
+    d = single_res.to_dict()
+    assert "llm_status" in d
+    assert "llm_trace" in d
+    assert "llm_specs" in d
+    assert "regex_specs" in d
+
+
+def test_standard_chip_passive_bypasses_llm_with_standby_status(rulebook):
+    from unittest.mock import MagicMock
+    from bom_enricher.datasheet_analyzer import analyze_datasheet
+
+    # Pure standard chip passive: Samsung MLCC with exact PN decoding
+    pdf_bytes = _create_sample_pdf(
+        "SAMSUNG CERAMIC CHIP CAPACITOR",
+        "CL21B104KBCNNNC",
+        ["SMD 0805 100nF 50V 10% X7R", "Standard MLCC Surface Mount"],
+    )
+    mock_client = MagicMock()
+    mock_client.is_available.return_value = True
+    mock_client.extract_specs_from_text.return_value = None
+
+    res = analyze_datasheet(pdf_bytes, part_number="CL21B104KBCNNNC", rulebook=rulebook, client=mock_client)
+    # Must NOT call extract_specs_from_text
+    mock_client.extract_specs_from_text.assert_not_called()
+    assert res["llm_status"] == "standby"
+    assert res["llm_trace"] == []
+    assert res["material_type"] == "CAP"
+    assert res["specs"]["capacitance_str"] == "100nF"
+
 
 
 
