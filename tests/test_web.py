@@ -283,5 +283,62 @@ def test_web_compares_dnp_items_and_returns_info_count(tmp_path):
     assert data["error_count"] == 0
 
 
+def test_llm_health_endpoint(client):
+    from unittest.mock import MagicMock, patch
+
+    # Test online
+    with patch("bom_enricher.web.VisionLLMClient") as mock_vlm_cls:
+        mock_instance = MagicMock()
+        mock_instance.is_available.return_value = True
+        mock_vlm_cls.return_value = mock_instance
+
+        resp = client.get("/api/health/llm")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "online"
+        assert data["text_model"] == "llama3.2:3b"
+        assert data["vision_model"] == "moondream:latest"
+        assert data["host"] == "http://127.0.0.1:11434"
+
+    # Test offline
+    with patch("bom_enricher.web.VisionLLMClient") as mock_vlm_cls:
+        mock_instance = MagicMock()
+        mock_instance.is_available.return_value = False
+        mock_vlm_cls.return_value = mock_instance
+
+        resp = client.get("/api/health/llm")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "offline"
+        assert data["text_model"] == "llama3.2:3b"
+        assert data["vision_model"] == "moondream:latest"
+        assert data["host"] == "http://127.0.0.1:11434"
 
 
+def test_datasheet_analyze_includes_llm_arbitration_trace(client):
+    from reportlab.pdfgen import canvas
+    import io
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "Header Connector Male 2.54mm 10-pin")
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    response = client.post(
+        "/api/datasheet-analyze",
+        files={"file": ("connector.pdf", pdf_bytes, "application/pdf")},
+        data={"part_number": "CONN-HEADER-10P", "material_type": "CON"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "analyses" in data
+    assert len(data["analyses"]) >= 1
+    item = data["analyses"][0]
+    assert "llm_status" in item
+    assert "llm_trace" in item
+    assert "llm_specs" in item
+    assert "regex_specs" in item
+    assert isinstance(item["llm_trace"], list)
+    assert isinstance(item["llm_specs"], dict)
+    assert isinstance(item["regex_specs"], dict)

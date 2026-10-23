@@ -21,6 +21,8 @@ from bom_enricher.datasheet_analyzer import (
     analyze_single_datasheet,
     generate_datasheet_excel_report,
 )
+from bom_enricher.vision_llm import VisionLLMClient
+
 
 
 _MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -47,6 +49,19 @@ def index() -> HTMLResponse:
 @app.get("/api/health", tags=["system"])
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "bom-comparison"}
+
+
+@app.get("/api/health/llm", tags=["Health"])
+async def get_llm_health() -> dict[str, object]:
+    vlm = VisionLLMClient()
+    is_online = vlm.is_available()
+    return {
+        "status": "online" if is_online else "offline",
+        "text_model": "llama3.2:3b",
+        "vision_model": "moondream:latest",
+        "host": "http://127.0.0.1:11434",
+    }
+
 
 
 @app.post("/api/compare", tags=["BOM"])
