@@ -161,6 +161,12 @@ def _split_multi_code(raw: str) -> list[str]:
     tokens = cleaned.split()
 
     results: list[str] = []
+    # Search for parenthetical or bracketed codes (e.g. 'DELTA-V (IXTT140P10T)' or '[4E22000001]')
+    for m in re.finditer(r"[\(\[]([A-Za-z0-9._/+()\-]+)[\)\]]", cleaned_raw):
+        inner = m.group(1).strip()
+        if _is_product_code_token(inner):
+            results.extend(expand_parentheses_variants(inner))
+
     for t in tokens:
         m = re.match(r"^([A-Za-z0-9._/+()\-]+)\((.+)\)$", t)
         if m:
@@ -171,10 +177,15 @@ def _split_multi_code(raw: str) -> list[str]:
             if _is_product_code_token(inner):
                 results.extend(expand_parentheses_variants(inner))
             results.append(t)
-        elif _is_product_code_token(t):
-            results.extend(expand_parentheses_variants(t))
+        else:
+            t_clean = t.strip("()[]")
+            if _is_product_code_token(t_clean):
+                results.extend(expand_parentheses_variants(t_clean))
+            elif _is_product_code_token(t):
+                results.extend(expand_parentheses_variants(t))
 
-    if len(results) >= 2:
+    if results:
+        results.append(cleaned_raw.strip())
         return list(dict.fromkeys(results))
 
     return expand_parentheses_variants(cleaned_raw.strip())

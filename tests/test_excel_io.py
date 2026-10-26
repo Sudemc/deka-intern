@@ -484,3 +484,27 @@ def test_terminal_non_bom_sections_pruned(tmp_path):
     assert rows[0].part_number == "AC0603KRX7R9BB104"
     assert rows[1].part == "R1"
     assert rows[1].part_number == "0603(S/W)AJ0221T5E"
+
+
+def test_delta_v_and_altium_patterns():
+    from bom_enricher.excel_io import clean_part_number, split_references, _header_field, _explicit_code_like
+
+    # 1. Company prefix extraction vs bin notes
+    assert clean_part_number("DELTA-V (IXTT140P10T)") == "IXTT140P10T"
+    assert clean_part_number("LA G6SP.02 (8E-5F)(2-4 color)") == "LA G6SP.02"
+    assert clean_part_number("LY G6SP.02 (6E-5F)(5-6 color)") == "LY G6SP.02"
+
+    # 2. Designator prose stripping
+    assert split_references("M3- müşteriden gelecek") == ["M3"]
+    assert split_references("ACS1, ACS2") == ["ACS1", "ACS2"]
+    assert split_references("C1, C7, C13, C14") == ["C1", "C7", "C13", "C14"]
+
+    # 3. Header mapping for '#', 'No.'
+    assert _header_field("#") == "item"
+    assert _header_field("No") == "item"
+    assert _header_field("No.") == "item"
+
+    # 4. Part numbers with commas and unclosed parens
+    assert _explicit_code_like("BT151S-500R,118") is True
+    assert _explicit_code_like("TLP293(BL-TPL,E") is True
+

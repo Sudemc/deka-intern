@@ -207,14 +207,14 @@ def test_vision_client_heuristic_text_fallback():
 
 
 def test_vision_llm_client_status_tracking():
-    from src.bom_enricher.vision_llm import VisionLLMClient
+    from bom_enricher.vision_llm import VisionLLMClient
     client = VisionLLMClient()
     assert client.last_status == "uninitialized"
 
 
 def test_extract_specs_from_text_timeout_handling(monkeypatch):
     import httpx
-    from src.bom_enricher.vision_llm import VisionLLMClient
+    from bom_enricher.vision_llm import VisionLLMClient
     client = VisionLLMClient()
 
     def mock_post(*args, **kwargs):
@@ -228,7 +228,7 @@ def test_extract_specs_from_text_timeout_handling(monkeypatch):
 
 def test_extract_specs_from_text_connection_error_handling(monkeypatch):
     import httpx
-    from src.bom_enricher.vision_llm import VisionLLMClient
+    from bom_enricher.vision_llm import VisionLLMClient
     client = VisionLLMClient()
 
     def mock_post(*args, **kwargs):
@@ -243,7 +243,7 @@ def test_extract_specs_from_text_connection_error_handling(monkeypatch):
 def test_extract_specs_from_text_empty_response(monkeypatch):
     from unittest.mock import MagicMock
     import httpx
-    from src.bom_enricher.vision_llm import VisionLLMClient
+    from bom_enricher.vision_llm import VisionLLMClient
     client = VisionLLMClient()
 
     mock_resp = MagicMock(status_code=200)
@@ -258,7 +258,7 @@ def test_extract_specs_from_text_empty_response(monkeypatch):
 def test_extract_specs_from_text_parse_error(monkeypatch):
     from unittest.mock import MagicMock
     import httpx
-    from src.bom_enricher.vision_llm import VisionLLMClient
+    from bom_enricher.vision_llm import VisionLLMClient
     client = VisionLLMClient()
 
     mock_resp = MagicMock(status_code=200)
@@ -273,7 +273,7 @@ def test_extract_specs_from_text_parse_error(monkeypatch):
 def test_extract_specs_from_text_success_status(monkeypatch):
     from unittest.mock import MagicMock
     import httpx
-    from src.bom_enricher.vision_llm import VisionLLMClient
+    from bom_enricher.vision_llm import VisionLLMClient
     client = VisionLLMClient()
 
     mock_resp = MagicMock(status_code=200)
@@ -294,7 +294,7 @@ def test_extract_specs_from_text_success_status(monkeypatch):
 def test_extract_specs_from_images_status_tracking():
     from unittest.mock import MagicMock
     import httpx
-    from src.bom_enricher.vision_llm import VisionLLMClient
+    from bom_enricher.vision_llm import VisionLLMClient
     client = VisionLLMClient()
 
     with patch("httpx.post", side_effect=httpx.TimeoutException("Timeout")):

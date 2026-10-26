@@ -135,6 +135,9 @@ _ELECTRICAL_VALUE_PATTERN = re.compile(
 
 
 def _header_field(value: Any) -> str | None:
+    raw_str = _string_value(value).strip()
+    if raw_str in {"#", "No", "No.", "NO", "no", "Nr", "Nr.", "S.No", "Sıra", "Sira", "Item"}:
+        return "item"
     normalized = _normalize_header(value).replace("#", " number ")
     normalized = re.sub(r"[/._-]+", " ", normalized)
     normalized = " ".join(normalized.split())
@@ -147,7 +150,7 @@ def _header_field(value: Any) -> str | None:
         if tokens:
             last = tokens[-1]
             if last in {"kodu", "kod", "code", "pn", "mpn"} or (
-                last in {"no", "number"} and not any(t in {"sira", "kalem", "line", "row", "item", "rev", "revision", "revizyon", "versiyon", "version", "doc", "dokuman", "document", "form", "page", "sayfa"} for t in tokens)
+                last in {"no", "number"} and len(tokens) > 1 and not any(t in {"sira", "kalem", "line", "row", "item", "rev", "revision", "revizyon", "versiyon", "version", "doc", "dokuman", "document", "form", "page", "sayfa"} for t in tokens)
             ):
                 return "part_number"
     return None
@@ -159,7 +162,7 @@ def _is_ref_like(val: Any) -> bool:
         return False
     first = re.split(r"[,;\s]+", s)[0].strip("\"' ")
     return bool(re.match(
-        r"^(?:[A-Za-z0-9]+[_\-])?(?:R|C|L|D|Q|U|IC|J|CN|P|TP|SW|F|FB|T|LED|BT|Y|X|K|VR|ZD|TR|TH|MOV|TS|BRK|CON|DST|FL|B)\d+",
+        r"^(?:[A-Za-z0-9]+[_\-])?(?:R|C|L|D|Q|U|IC|J|CN|P|TP|SW|F|FB|T|LED|BT|Y|X|K|VR|ZD|TR|TH|MOV|TS|BRK|CON|DST|FL|B|M|O|ACS)\d+[A-Za-z]?(?:[_\-].*)?$",
         first,
         re.IGNORECASE,
     ))
@@ -190,7 +193,12 @@ def clean_part_number(s: str) -> str:
     """Clean auxiliary notes from part numbers (e.g. bin codes or mounting orientation notes)."""
     if not s:
         return ""
-    # Strip parenthetical notes that do NOT contain '/' (e.g. '(AA-BB bin)')
+    # If pattern is 'PREFIX (MPN)' where PREFIX is a project/company name and INNER is an MPN (e.g. 'DELTA-V (IXTT140P10T)')
+    m_cust = re.match(r"^([A-Za-z0-9_\-\s]+?)\s*\(([A-Za-z0-9._/+()\-*]+)\)$", s)
+    if m_cust:
+        pref, inner = m_cust.group(1).strip(), m_cust.group(2).strip()
+        if not any(c.isdigit() for c in re.sub(r"[-_]v\d*", "", pref, flags=re.I)) and any(c.isdigit() for c in inner):
+            return inner
     cleaned = re.sub(r"\s*\([^)/]*\)", "", s)
     cleaned = re.sub(r"\s+-\s+(?:Right-Angle|Vertical|Horizontal|Dik|Yatık|SMD|TH).*$", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+\d+-\d+\s+color\)?.*$", "", cleaned, flags=re.IGNORECASE)
@@ -213,6 +221,8 @@ def _explicit_code_like(value: Any) -> bool:
     candidate = clean_part_number(raw_candidate)
     if not candidate or _NOTE_PREFIX_PATTERN.search(candidate) or _is_date_like(candidate):
         return False
+    if re.fullmatch(r"^\d{1,3}$", candidate):
+        return False
     if len(candidate) < 2 or candidate.upper() in _PLACEHOLDER_PNS:
         return False
     if re.fullmatch(r"^[A-Za-z]$", candidate) or re.fullmatch(r"^[^A-Za-z0-9]+$", candidate):
@@ -225,7 +235,7 @@ def _explicit_code_like(value: Any) -> bool:
     if len(tokens) > 4:
         return False
     for token in tokens:
-        if not re.fullmatch(r"[A-Za-z0-9._/+()\-*]+", token) or not any(c.isalnum() for c in token):
+        if not re.fullmatch(r"[A-Za-z0-9._/+()\-*,]+", token) or not any(c.isalnum() for c in token):
             return False
     if len(tokens) > 1 and not any(character.isdigit() for character in candidate):
         return False
@@ -261,10 +271,17 @@ def split_references(s: str) -> list[str]:
     raw_tokens = [t.strip() for t in re.split(r"[,;|\s/]+", s) if t.strip()]
     refs: list[str] = []
     for tok in raw_tokens:
-        expanded = expand_ref_range(tok)
+        tok_clean = tok.strip(" -_:,;()")
+        if not tok_clean:
+            continue
+        expanded = expand_ref_range(tok_clean)
         for r in expanded:
-            if r and r not in refs:
-                refs.append(r)
+            r_clean = r.strip(" -_:,;()")
+            if r_clean and r_clean not in refs:
+                # Filter prose words without digits (e.g. 'müşteriden', 'gelecek', 'konsinye', 'dnp')
+                if not any(c.isdigit() for c in r_clean) and len(r_clean) > 2 and r_clean.upper() not in {"PCB"}:
+                    continue
+                refs.append(r_clean)
     return refs
 
 
