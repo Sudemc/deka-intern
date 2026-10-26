@@ -349,3 +349,138 @@ def test_customer_bom_lr_symmetry_qty(tmp_path):
     # Inferred to total vehicle set quantity
     assert rows[0].qty == 4
     assert rows[1].qty == 2
+
+
+def test_multi_table_vertical_stacking(tmp_path):
+    """Sheets containing stacked tables with different column structures (like Aydın format)."""
+    path = tmp_path / "multi_table.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "BOM"
+
+    # Table 1: Standard layout (Part, Value, Qty, Part Number)
+    sheet.append(["Part", "Value", "Qty", "Part Number"])
+    sheet.append(["C1, C2", "100nF 50V", 2, "CAP-001"])
+    sheet.append(["R1", "10k 1%", 1, "RES-001"])
+
+    # Blank rows between tables
+    sheet.append([None, None, None, None])
+    sheet.append([None, None, None, None])
+
+    # Table 2: YMML layout (Item, Status, Qty, Stock No, MPN, Ref, Value, Footprint, Mounting)
+    sheet.append(["Parça", "Durum", "Miktar", "Stok No", "Üretici Kodu", "Referans", "Değer", "Kılıf", "Montaj Tipi"])
+    sheet.append([1, "FULL", 1, "STK-100", "MBR0540T1G", "D1", "Schottky Diode", "SOD-123", "SMD"])
+    sheet.append([2, "FULL", 2, "STK-200", "SD12CT1G", "D2, D3", "TVS Diode", "SOD-323", "SMD"])
+
+    workbook.save(path)
+    workbook.close()
+
+    rows = read_customer_bom(path)
+    assert len(rows) == 4
+    # From Table 1
+    assert rows[0].part == "C1, C2"
+    assert rows[0].part_number == "CAP-001"
+    assert rows[0].qty == 2
+    # From Table 2 (dynamically re-resolved column indices)
+    assert rows[2].part == "D1"
+    assert rows[2].part_number == "MBR0540T1G"
+    assert rows[2].qty == 1
+    assert rows[2].mounting == "SMD"
+    assert rows[3].part == "D2, D3"
+    assert rows[3].part_number == "SD12CT1G"
+    assert rows[3].qty == 2
+
+
+def test_multi_section_repeated_headers(tmp_path):
+    """Sheets with repeated BOM headers per assembly section (like FEKA format)."""
+    path = tmp_path / "multi_section.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Sections"
+
+    # Section 1
+    sheet.append(["--- ST1 MODULE ---"])
+    sheet.append(["FEKA NO", "Part Number", "Description", "Designator", "QTY"])
+    sheet.append(["FK-001", "LM2903BYDT", "Dual Comparator", "ST1L_U1, ST1R_U1", 2])
+
+    # Section 2
+    sheet.append(["--- ST2 MODULE ---"])
+    sheet.append(["FEKA NO", "Part Number", "Description", "Designator", "QTY"])
+    sheet.append(["FK-002", "LA G6SP.02", "Yellow LED", "ST2L_LED1, ST2R_LED1", 2])
+
+    workbook.save(path)
+    workbook.close()
+
+    rows = read_customer_bom(path)
+    assert len(rows) == 2
+    assert rows[0].part == "ST1L_U1, ST1R_U1"
+    assert rows[0].part_number == "LM2903BYDT"
+    assert rows[1].part == "ST2L_LED1, ST2R_LED1"
+    assert rows[1].part_number == "LA G6SP.02"
+
+
+def test_cad_export_with_dummy_placeholders(tmp_path):
+    """Altium/CAD exports with single-letter placeholder codes ('c', 'C', '-') in manufacturer column."""
+    path = tmp_path / "cad_export.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+
+    sheet.append(["Item", "Part", "Quantity", "Part Number", "Description", "Üretici Kodu"])
+    # Row 1 has both customer internal stock code and genuine manufacturer PN
+    sheet.append([1, "C308", 1, "CR-HM-001-0001", "Capacitor 100uF", "865080553014"])
+    # Row 2 has customer stock code, but dummy 'c' in manufacturer column
+    sheet.append([2, "C100, C101", 2, "CR-HM-001-0006", "Capacitor 100nF", "c"])
+    # Row 3 has no customer code and dummy '-' in manufacturer column, but valid ref and value
+    sheet.append([3, "R10, R11", 2, "-", "Resistor 1k 0603", "R"])
+
+    workbook.save(path)
+    workbook.close()
+
+    rows = read_customer_bom(path)
+    assert len(rows) == 3
+    # Row 1 keeps MPN
+    assert rows[0].part_number in {"865080553014", "CR-HM-001-0001"}
+    assert {c.value for c in rows[0].product_code_candidates} == {"865080553014", "CR-HM-001-0001"}
+    # Row 2 filters out dummy 'c' and keeps genuine customer code
+    assert rows[1].part_number == "CR-HM-001-0006"
+    assert "c" not in [c.value for c in rows[1].product_code_candidates]
+    # Row 3 filters out '-' and 'R' placeholders
+    assert rows[2].part_number == ""
+    assert "R" not in [c.value for c in rows[2].product_code_candidates]
+    assert "-" not in [c.value for c in rows[2].product_code_candidates]
+
+
+def test_terminal_non_bom_sections_pruned(tmp_path):
+    """Terminal manufacturing process and revision history tables (DKF-RD-017 / EGLO format)."""
+    path = tmp_path / "engineering_doc.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+
+    # BOM Header & Data
+    sheet.append(["Item", "Part", "Description", "Quantity", "Part Number"])
+    sheet.append([1, "C1", "Capacitor 100nF", 1, "AC0603KRX7R9BB104"])
+    sheet.append([2, "R1", "Resistor 220R", 1, "0603(S/W)AJ0221T5E"])
+
+    # Terminal Manufacturing Process Table
+    sheet.append([None, None, None, None, None])
+    sheet.append(["Üretim Prosesleri", None, None, None, None])
+    sheet.append(["Proses Adı", "Açıklama", "Operatör", "Ekipman", None])
+    sheet.append(["SMD Dizgi", "SMD Dizgi Yapılacak", "Ahmet Y.", "Yamaha YSM20", None])
+    sheet.append(["Selektif Lehim", "Selektif Lehim Yapılacak", "Mehmet K.", "Ersa Versaflow", None])
+
+    # Terminal Revision History Table
+    sheet.append([None, None, None, None, None])
+    sheet.append(["Revizyon Tarihçesi", None, None, None, None])
+    sheet.append(["Tarih", "Revizyon", "Açıklama", "Revize Eden", "Onaylayan"])
+    sheet.append(["2024-05-10", "01", "İlk yayın", "Ali ÇOLAK", "Hüseyin BİÇEN"])
+
+    workbook.save(path)
+    workbook.close()
+
+    rows = read_customer_bom(path)
+    # Exactly 2 component rows, 0 ghost rows from processes or revision history
+    assert len(rows) == 2
+    assert rows[0].part == "C1"
+    assert rows[0].part_number == "AC0603KRX7R9BB104"
+    assert rows[1].part == "R1"
+    assert rows[1].part_number == "0603(S/W)AJ0221T5E"
