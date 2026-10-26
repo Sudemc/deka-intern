@@ -862,11 +862,29 @@ def test_comparison_satellite_board_lr_expansion(tmp_path):
     assert str(res.rows[0]["ERP Qty"]) == "4"
 
 
+def test_comparison_active_and_nm_reconciliation(tmp_path):
+    import pandas as pd
+    from bom_enricher.comparison import compare_workbooks
 
+    cust_path = tmp_path / "cust_nm.xlsx"
+    pd.DataFrame({
+        "Designator": ["R1, R2", "R3, R4"],
+        "Part Number": ["AC0603FR-0710KL", "AC0603FR-0710KL"],
+        "Quantity": [2, 2],
+        "Description": ["RES 10k 0603", "RES 10k 0603"],
+        "Process": ["SMD", "NM"],
+    }).to_excel(cust_path, index=False)
 
+    erp_path = tmp_path / "erp_nm.xlsx"
+    pd.DataFrame({
+        "Part Number": ["4E12000022(AC0603FR-0710KL)"],
+        "Description": ["RES 10k 0603"],
+        "Reference": ["R1, R2, R3, R4"],
+        "Qty": [4],
+    }).to_excel(erp_path, index=False)
 
-
-
-
-
-
+    res = compare_workbooks(cust_path, erp_path)
+    durums = [r["Durum"] for r in res.rows]
+    assert "UYGUN" in durums
+    assert "UYARI" in durums
+    assert "HATA" not in durums

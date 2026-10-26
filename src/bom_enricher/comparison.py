@@ -154,8 +154,9 @@ def _split_multi_code(raw: str) -> list[str]:
     If the cell holds only a single code (e.g. 'BAV99 MDD', 'TE 2324 DPN'),
     it returns the full code (plus any parentheses variants).
     """
-    cleaned_raw = clean_part_number(raw)
-    cleaned = re.sub(r"[,;|\n\r]+", " ", cleaned_raw or raw)
+    cleaned_raw = re.sub(r"(?i)\s+BIN(?:\s*TABLE\d*|\s*:\s*[A-Za-z0-9_\-]+|\s+[A-Za-z0-9_\-]+)?.*$", "", raw)
+    cleaned_raw = re.sub(r"\s+-\s+(?:Right-Angle|Vertical|Horizontal|Dik|Yatık|SMD|TH).*$", "", cleaned_raw, flags=re.IGNORECASE)
+    cleaned = re.sub(r"[,;|\n\r]+", " ", cleaned_raw)
     cleaned = re.sub(r"\s+/\s+", " ", cleaned)
     tokens = cleaned.split()
 
@@ -176,7 +177,7 @@ def _split_multi_code(raw: str) -> list[str]:
     if len(results) >= 2:
         return list(dict.fromkeys(results))
 
-    return expand_parentheses_variants(raw.strip())
+    return expand_parentheses_variants(cleaned_raw.strip())
 
 
 def _normalize_ref_token(token: str) -> str:
@@ -739,6 +740,59 @@ def compare_workbooks(
                                         break
                 except (ValueError, TypeError):
                     pass
+
+            # Check if this ERP record aggregates an active customer row and an NM customer row
+            nm_candidate_keys = [f"{ck}__NM"] + [
+                f"{_normalize_code(ac)}__NM" for ac in c_matched.all_codes if ac
+            ]
+            matched_nm_key = next((k for k in dict.fromkeys(nm_candidate_keys) if k in unmatched_cust), None)
+            if matched_nm_key and c_matched.reference and e_matched.reference:
+                c_nm = unmatched_cust[matched_nm_key]
+                crefs = _split_refs(c_matched.reference)
+                nm_refs = _split_refs(c_nm.reference)
+                erefs = _split_refs(e_matched.reference)
+                if crefs and nm_refs and crefs.issubset(erefs) and nm_refs.issubset(erefs) and not (crefs & nm_refs):
+                    unmatched_cust.pop(matched_nm_key)
+                    e_active = PartRecord(
+                        part_number=e_matched.part_number,
+                        description=e_matched.description,
+                        mounting=e_matched.mounting,
+                        reference=", ".join(sorted(crefs)),
+                        material_type=e_matched.material_type,
+                        qty=str(len(crefs)),
+                        manufacturer=e_matched.manufacturer,
+                        package=e_matched.package,
+                        duplicate=e_matched.duplicate,
+                        source_file=e_matched.source_file,
+                        source_sheet=e_matched.source_sheet,
+                        source_breakdown=e_matched.source_breakdown,
+                        unmapped_prefix=e_matched.unmapped_prefix,
+                        all_codes=e_matched.all_codes,
+                        code_labels=e_matched.code_labels,
+                        status=e_matched.status,
+                    )
+                    remaining_erefs = erefs - crefs
+                    e_nm = PartRecord(
+                        part_number=e_matched.part_number,
+                        description=e_matched.description,
+                        mounting=e_matched.mounting,
+                        reference=", ".join(sorted(remaining_erefs)),
+                        material_type=e_matched.material_type,
+                        qty=str(len(remaining_erefs)),
+                        manufacturer=e_matched.manufacturer,
+                        package=e_matched.package,
+                        duplicate=e_matched.duplicate,
+                        source_file=e_matched.source_file,
+                        source_sheet=e_matched.source_sheet,
+                        source_breakdown=e_matched.source_breakdown,
+                        unmapped_prefix=e_matched.unmapped_prefix,
+                        all_codes=e_matched.all_codes,
+                        code_labels=e_matched.code_labels,
+                        status=e_matched.status,
+                    )
+                    matched_pairs.append((c_matched, e_active))
+                    matched_pairs.append((c_nm, e_nm))
+                    continue
 
             matched_pairs.append((c_matched, e_matched))
             continue
