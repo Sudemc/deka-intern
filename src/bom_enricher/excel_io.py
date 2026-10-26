@@ -111,8 +111,19 @@ _HEADER_ALIASES = {
         "status", "durum", "full", "dnp", "np", "dnp np", "populate", "populated", "population",
         "fitted", "placement", "variant", "dizim", "dizim durumu",
         "montaj durumu", "dizgi durumu", "montajdurumu", "dizgidurumu",
+        "process", "proses", "islem", "islem tipi", "process type",
     },
 }
+_DATE_PATTERN = re.compile(r"^\d{1,4}[./\-]\d{1,2}[./\-]\d{1,4}$")
+
+
+def _is_date_like(val: Any) -> bool:
+    if val is None:
+        return False
+    s = str(val).strip()
+    return bool(_DATE_PATTERN.match(s))
+
+
 _CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-]{3,63}$")
 _EXPLICIT_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-]{1,63}$")
 _REFERENCE_PATTERN = re.compile(
@@ -153,7 +164,7 @@ def _header_field(value: Any) -> str | None:
 
 def _code_like(value: Any) -> bool:
     candidate = _string_value(value).strip()
-    if len(candidate) < 5 or not _CODE_PATTERN.fullmatch(candidate):
+    if len(candidate) < 5 or not _CODE_PATTERN.fullmatch(candidate) or _is_date_like(candidate):
         return False
     if not any(character.isalpha() for character in candidate) or not any(
         character.isdigit() for character in candidate
@@ -170,6 +181,7 @@ def clean_part_number(s: str) -> str:
     cleaned = re.sub(r"\s*\([^)/]*\)", "", s)
     cleaned = re.sub(r"\s+-\s+(?:Right-Angle|Vertical|Horizontal|Dik|Yatık|SMD|TH).*$", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+\d+-\d+\s+color\)?.*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?i)\s+BIN(?:\s*TABLE\d*|\s*:\s*[A-Za-z0-9_\-]+|\s+[A-Za-z0-9_\-]+)?.*$", "", cleaned)
     return cleaned.strip()
 
 
@@ -183,10 +195,10 @@ def _explicit_code_like(value: Any) -> bool:
     raw_candidate = _string_value(value).strip()
     if not raw_candidate or len(raw_candidate) > 128:
         return False
-    if _REFERENCE_PATTERN.fullmatch(raw_candidate):
+    if _REFERENCE_PATTERN.fullmatch(raw_candidate) or _is_date_like(raw_candidate):
         return False
     candidate = clean_part_number(raw_candidate)
-    if not candidate or _NOTE_PREFIX_PATTERN.search(candidate):
+    if not candidate or _NOTE_PREFIX_PATTERN.search(candidate) or _is_date_like(candidate):
         return False
     tokens = candidate.split()
     if len(tokens) > 4:
@@ -233,6 +245,54 @@ def split_references(s: str) -> list[str]:
             if r and r not in refs:
                 refs.append(r)
     return refs
+
+
+def pair_lr_references(refs: list[str]) -> tuple[bool, list[tuple[str, str]]]:
+    """Detect whether a designator list contains symmetrical Left and Right circuits.
+
+    In automotive lighting BOMs, customers frequently specify 'Quantity' as the
+    per-lamp / per-side count (e.g. 2 pcs), but list designators for both Left and Right
+    (e.g. ST1L_B1, ST1L_B2, ST1R_B1, ST1R_B2 -> 4 pcs).
+
+    Supports:
+    - Prefix tags: 'ST1L_B1' / 'ST1R_B1', 'T1L_C1' / 'T1R_C1', 'L_R1' / 'R_R1'
+    - Suffix tags: 'R1_L' / 'R1_R', 'C2-L' / 'C2-R'
+    - Infix tags: 'ST-L-R1' / 'ST-R-R1', 'FOG_L_D1' / 'FOG_R_D1'
+    - LH/RH variations: 'LH_R1' / 'RH_R1', 'ST_LH_R1' / 'ST_RH_R1'
+    """
+    if len(refs) < 2 or len(refs) % 2 != 0:
+        return False, []
+
+    ref_upper_map = {x.upper(): x for x in refs}
+    l_to_r: list[tuple[str, str]] = []
+    matched_r: set[str] = set()
+
+    for r in refs:
+        m_lh = re.match(r"^([A-Za-z0-9]*?)(?:_)?LH(?:_)?([A-Za-z0-9_]*)$", r, re.IGNORECASE)
+        m_pre = re.match(r"^([A-Za-z0-9]*?)(L)_([A-Za-z0-9]+)$", r, re.IGNORECASE)
+        m_suf = re.match(r"^([A-Za-z0-9]+)([_\-])(L)$", r, re.IGNORECASE)
+        m_inf = re.match(r"^([A-Za-z0-9]+)([_\-])(L)([_\-])([A-Za-z0-9]+)$", r, re.IGNORECASE)
+
+        target = None
+        if m_lh:
+            p1, p2 = m_lh.groups()
+            delim1 = "_" if "_" in r[:len(p1)+1] else ""
+            delim2 = "_" if "_" in r[len(p1):] else ""
+            target = f"{p1}{delim1}RH{delim2}{p2}"
+        elif m_pre:
+            target = f"{m_pre.group(1)}R_{m_pre.group(3)}"
+        elif m_suf:
+            target = f"{m_suf.group(1)}{m_suf.group(2)}R"
+        elif m_inf:
+            target = f"{m_inf.group(1)}{m_inf.group(2)}R{m_inf.group(4)}{m_inf.group(5)}"
+
+        if target and target.upper() in ref_upper_map and target.upper() not in matched_r:
+            actual_r = ref_upper_map[target.upper()]
+            l_to_r.append((r, actual_r))
+            matched_r.add(target.upper())
+
+    is_fully_paired = (len(l_to_r) * 2 == len(refs))
+    return is_fully_paired, l_to_r
 
 
 def _auto_layout(
@@ -373,7 +433,18 @@ def _auto_layout(
         if all_package_columns:
             resolved_fields["_package_columns"] = all_package_columns
 
-        ambiguous_code_columns = best_fields.get("part_number", [])
+        ambiguous_code_columns = list(best_fields.get("part_number", []))
+        if len(ambiguous_code_columns) > 1:
+            def _pn_priority(col_idx: int) -> int:
+                hdr = _normalize_header(sample_rows[best_row][col_idx]) if col_idx < len(sample_rows[best_row]) else ""
+                if any(kw in hdr for kw in ("part number", "part no", "mpn", "mfr pn", "uretici", "manufacturer")):
+                    return 10
+                if any(kw in hdr for kw in ("feka", "internal", "stok", "stock", "catalog", "siparis", "order")):
+                    return 5
+                return 1
+            best_pn_col = max(ambiguous_code_columns, key=_pn_priority)
+            resolved_fields["part_number"] = best_pn_col
+
         code_columns = list(ambiguous_code_columns)
         excluded = {c for c in resolved_fields.values() if isinstance(c, int)} | set(code_columns) | set(all_value_columns) | set(all_package_columns)
         nonempty_counts: dict[int, int] = {}
@@ -489,9 +560,21 @@ def read_customer_bom(
             dtype=object,
         )
     rows: list[CustomerBomRow] = []
+    _METADATA_ROW_KEYWORDS = (
+        "project name", "creation date", "revision number", "design responsible",
+        "last modified", "proje adi", "revizyon no", "bin table", "revision description",
+        "see pcb spec", "pcb spec. document", "pcb spec document",
+    )
     for dataframe_index, values in enumerate(dataframe.itertuples(index=False, name=None)):
+        row_str_lower = " ".join(str(v).lower() for v in values if v is not None)
+        if any(kw in row_str_lower for kw in _METADATA_ROW_KEYWORDS):
+            if not any(_is_ref_like(v) for v in values if v is not None):
+                continue
+
         get_value = lambda field: values[columns[field]] if field in columns and isinstance(columns[field], int) else None
         part_number = _string_value(get_value("part_number")).strip()
+        if _is_date_like(part_number):
+            part_number = ""
         part_number_column = columns.get("part_number", -1) if isinstance(columns.get("part_number"), int) else -1
         explicit_code_header = (
             mapping is not None
@@ -510,7 +593,7 @@ def read_customer_bom(
             if column_index >= len(values):
                 continue
             candidate_value = _string_value(values[column_index]).strip()
-            if not candidate_value:
+            if not candidate_value or _is_date_like(candidate_value):
                 continue
             source_header = (
                 raw_headers[column_index] if column_index < len(raw_headers) else None
@@ -574,6 +657,20 @@ def read_customer_bom(
             refs = split_references(part_str)
             if refs:
                 qty = len(refs)
+        elif part_str and qty is not None:
+            # Check for automotive L/R symmetrical pairing
+            # In automotive lighting BOMs, customers frequently specify 'Quantity' as the
+            # per-lamp / per-side count (e.g. 2 pcs), but list designators for both Left and Right
+            # (e.g. ST1L_B1, ST1L_B2, ST1R_B1, ST1R_B2 -> 4 pcs).
+            try:
+                raw_qty_num = int(float(str(qty).strip()))
+                refs = split_references(part_str)
+                if refs and len(refs) == 2 * raw_qty_num:
+                    is_paired, _ = pair_lr_references(refs)
+                    if is_paired:
+                        qty = len(refs)
+            except (ValueError, TypeError):
+                pass
 
         if not any(
             item is not None and str(item).strip()
@@ -599,7 +696,11 @@ def read_customer_bom(
     return rows
 
 
-_IGNORED_SHEET_KEYWORDS = {"bin", "revision", "revizyon", "history", "cover", "kapak", "tarihce", "doc"}
+_IGNORED_SHEET_KEYWORDS = {
+    "bin", "revision", "revizyon", "history", "cover", "kapak", "tarihce", "tarihçe",
+    "doc", "dokuman", "özeti", "ozeti", "summary", "kickoff", "spec", "specification",
+    "gerber", "readme", "data", "lookup", "dropdown", "secim", "seçim", "parametre",
+}
 
 
 def find_customer_bom_sheets(path: Path) -> list[str]:
@@ -631,7 +732,20 @@ def find_customer_bom_sheets(path: Path) -> list[str]:
             if sheet_score >= 3:
                 bom_sheets.append(worksheet.title)
         if not bom_sheets:
-            return [_select_customer_sheet(path)]
+            valid_sheets = [
+                ws for ws in workbook.worksheets
+                if not any(kw in ws.title.casefold() for kw in _IGNORED_SHEET_KEYWORDS)
+            ]
+            if not valid_sheets:
+                return []
+            cand = _select_customer_sheet(path)
+            cand_rows = list(workbook[cand].iter_rows(min_row=1, max_row=20, values_only=True))
+            has_refs = any(_is_ref_like(c) for r in cand_rows for c in r if c is not None)
+            has_codes = any(_code_like(c) or _explicit_code_like(c) for r in cand_rows for c in r if c is not None)
+            has_headers = any(_header_field(c) is not None for r in cand_rows for c in r if c is not None)
+            if has_refs or has_codes or has_headers:
+                return [cand]
+            return []
         return bom_sheets
     finally:
         workbook.close()
