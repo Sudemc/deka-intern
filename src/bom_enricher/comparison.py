@@ -154,7 +154,8 @@ def _split_multi_code(raw: str) -> list[str]:
     If the cell holds only a single code (e.g. 'BAV99 MDD', 'TE 2324 DPN'),
     it returns the full code (plus any parentheses variants).
     """
-    cleaned = re.sub(r"[,;|\n\r]+", " ", raw)
+    cleaned_raw = clean_part_number(raw)
+    cleaned = re.sub(r"[,;|\n\r]+", " ", cleaned_raw or raw)
     cleaned = re.sub(r"\s+/\s+", " ", cleaned)
     tokens = cleaned.split()
 
@@ -641,7 +642,7 @@ def compare_workbooks(
             })
         else:
             erp.append(PartRecord(
-                part_number=rec.part_number,
+                part_number=cleaned_first or rec.part_number,
                 description=rec.description,
                 mounting=rec.mounting,
                 reference=norm_ref,

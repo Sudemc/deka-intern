@@ -181,6 +181,7 @@ def clean_part_number(s: str) -> str:
     cleaned = re.sub(r"\s*\([^)/]*\)", "", s)
     cleaned = re.sub(r"\s+-\s+(?:Right-Angle|Vertical|Horizontal|Dik|Yatık|SMD|TH).*$", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+\d+-\d+\s+color\)?.*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?i)\s+BIN(?:\s*TABLE\d*|\s*:\s*[A-Za-z0-9_\-]+|\s+[A-Za-z0-9_\-]+)?.*$", "", cleaned)
     return cleaned.strip()
 
 
