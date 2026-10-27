@@ -1039,6 +1039,23 @@ def compare_workbooks(
                     except ValueError:
                         pass
 
+            # 2b. ERP Qty vs Referans Adedi
+            if erp_record.reference and erp_qty:
+                e_ref_tokens = [r.strip() for r in re.split(r"[,;|\s/]+", erp_record.reference) if r.strip()]
+                valid_e_refs = [
+                    r for r in e_ref_tokens
+                    if re.match(r"^(?:[A-Za-z0-9]+_)?[A-Za-z][A-Za-z0-9_]*$", r)
+                ]
+                if valid_e_refs:
+                    try:
+                        e_qty_val = float(erp_qty)
+                        if e_qty_val != len(valid_e_refs) and e_qty_val != len(e_ref_tokens):
+                            issues.append(
+                                f"ERP Qty ile Referans sayısı uyumsuz (ERP Qty: {erp_qty}, ERP Ref: {len(valid_e_refs)} adet)"
+                            )
+                    except ValueError:
+                        pass
+
             # 3. Dizgi/Referans Farkı (Müşteri vs ERP)
             c_refs = _split_refs(customer_record.reference)
             e_refs = _split_refs(erp_record.reference)

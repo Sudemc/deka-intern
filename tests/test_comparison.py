@@ -963,3 +963,59 @@ def test_issue_explanations_are_detailed_and_clean_for_uygun(tmp_path):
     assert c10_row[durum_col] == "HATA"
     assert "Kritik Değer" in c10_row[hata_col] or "Kapasite" in c10_row[hata_col]
 
+
+def test_delta_v_orta_altium_bom_comparison(tmp_path):
+    """Verify Delta-V Orta Altium BOM with # codes, quantity discrepancies, and bare PCB."""
+    import pandas as pd
+    from bom_enricher.comparison import compare_workbooks
+
+    cust_rows = [
+        ["", "", "", "", "", "", ""],
+        ["", "Bill of Materials (BOM)", "", "", "", "", ""],
+        ["", "PCB Design", "DV_GDM_ORTA_V2.PrjPcb", "", "", "", ""],
+        ["", "Project", "DV_GDM_ORTA_V2.PrjPcb", "", "Variant", "DV_GDM_ORTA_V2", ""],
+        ["", "", "", "", "", "", ""],
+        ["#", "Manufacturer Part Number", "Description", "", "Quantity", "Designator", "Mounting Type"],
+        [1, "LT3092ITS8#TRPBF", "Current Source Regulator 200mA TSOT-23-8", "", 2, "U2, U5", "Surface Mount"],
+        [2, "LTST-C230KRKT", "Red 631nm LED Indication 1206", "", 2, "L1, L2", "Surface Mount"],
+        [3, "RC0603FR-072K2L", "2.2 kOhms Chip Resistor 0603", "", 3, "R4, R25, R48, R13, R17, R36, R39", "Surface Mount"],
+    ]
+    cust_df = pd.DataFrame(cust_rows)
+    cust_path = tmp_path / "cust_orta.xlsx"
+    cust_df.to_excel(cust_path, index=False, header=False)
+
+    erp_df = pd.DataFrame({
+        "No": [1, 2, 3, 4],
+        "Part": ["U2, U5", "L1, L2", "R4, R25, R48, R13, R17, R36, R39", "PCB"],
+        "Qty": [2.0, 1.0, 7.0, 1.0],
+        "Value": ["TSOT-23-8 Regulator", "Red 1206 LED", "2k2 SMD", "FR4 PCB"],
+        "Part Number": ["LT3092ITS8#TRPBF", "LTST-C230KRKT", "RC0603FR-072K2L", "DV_GDM_ORTA_V2_PCB"],
+        "Manufacturer": ["Analog Devices", "Liteon", "Yageo", "YOK"],
+    })
+    erp_path = tmp_path / "erp_orta.xlsx"
+    erp_df.to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    ref_col = next(k for k in res.rows[0] if "Referans" in k and "ERP" not in k)
+    find_row = lambda ref: next(r for r in res.rows if ref in r[ref_col] or ref in r["ERP Referans"])
+
+    # 1. Component with # in MPN should match cleanly as UYGUN
+    u2_row = find_row("U2")
+    assert u2_row["Durum"] == "UYGUN"
+    assert u2_row["Hata/Uyarı Durumu"] == ""
+
+    # 2. LED has Qty 2 vs 1 (ERP has internal qty-ref mismatch: qty 1, 2 refs)
+    l1_row = find_row("L1")
+    assert l1_row["Durum"] == "HATA"
+    assert "Miktar Uyuşmazlığı" in l1_row["Hata/Uyarı Durumu"]
+
+    # 3. Resistor has customer internal qty-ref mismatch (qty 3, 7 refs)
+    r4_row = find_row("R4")
+    assert r4_row["Durum"] == "HATA"
+    assert "Müşteri Qty ile Referans sayısı uyumsuz" in r4_row["Hata/Uyarı Durumu"]
+
+    # 4. Bare PCB should be UYARI
+    pcb_row = find_row("PCB")
+    assert pcb_row["Durum"] == "UYARI"
+    assert "Ham PCB" in pcb_row["Hata/Uyarı Durumu"]
+
