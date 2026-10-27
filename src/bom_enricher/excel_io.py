@@ -288,7 +288,13 @@ def split_references(s: str) -> list[str]:
     """Split reference designator string (supporting commas, spaces, semicolons, and ranges)."""
     if not s:
         return []
-    raw_tokens = [t.strip() for t in re.split(r"[,;|\s/]+", s) if t.strip()]
+    cleaned = re.sub(r"\([^\)]*\)", " ", s)
+    tokens_cand = [t.strip(" -_:,;()[]") for t in re.split(r"[,;|\s/]+", cleaned) if t.strip()]
+    if any(_is_ref_like(t) for t in tokens_cand):
+        target_s = cleaned
+    else:
+        target_s = s
+    raw_tokens = [t.strip() for t in re.split(r"[,;|\s/]+", target_s) if t.strip()]
     refs: list[str] = []
     for tok in raw_tokens:
         tok_clean = tok.strip(" -_:,;()[]")

@@ -28,12 +28,15 @@ _CAP_MULTIPLIERS = {
 _RES_MULTIPLIERS = {
     "mr": Decimal("1e-3"),
     "mohm": Decimal("1e-3"),
+    "mohms": Decimal("1e-3"),
     "mω": Decimal("1e-3"),
     "r": Decimal("1"),
     "ohm": Decimal("1"),
+    "ohms": Decimal("1"),
     "ω": Decimal("1"),
     "k": Decimal("1e3"),
     "kohm": Decimal("1e3"),
+    "kohms": Decimal("1e3"),
     "kω": Decimal("1e3"),
     "m": Decimal("1e6"),
     "meg": Decimal("1e6"),
@@ -143,7 +146,7 @@ def _extract_resistance(text: str) -> Decimal | None:
 
     # Pattern 2: number + unit (k, kohm, ohm, r, etc.)
     match = re.search(
-        r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(kohm|kω|mohm|mω|ohm|ω|mr|k|r)(?![a-z0-9])",
+        r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(kohms?|kω|mohms?|mω|ohms?|ω|mr|k|r)(?![a-z0-9])",
         text,
     )
     if match:
