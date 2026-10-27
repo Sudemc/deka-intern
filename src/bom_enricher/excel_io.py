@@ -176,24 +176,59 @@ def _header_field(value: Any) -> str | None:
     return None
 
 
-def _is_ref_like(val: Any) -> bool:
-    s = _string_value(val).strip()
-    if not s or _header_field(s) is not None:
-        return False
-    first = re.split(r"[,;\s]+", s)[0].strip("\"' ")
-    return bool(re.match(
-        r"^(?:[A-Za-z0-9]+[_\-])?(?:R|C|L|D|Q|U|IC|J|CN|P|TP|SW|F|FB|T|LED|BT|Y|X|K|VR|ZD|TR|TH|MOV|TS|BRK|CON|DST|FL|B|M|O|ACS)\d+[A-Za-z]?(?:[_\-].*)?$",
-        first,
-        re.IGNORECASE,
-    ))
-
-
-
 _PLACEHOLDER_PNS = {
     "C", "R", "L", "D", "Q", "U", "J", "FB", "T", "Y", "X", "P", "F", "K", "M", "CN", "IC",
     "DUMMY", "NONE", "EMPTY", "TBD", "NA", "N/A", "DNP", "NP", "NC", "NO POPULATE",
     "-", "--", "---", ".", "/", "NAN", "NULL"
 }
+
+DESIGNATOR_REGEX = re.compile(
+    r"^(?:[A-Za-z0-9_]{1,10}[_.\-])?[A-Za-z]{1,5}\d{1,4}[A-Za-z]?(?:[_\-][A-Za-z0-9]+)?$"
+)
+
+_DESIGNATOR_NOISE_WORDS = {
+    "ALTERNATIF", "EKLEME", "EKLE", "EKLETI", "EKLENECEK", "EKLECEK", "EKELENCEK",
+    "EKLEMEK", "DIK", "YATIK", "MONTE", "EDILECEK", "EDILDI", "MUSTERIDEN",
+    "MUSTERI", "GELECEK", "TAKILACAK", "VERILECEK", "BAGLANTI", "NOT", "NOTE",
+    "SEE", "LOOK", "BAK", "BAKINIZ", "REVIZYON", "REV", "DNP", "NC", "NA", "N/A",
+    "NONE", "EMPTY", "TBD", "RIGHT-ANGLE", "VERTICAL", "HORIZONTAL", "SMD", "TH",
+    "THT", "COLOR", "BIN", "TABLE", "OPTIK", "OPTIC", "LED", "LAMP",
+}
+
+
+def _is_noise_or_value(tok: str) -> bool:
+    """Check if token is a component value, package code, or natural language noise."""
+    t_clean = tok.strip(" -_:,;()[]").upper()
+    if not t_clean or t_clean == "PCB":
+        return False
+    if t_clean in _DESIGNATOR_NOISE_WORDS or t_clean in _PLACEHOLDER_PNS:
+        return True
+    if _ELECTRICAL_VALUE_PATTERN.match(t_clean):
+        return True
+    if re.fullmatch(r"^\d+(?:[.,]\d+)?[A-Z]+$", t_clean):
+        return True
+    if re.fullmatch(r"^(?:0[1-9]\d{2}|[1-9]\d{3}|[RCL]0[1-9]\d{2})$", t_clean):
+        return True
+    return False
+
+
+def _is_ref_like(val: Any) -> bool:
+    s = _string_value(val).strip()
+    if not s or _header_field(s) is not None:
+        return False
+    if s.upper() == "PCB":
+        return True
+    first = re.split(r"[,;\s]+", s)[0].strip(" \"' ")
+    if not first:
+        return False
+    if first.upper() == "PCB":
+        return True
+    first_clean = expand_ref_range(first)[0].strip(" -_:,;()[]")
+    if not first_clean:
+        return False
+    if _is_noise_or_value(first_clean):
+        return False
+    return bool(DESIGNATOR_REGEX.match(first_clean))
 
 
 def _code_like(value: Any) -> bool:
@@ -284,11 +319,78 @@ def expand_ref_range(token: str) -> list[str]:
     return [f"{prefix}{i}" for i in range(n1, n2 + 1)]
 
 
+def extract_embedded_part_numbers(s: str) -> list[str]:
+    """Extract embedded part numbers from parenthetical notes or auxiliary comments."""
+    if not s or not isinstance(s, str):
+        return []
+
+    candidates: list[str] = []
+
+    def _is_valid_mpn_token(token: str) -> bool:
+        t = token.strip(" \"',;:()[]")
+        if len(t) < 4 or t.upper() in _PLACEHOLDER_PNS or t.upper() in _DESIGNATOR_NOISE_WORDS:
+            return False
+        if not (any(c.isalpha() for c in t) and any(c.isdigit() for c in t)):
+            return False
+        if _is_noise_or_value(t):
+            return False
+        if re.fullmatch(r"^[A-Za-z]{1,2}\d{1,3}[A-Za-z]?$", t):
+            return False
+        return True
+
+    paren_contents = re.findall(r"\(([^)]+)\)|\[([^\]]+)\]", s)
+    for p_tuple in paren_contents:
+        content = p_tuple[0] if p_tuple[0] else p_tuple[1]
+        tokens = [t.strip(" \"',;:()[]") for t in re.split(r"[,;|\s/]+", content) if t.strip()]
+        for tok in tokens:
+            if _is_valid_mpn_token(tok) and tok not in candidates:
+                candidates.append(tok)
+
+    if candidates:
+        return candidates
+
+    kw_matches = re.findall(
+        r"(?i)(?:alt(?:ernatif)?|yerine|pn|mpn|muadil)[:\s]+([A-Za-z0-9._/+()\-*#]+)", s
+    )
+    for kw_val in kw_matches:
+        tokens = [t.strip(" \"',;:()[]") for t in re.split(r"[,;|\s/]+", kw_val) if t.strip()]
+        for tok in tokens:
+            if _is_valid_mpn_token(tok) and tok not in candidates:
+                candidates.append(tok)
+
+    return candidates
+
+
+def validate_reference_tokens(refs: list[str] | str) -> list[str]:
+    """Detect malformed reference designators (e.g. missing component class letter like '1')."""
+    if isinstance(refs, str):
+        refs = [t.strip() for t in re.split(r"[,;|\s/]+", refs) if t.strip()]
+    if not refs:
+        return []
+
+    warnings: list[str] = []
+    for tok in refs:
+        tok_clean = tok.strip(" -_:,;()[]")
+        if not tok_clean:
+            continue
+        if tok_clean.upper() == "PCB":
+            continue
+        if tok_clean.isdigit() or not any(c.isalpha() for c in tok_clean):
+            warnings.append(
+                f"Malformed reference designator '{tok_clean}': missing component class letter"
+            )
+        elif not DESIGNATOR_REGEX.match(tok_clean):
+            warnings.append(
+                f"Malformed reference designator '{tok_clean}': invalid designator format"
+            )
+    return warnings
+
+
 def split_references(s: str) -> list[str]:
     """Split reference designator string (supporting commas, spaces, semicolons, and ranges)."""
-    if not s:
+    if not s or not isinstance(s, str):
         return []
-    cleaned = re.sub(r"\([^\)]*\)", " ", s)
+    cleaned = re.sub(r"\([^\)]*\)|\[[^\]]*\]", " ", s)
     tokens_cand = [t.strip(" -_:,;()[]") for t in re.split(r"[,;|\s/]+", cleaned) if t.strip()]
     if any(_is_ref_like(t) for t in tokens_cand):
         target_s = cleaned
@@ -305,10 +407,9 @@ def split_references(s: str) -> list[str]:
             r_clean = r.strip(" -_:,;()[]")
             if not r_clean or r_clean in refs:
                 continue
-            # Keep PCB or valid reference tokens with digits
-            if r_clean.upper() == "PCB" or _is_ref_like(r_clean):
+            if r_clean.upper() == "PCB":
                 refs.append(r_clean)
-            elif any(c.isdigit() for c in r_clean) and len(r_clean) <= 20:
+            elif not _is_noise_or_value(r_clean) and DESIGNATOR_REGEX.match(r_clean):
                 refs.append(r_clean)
     return refs
 

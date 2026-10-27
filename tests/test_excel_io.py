@@ -508,3 +508,39 @@ def test_delta_v_and_altium_patterns():
     assert _explicit_code_like("BT151S-500R,118") is True
     assert _explicit_code_like("TLP293(BL-TPL,E") is True
 
+
+
+def test_split_references_universal_grammar_and_notes():
+    from bom_enricher.excel_io import (
+        split_references,
+        extract_embedded_part_numbers,
+        validate_reference_tokens,
+    )
+
+    # 1. Embedded alternative MPN note stripped from references
+    assert split_references("U11 alternatif eklenecek (ADR4525ARZ)") == ["U11"]
+
+    # 2. Mounting note and package code stripped from references
+    assert split_references("R1, R2 - dik monte edilecek (0805)") == ["R1", "R2"]
+
+    # 3. Clean IEEE multi-inductor list preserved
+    assert split_references("L2, L3, L4, L5, L6, L8, L9") == [
+        "L2", "L3", "L4", "L5", "L6", "L8", "L9"
+    ]
+
+    # 4. Also reject MPNs and values even without parens
+    assert split_references("U11 alternatif eklenecek ADR4525ARZ") == ["U11"]
+    assert split_references("R1, R2 0805 100nF 25V") == ["R1", "R2"]
+
+    # 5. Embedded part number extraction
+    assert extract_embedded_part_numbers("U11 alternatif eklenecek (ADR4525ARZ)") == ["ADR4525ARZ"]
+    assert extract_embedded_part_numbers("R1, R2 - dik monte edilecek (0805)") == []
+
+    # 6. Malformed designator detection: '1' tagged as malformed (missing component class letter)
+    warnings = validate_reference_tokens(["1"])
+    assert len(warnings) == 1
+    assert "1" in warnings[0]
+    assert "missing component class letter" in warnings[0].lower()
+
+    # Valid tokens produce no warnings
+    assert validate_reference_tokens(["R1", "C2", "U11", "PCB"]) == []
