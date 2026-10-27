@@ -64,7 +64,8 @@ def _worksheet_name(path: Path, sheet_name: str | int) -> str:
 _HEADER_ALIASES = {
     "item": {
         "item", "item no", "line", "line no", "sira no", "kalem no", "no", "parca",
-        "sira", "kalem", "row", "row no", "entry",
+        "sira", "kalem", "row", "row no", "entry", "pos", "position no", "item #",
+        "seq", "sequence", "s no", "s.no", "#",
     },
     "part": {
         "part", "parts", "reference", "references", "ref", "refs", "refdes", "ref des",
@@ -72,25 +73,27 @@ _HEADER_ALIASES = {
         "component reference", "reference designator", "position", "positions",
         "location", "locations", "component locations",
         "referans", "referanslar", "pozisyon", "konum", "devre elemani",
-        "sematik referans", "eleman", "etiket", "sematik etiket",
+        "sematik referans", "eleman", "etiket", "sematik etiket", "dizgi yeri",
     },
     "qty": {
         "qty", "quantity", "quantity required", "required qty", "count", "amount",
         "pcs", "pieces", "adet", "miktar", "sayi", "total qty", "qty board",
-        "birim adet", "toplam adet", "parca adedi", "adedi", "sayisi",
+        "birim adet", "toplam adet", "parca adedi", "adedi", "sayisi", "miktari",
+        "adet/board", "qty/board", "adet / board", "qty / board",
     },
     "value": {
         "value", "val", "description", "desc", "spec", "specification", "details",
         "comment", "comments", "device", "part name", "device description",
         "aciklama", "deger", "tanim", "stok adi", "malzeme adi", "eleman degeri",
-        "teknik ozellik",
+        "teknik ozellik", "malzeme tanimi",
     },
     "part_number": {
         "part number", "part no", "part n", "p n", "pn", "mpn",
         "manufacturer part number", "manufacturer part no", "manufacturer pn",
         "mfr pn", "mfr p n", "mfr part number", "mfr part no", "supplier part number",
         "vendor part number", "order code", "ordering code", "siparis kodu",
-        "tedarikci kodu", "libref", "library reference",
+        "tedarikci kodu", "libref", "library reference", "part #", "part code",
+        "mfg part number", "mfg part no", "mfg pn", "mfg part", "bilesen kodu",
         "catalog number", "product id", "product code", "product number", "item code",
         "component code", "stock code", "stock number", "material number", "material no",
         "code", "kod", "urun kodu", "urun no", "parca kodu",
@@ -122,6 +125,23 @@ def _is_date_like(val: Any) -> bool:
         return False
     s = str(val).strip()
     return bool(_DATE_PATTERN.match(s))
+
+
+def _is_integer_sequence(values: list[Any]) -> bool:
+    """Check if non-empty values represent a sequential row/item numbering (e.g. 1, 2, 3... or 0, 1, 2...)."""
+    nums: list[int] = []
+    for v in values:
+        if v is None or str(v).strip() == "":
+            continue
+        s = str(v).strip()
+        try:
+            n = int(s)
+            nums.append(n)
+        except ValueError:
+            return False
+    if len(nums) < 2:
+        return False
+    return nums[0] in (0, 1) and all(nums[i + 1] == nums[i] + 1 for i in range(len(nums) - 1))
 
 
 _CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-]{3,63}$")
@@ -246,9 +266,9 @@ def _explicit_code_like(value: Any) -> bool:
 
 
 def expand_ref_range(token: str) -> list[str]:
-    """Expand designator ranges like 'R1-R5' or 'C10-C14' into ['R1', 'R2', 'R3', 'R4', 'R5']."""
+    """Expand designator ranges like 'R1-R5', 'R1..R5', or 'C10-C14' into ['R1', 'R2', 'R3', 'R4', 'R5']."""
     raw = token.strip()
-    match = re.match(r"^([A-Za-z]+)(\d+)\s*[-~]\s*([A-Za-z]+)?(\d+)$", raw)
+    match = re.match(r"^([A-Za-z0-9_]*[A-Za-z]+)(\d+)\s*(?:[-~]|\.{2,3})\s*([A-Za-z0-9_]*[A-Za-z]+)?(\d+)$", raw)
     if not match:
         return [raw]
     p1, n1_s, p2, n2_s = match.groups()
@@ -260,7 +280,7 @@ def expand_ref_range(token: str) -> list[str]:
         return [raw]
     if n1 > n2 or n2 - n1 > 500:
         return [raw]
-    prefix = p1.upper()
+    prefix = p1
     return [f"{prefix}{i}" for i in range(n1, n2 + 1)]
 
 
@@ -271,16 +291,18 @@ def split_references(s: str) -> list[str]:
     raw_tokens = [t.strip() for t in re.split(r"[,;|\s/]+", s) if t.strip()]
     refs: list[str] = []
     for tok in raw_tokens:
-        tok_clean = tok.strip(" -_:,;()")
+        tok_clean = tok.strip(" -_:,;()[]")
         if not tok_clean:
             continue
         expanded = expand_ref_range(tok_clean)
         for r in expanded:
-            r_clean = r.strip(" -_:,;()")
-            if r_clean and r_clean not in refs:
-                # Filter prose words without digits (e.g. 'müşteriden', 'gelecek', 'konsinye', 'dnp')
-                if not any(c.isdigit() for c in r_clean) and len(r_clean) > 2 and r_clean.upper() not in {"PCB"}:
-                    continue
+            r_clean = r.strip(" -_:,;()[]")
+            if not r_clean or r_clean in refs:
+                continue
+            # Keep PCB or valid reference tokens with digits
+            if r_clean.upper() == "PCB" or _is_ref_like(r_clean):
+                refs.append(r_clean)
+            elif any(c.isdigit() for c in r_clean) and len(r_clean) <= 20:
                 refs.append(r_clean)
     return refs
 
@@ -406,6 +428,19 @@ def _resolve_table_layout(
         else:
             found["part"] = [sorted_by_ref[0]]
 
+    # If 'part' contains 0 references but high MPN codes, reassign to 'part_number'
+    if "part" in found:
+        valid_part_cols = []
+        for col_idx in found["part"]:
+            col_vals = [r[col_idx] for r in sample_data_rows if col_idx < len(r) and r[col_idx] is not None]
+            ref_c = sum(1 for v in col_vals if _is_ref_like(v))
+            code_c = sum(1 for v in col_vals if _explicit_code_like(v) and not _is_ref_like(v))
+            if ref_c == 0 and code_c >= 2 and not found.get("part_number"):
+                found.setdefault("part_number", []).append(col_idx)
+            else:
+                valid_part_cols.append(col_idx)
+        found["part"] = valid_part_cols
+
     # If 'part' not found but 'item' exists, check if any 'item' column has circuit designators
     if "part" not in found and "item" in found:
         for col_idx in list(found["item"]):
@@ -434,6 +469,19 @@ def _resolve_table_layout(
         if candidate_part_scores:
             found["part"] = [max(candidate_part_scores, key=candidate_part_scores.get)]
 
+    # Filter out integer sequence columns from 'part_number'
+    if "part_number" in found:
+        filtered_pn_cols = []
+        for col_idx in found["part_number"]:
+            col_vals = [r[col_idx] for r in sample_data_rows if col_idx < len(r) and r[col_idx] is not None]
+            if _is_integer_sequence(col_vals):
+                found.setdefault("item", []).append(col_idx)
+            else:
+                filtered_pn_cols.append(col_idx)
+        found["part_number"] = filtered_pn_cols
+
+
+
     # Disambiguate 'qty'
     if "qty" in found and len(found["qty"]) > 1:
         qty_scores: dict[int, int] = {}
@@ -448,6 +496,31 @@ def _resolve_table_layout(
             is_total = 1 if ("toplam" in hdr or "total" in hdr) else 0
             return (is_total, qty_scores.get(c, 0))
         found["qty"] = [max(found["qty"], key=_qty_rank)]
+
+    # Fallback: If 'qty' not found, scan unmapped columns for numeric quantities
+    if not found.get("qty"):
+        candidate_qty_scores: dict[int, int] = {}
+        mapped_cols = {c for idxs in found.values() for c in idxs}
+        for col_idx in range(len(raw_headers)):
+            if col_idx in mapped_cols:
+                continue
+            col_vals = [r[col_idx] for r in sample_data_rows if col_idx < len(r) and r[col_idx] is not None]
+            if _is_integer_sequence(col_vals):
+                continue
+            score = 0
+            for v in col_vals:
+                s = str(v).strip().replace(",", ".")
+                try:
+                    num = float(s)
+                    if 0 < num <= 50000:
+                        score += 1
+                except ValueError:
+                    pass
+            if score >= 2:
+                candidate_qty_scores[col_idx] = score
+        if candidate_qty_scores:
+            best_qty = max(candidate_qty_scores, key=candidate_qty_scores.get)
+            found["qty"] = [best_qty]
 
     # Disambiguate 'mounting'
     if "mounting" in found and len(found["mounting"]) > 1:
@@ -488,7 +561,7 @@ def _resolve_table_layout(
     resolved_fields = {
         field: indexes[0]
         for field, indexes in found.items()
-        if len(indexes) == 1
+        if len(indexes) >= 1
     }
     if all_value_columns:
         resolved_fields["_value_columns"] = all_value_columns
@@ -508,6 +581,8 @@ def _resolve_table_layout(
             return 2
         best_pn_col = max(ambiguous_code_columns, key=_pn_priority)
         resolved_fields["part_number"] = best_pn_col
+    elif len(ambiguous_code_columns) == 1:
+        resolved_fields["part_number"] = ambiguous_code_columns[0]
 
     code_columns = list(ambiguous_code_columns)
     excluded = {c for c in resolved_fields.values() if isinstance(c, int)} | set(code_columns) | set(all_value_columns) | set(all_package_columns)

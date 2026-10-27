@@ -167,6 +167,13 @@ def _split_multi_code(raw: str) -> list[str]:
         if _is_product_code_token(inner):
             results.extend(expand_parentheses_variants(inner))
 
+    # Strip packaging suffix like ',118' or ',115'
+    m_pkg = re.match(r"^([A-Za-z0-9._/+()\-]+),\d{2,4}$", cleaned_raw)
+    if m_pkg:
+        base_pkg = m_pkg.group(1).strip()
+        if _is_product_code_token(base_pkg):
+            results.extend(expand_parentheses_variants(base_pkg))
+
     for t in tokens:
         m = re.match(r"^([A-Za-z0-9._/+()\-]+)\((.+)\)$", t)
         if m:
@@ -895,11 +902,14 @@ def compare_workbooks(
         e_pn = erp_record.part_number.strip() if erp_record else ""
 
         pn_matches = False
-        if customer_record and erp_record and e_pn:
-            e_norm = _normalize_code(e_pn)
-            if c_pn and _normalize_code(c_pn) == e_norm:
+        if customer_record and erp_record and (e_pn or c_pn):
+            c_all = {c_pn} | set(customer_record.all_codes)
+            e_all = {e_pn} | set(erp_record.all_codes)
+            c_norms = {_normalize_code(c) for c in c_all if c}
+            e_norms = {_normalize_code(c) for c in e_all if c}
+            if c_norms & e_norms:
                 pn_matches = True
-            elif any(_normalize_code(c) == e_norm for c in customer_record.all_codes):
+            elif c_pn and e_pn and _normalize_code(c_pn) == _normalize_code(e_pn):
                 pn_matches = True
 
         # Part Number gösterimi
@@ -1691,12 +1701,14 @@ def _header_field(header: str) -> str | None:
         "malzemekodu", "stokkodu", "ureticiparcakodu", "ureticikodu", "ordercode",
         "orderingcode", "sipariskodu", "tedarikcikodu", "libref", "libraryreference",
         "pn", "mfrpn", "mfrpartno", "mfrpartnumber", "partno", "itemcode", "catalogno",
+        "kod", "code", "bilesenkodu", "partcode", "parcakodu", "malzemeno", "urunno",
     }:
         return "part_number"
     if key in {
         "part", "parts", "reference", "references", "ref", "refs", "refdes",
         "designator", "designators", "parca", "referans", "referanslar", "devreelemani",
         "sematikreferans", "locations", "location", "position", "positions", "eleman", "etiket",
+        "dizgiyeri",
     }:
         return "reference"
     if key in {"malzemetipi", "materialtype", "componenttype", "parttype"}:
