@@ -55,9 +55,10 @@ def _classify_severity(issues: list[str]) -> str:
         "TH/SMD ile Description",
         "Kart Ön Eki",
         "LED ve Renkler",
+        "Kritik Değer",
     )
     for issue in issues:
-        if any(tag in issue for tag in ("Montaj Dışı", "ERP'ye Girilmez", "ERP Sarf Malzemesi", "Ham PCB Kalemi", "Dummy")):
+        if any(tag in issue for tag in ("Montaj Dışı", "ERP'ye Girilmez", "ERP Sarf Malzemesi", "Ham PCB Kalemi", "Dummy", "Kutu Montajı", "Mekanik Aksesuar")):
             continue
         if any(keyword in issue for keyword in error_keywords):
             return "HATA"
@@ -579,11 +580,36 @@ def _check_certain_non_assembly(record: PartRecord) -> tuple[bool, str]:
         ):
             return True, "DNP / Monte Edilmeyecek Parça (ERP'ye girilmedi)"
 
-    # 4. Purely mechanical accessories / dummy items without any product code
-    if not has_code:
-        if mount_upper == "MECH" or pkg_upper in {"DUMMY", "DGHT PCB"}:
-            detail = f"{record.package or record.mounting}".strip()
-            return True, f"Mekanik / Harici Montaj Parçası ({detail})" if detail else "Mekanik / Harici Montaj Parçası"
+    # 4. Box-build mechanical accessories, screens, batteries, bare daughterboards, chassis parts
+    # (Items that do not go through SMT pick-and-place and reflow oven)
+    pn_upper = (record.part_number or "").strip().upper()
+    is_mech_ref = (
+        ref_upper.startswith("BATT")
+        or ref_upper.startswith("BAT")
+        or ref_upper.startswith("BT")
+        or ref_upper.startswith("DISPLAY")
+        or ref_upper.startswith("TCH_SCRN")
+        or ref_upper.startswith("LCD")
+        or ref_upper.startswith("OLED")
+        or ref_upper.startswith("TFT")
+        or ref_upper.startswith("LS")
+        or ref_upper.startswith("BUZZER")
+        or ref_upper.startswith("SPEAKER")
+        or ref_upper == "PCB"
+        or ref_upper.endswith("_PCB")
+    )
+    is_mech_val = any(k in val_upper for k in (
+        "COIN CELL", "CR1220", "CR2032", "BATTERY",
+        "TOUCH_SCREEN", "TOUCHSCREEN", "DGHT PCB", "SUB PCB",
+        "DAUGHTER BOARD", "DAUGHTERBOARD", "BARE PCB",
+        "WIRE HARNESS", "STANDOFF", "SPACER", "SCREW", "NUT", "WASHER",
+        "HEAT SINK", "HEATSINK", "GPS ANTENNA"
+    )) or any(k in pn_upper for k in ("CR1220", "CR2032"))
+    is_mech_mount = mount_upper in {"MECH", "MECHANICAL"} or pkg_upper in {"DUMMY", "DGHT PCB"}
+
+    if is_mech_ref or is_mech_val or is_mech_mount:
+        detail = (record.description or record.package or record.part_number or record.reference).strip()
+        return True, f"Kutu Montajı / Mekanik Aksesuar (SMT Dışı): Bu parça ({detail}) SMT dizgi makinesine girmez; son montaj (box-build / mekanik aksesuar) malzemesidir. ERP SMT reçetesinde bulunmaması normaldir."
 
     return False, ""
 
@@ -949,13 +975,19 @@ def compare_workbooks(
             if is_consumable:
                 issues.append(f"Montaj Dışı / ERP Sarf Malzemesi: {cons_reason}")
             else:
-                issues.append("Sistemde Yok: müşteri dosyasında bulunamadı")
+                desc_detail = f", Değer: {erp_record.description}" if erp_record.description else ""
+                ref_detail = f", Referans: {erp_record.reference}" if erp_record.reference else ""
+                issues.append(f"Müşteri Listesinde Yok (Sistemde Yok: müşteri dosyasında bulunamadı): ERP reçetesinde tanımlı bu kalem (Parça Kodu: {e_pn or 'Belirtilmemiş'}{desc_detail}{ref_detail}) müşteri dosyasında bulunamadı.")
         elif erp_record is None:
             is_non_erp, non_erp_reason = _check_certain_non_assembly(customer_record)
             if is_non_erp:
                 issues.append(f"Montaj Dışı / ERP'ye Girilmez: {non_erp_reason}")
             else:
-                issues.append("Sistemde Yok: ERP dosyasında bulunamadı")
+                desc_detail = f", Değer: {customer_record.description}" if customer_record.description else ""
+                ref_detail = f", Referans: {customer_record.reference}" if customer_record.reference else ""
+                issues.append(
+                    f"ERP'de Eksik Kalem (Sistemde Yok: ERP dosyasında bulunamadı): Müşteri listesindeki bu malzeme (Parça Kodu: {c_pn or 'Belirtilmemiş'}{desc_detail}{ref_detail}) ERP listesine hiç girilmemiştir. SMT dizgide bu referanslar boş kalacaktır."
+                )
                 if not c_pn:
                     issues.append("Part Number eksik (Müşteri dosyasında Part Number belirtilmemiş)")
 
@@ -1026,12 +1058,16 @@ def compare_workbooks(
                 else:
                     diff_parts = []
                     if c_only:
-                        diff_parts.append(f"Müşteride Farklı/Fazla: {', '.join(c_only)}")
+                        c_sample = ", ".join(c_only[:8]) + (f" (+{len(c_only)-8} adet)" if len(c_only) > 8 else "")
+                        diff_parts.append(f"Müşteride Farklı/Fazla: {c_sample}")
                     if e_only:
-                        diff_parts.append(f"ERP'de Farklı/Fazla: {', '.join(e_only)}")
+                        e_sample = ", ".join(e_only[:8]) + (f" (+{len(e_only)-8} adet)" if len(e_only) > 8 else "")
+                        diff_parts.append(f"ERP'de Farklı/Fazla: {e_sample}")
                     diff_summary = f"Fark: {' | '.join(diff_parts)}; " if diff_parts else ""
+                    c_disp = customer_record.reference if len(c_refs) <= 10 else f"{', '.join(sorted(c_refs)[:5])}... (Toplam {len(c_refs)} adet)"
+                    e_disp = erp_record.reference if len(e_refs) <= 10 else f"{', '.join(sorted(e_refs)[:5])}... (Toplam {len(e_refs)} adet)"
                     issues.append(
-                        f"Dizgi/Referans farkı ({diff_summary}Müşteri: {customer_record.reference}, ERP: {erp_record.reference})"
+                        f"Dizgi/Referans farkı ({diff_summary}Müşteri: {c_disp}, ERP: {e_disp})"
                     )
 
             # 4. Müşteri Montaj vs ERP Montaj
@@ -1064,7 +1100,10 @@ def compare_workbooks(
             issues.insert(0, pn_diff_note)
 
         durum = _classify_severity(issues)
-        issue_str = "; ".join(dict.fromkeys(issues))
+        if durum == "UYGUN":
+            issue_str = ""
+        else:
+            issue_str = "; ".join(dict.fromkeys(issues))
 
         if customer_record:
             if len(customer_record.all_codes) > 1:
@@ -1630,7 +1669,7 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
 
         all_refs_list: list[str] = []
         for item in group:
-            for r in _split_refs(item.reference):
+            for r in sorted(_split_refs(item.reference)):
                 if r and r not in all_refs_list:
                     all_refs_list.append(r)
         combined_ref = ", ".join(all_refs_list) if all_refs_list else " | ".join(references)

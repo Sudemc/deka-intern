@@ -888,3 +888,78 @@ def test_comparison_active_and_nm_reconciliation(tmp_path):
     assert "UYGUN" in durums
     assert "UYARI" in durums
     assert "HATA" not in durums
+
+
+def test_issue_explanations_are_detailed_and_clean_for_uygun(tmp_path):
+    """Verify that UYGUN rows have clean issue strings, while UYARI and HATA rows have descriptive explanations."""
+    import pandas as pd
+    from bom_enricher.comparison import compare_workbooks
+
+    cust_df = pd.DataFrame({
+        "Part Number": [
+            "AC0603KPX7R9BB102",
+            "CR1220",
+            "MISSING_IC_123",
+            "MURATA_CAP_47N",
+        ],
+        "Description": [
+            "CAP 1nF 50V 0603",
+            "3V Lithium Coin Cell Battery",
+            "Power Management IC",
+            "CAP 4.7nF 50V 0603",
+        ],
+        "Reference": [
+            "C1, C2",
+            "BATT1",
+            "U1",
+            "C10, C11",
+        ],
+        "Quantity": [2, 1, 1, 2],
+    })
+    cust_path = tmp_path / "cust_explain.xlsx"
+    cust_df.to_excel(cust_path, index=False)
+
+    erp_df = pd.DataFrame({
+        "Part Number": [
+            "AC0603KPX7R9BB102",
+            "MURATA_CAP_47U",
+        ],
+        "Description": [
+            "CAP 1nF 50V 0603",
+            "CAP 4.7uF 100V 1210",
+        ],
+        "Reference": [
+            "C1, C2",
+            "C10, C11",
+        ],
+        "Qty": [2, 2],
+    })
+    erp_path = tmp_path / "erp_explain.xlsx"
+    erp_df.to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    ref_col = next(k for k in res.rows[0] if "Referans" in k and "ERP" not in k)
+    durum_col = next(k for k in res.rows[0] if k.startswith("Durum"))
+    hata_col = next(k for k in res.rows[0] if "Hata" in k)
+    find_row = lambda ref: next(r for r in res.rows if ref in r[ref_col])
+
+    # 1. UYGUN row must have clean / empty issue column
+    c1_row = find_row("C1")
+    assert c1_row[durum_col] == "UYGUN"
+    assert c1_row[hata_col] == ""
+
+    # 2. Battery / Mechanical accessory must be UYARI with box-build explanation
+    batt_row = find_row("BATT1")
+    assert batt_row[durum_col] == "UYARI"
+    assert "Kutu Montajı" in batt_row[hata_col] or "Mekanik" in batt_row[hata_col]
+
+    # 3. Missing item in ERP must be HATA with clear "ERP'de Eksik Kalem" explanation
+    u1_row = find_row("U1")
+    assert u1_row[durum_col] == "HATA"
+    assert "ERP'de Eksik Kalem (Sistemde Yok" in u1_row[hata_col]
+
+    # 4. Critical value mismatch must explain the difference
+    c10_row = find_row("C10")
+    assert c10_row[durum_col] == "HATA"
+    assert "Kritik Değer" in c10_row[hata_col] or "Kapasite" in c10_row[hata_col]
+

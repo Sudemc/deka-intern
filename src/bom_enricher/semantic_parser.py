@@ -254,15 +254,19 @@ def compare_descriptions(customer_text: str, erp_text: str) -> list[str]:
     # Check Capacitance
     if cust_specs.capacitance_farad is not None and erp_specs.capacitance_farad is not None:
         if cust_specs.capacitance_farad != erp_specs.capacitance_farad:
+            ratio = max(cust_specs.capacitance_farad, erp_specs.capacitance_farad) / min(cust_specs.capacitance_farad, erp_specs.capacitance_farad)
+            ratio_note = f", {int(ratio)} kat fark!" if ratio >= 10 else ""
             contradictions.append(
-                f"Açıklama Çelişkisi (Kapasite farklı: Müşteri {_format_cap(cust_specs.capacitance_farad)}, ERP {_format_cap(erp_specs.capacitance_farad)})"
+                f"Açıklama Çelişkisi (Kritik Değer: Kapasite farklı{ratio_note} - Müşteri {_format_cap(cust_specs.capacitance_farad)}, ERP {_format_cap(erp_specs.capacitance_farad)})"
             )
 
     # Check Resistance
     if cust_specs.resistance_ohm is not None and erp_specs.resistance_ohm is not None:
         if cust_specs.resistance_ohm != erp_specs.resistance_ohm:
+            ratio = max(cust_specs.resistance_ohm, erp_specs.resistance_ohm) / min(cust_specs.resistance_ohm, erp_specs.resistance_ohm)
+            ratio_note = f", {int(ratio)} kat fark!" if ratio >= 10 else ""
             contradictions.append(
-                f"Açıklama Çelişkisi (Direnç farklı: Müşteri {_format_res(cust_specs.resistance_ohm)}, ERP {_format_res(erp_specs.resistance_ohm)})"
+                f"Açıklama Çelişkisi (Kritik Değer: Direnç farklı{ratio_note} - Müşteri {_format_res(cust_specs.resistance_ohm)}, ERP {_format_res(erp_specs.resistance_ohm)})"
             )
 
     # Check Voltage
@@ -283,7 +287,7 @@ def compare_descriptions(customer_text: str, erp_text: str) -> list[str]:
     if cust_specs.package is not None and erp_specs.package is not None:
         if cust_specs.package != erp_specs.package:
             contradictions.append(
-                f"Açıklama Çelişkisi (Kılıf/Paket farklı: Müşteri {cust_specs.package}, ERP {erp_specs.package})"
+                f"Açıklama Çelişkisi (Kılıf/Paket farklı: Müşteri {cust_specs.package}, ERP {erp_specs.package} - SMT dizgide pad'e oturmaz!)"
             )
 
     if contradictions:
