@@ -214,7 +214,7 @@ def clean_part_number(s: str) -> str:
     if not s:
         return ""
     # If pattern is 'PREFIX (MPN)' where PREFIX is a project/company name and INNER is an MPN (e.g. 'DELTA-V (IXTT140P10T)')
-    m_cust = re.match(r"^([A-Za-z0-9_\-\s]+?)\s*\(([A-Za-z0-9._/+()\-*]+)\)$", s)
+    m_cust = re.match(r"^([A-Za-z0-9_\-\s]+?)\s*\(([A-Za-z0-9._/+()\-*#]+)\)$", s)
     if m_cust:
         pref, inner = m_cust.group(1).strip(), m_cust.group(2).strip()
         if not any(c.isdigit() for c in re.sub(r"[-_]v\d*", "", pref, flags=re.I)) and any(c.isdigit() for c in inner):
@@ -255,7 +255,7 @@ def _explicit_code_like(value: Any) -> bool:
     if len(tokens) > 4:
         return False
     for token in tokens:
-        if not re.fullmatch(r"[A-Za-z0-9._/+()\-*,]+", token) or not any(c.isalnum() for c in token):
+        if not re.fullmatch(r"[A-Za-z0-9._/+()\-*,#]+", token) or not any(c.isalnum() for c in token):
             return False
     if len(tokens) > 1 and not any(character.isdigit() for character in candidate):
         return False
