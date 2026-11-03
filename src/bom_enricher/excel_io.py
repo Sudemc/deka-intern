@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import re
 from typing import Any
@@ -12,6 +13,132 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from bom_enricher.models import CustomerBomRow, PartNumberCandidate
+
+
+_QTY_UNITS = {
+    "adet", "pcs", "pieces", "pc", "ea", "tane", "ad", "unit", "units", "pk", "pack",
+}
+
+_QTY_RE = re.compile(
+    r"(?i)^\s*([+-]?(?:\d+(?:[.,]\d+)*|[.,]\d+))\s*([a-zA-ZçğıöşüÇĞİÖŞÜ.]*)\s*$"
+)
+
+
+def parse_numeric_qty(raw: object) -> float | None:
+    """Parse numeric quantities supporting commas, decimals, and unit suffixes into float."""
+    if raw is None or pd.isna(raw):
+        return None
+    if isinstance(raw, (int, float)):
+        try:
+            val = float(raw)
+            return None if math.isnan(val) else val
+        except (ValueError, OverflowError):
+            return None
+
+    s = str(raw).strip()
+    if not s or s.lower() in {"nan", "none", "null", "-", "--"}:
+        return None
+
+    m = _QTY_RE.match(s)
+    if not m:
+        return None
+
+    num_part, unit_part = m.group(1), m.group(2)
+    unit_clean = unit_part.strip(".").lower()
+    if unit_clean and unit_clean not in _QTY_UNITS:
+        return None
+
+    if "," in num_part and "." in num_part:
+        if num_part.rfind(",") > num_part.rfind("."):
+            num_part = num_part.replace(".", "").replace(",", ".")
+        else:
+            num_part = num_part.replace(",", "")
+    elif "," in num_part:
+        num_part = num_part.replace(",", ".")
+
+    try:
+        val = float(num_part)
+        return None if math.isnan(val) else val
+    except (ValueError, OverflowError):
+        return None
+
+
+def format_qty_value(val: float) -> str:
+    """Format quantity float into clean string without trailing zeroes (e.g. 12.0 -> '12', 0.05 -> '0.05')."""
+    if isinstance(val, int):
+        return str(val)
+    if isinstance(val, float):
+        if val.is_integer():
+            return str(int(val))
+        return f"{val:.6f}".rstrip("0").rstrip(".")
+    try:
+        fval = float(val)
+        if fval.is_integer():
+            return str(int(fval))
+        return f"{fval:.6f}".rstrip("0").rstrip(".")
+    except (ValueError, TypeError):
+        return str(val)
+
+
+_DNP_TAGS = (
+    "(DNP)", "[DNP]", "(NM)", "[NM]", "(NC)", "[NC]",
+    "NOT MOUNTED", "DO NOT POPULATE", "NOT POPULATED",
+    "DİZİLMEZ", "DIZILMEZ", "DİZİLMEYECEK", "DIZILMEYECEK",
+    "NO FIT", "NO POP", "NO POPULATE",
+    "MONTAJ DIŞI", "MONTAJ DISI", "MONTAJ YOK",
+)
+
+_EXACT_DNP_WORDS = {
+    "DNP", "NP", "N.P.", "D.N.P.", "NM", "N.M.", "NC", "N.C.",
+    "NOT MOUNTED", "DO NOT POPULATE", "NOT POPULATED",
+    "DİZİLMEZ", "DIZILMEZ", "DİZİLMEYECEK", "DIZILMEYECEK",
+    "NO FIT", "NO POP", "NO POPULATE", "MONTAJ DIŞI", "MONTAJ DISI", "MONTAJ YOK",
+}
+
+
+def is_dnp_row(
+    part_number: str = "",
+    description: str = "",
+    mounting: str = "",
+    status: str = "",
+    reference: str = "",
+    qty: object = "",
+) -> tuple[bool, str]:
+    """Detect DNP / Non-Mounted / Do-Not-Populate items across fields and explicit Qty == 0."""
+    pn_s = str(part_number or "").strip()
+    desc_s = str(description or "").strip()
+    mount_s = str(mounting or "").strip()
+    stat_s = str(status or "").strip()
+    ref_s = str(reference or "").strip()
+
+    # 1. Qty == 0 check
+    pq = parse_numeric_qty(qty)
+    if pq is not None and pq == 0.0:
+        return True, "Montaj Dışı / Dizilmez (Miktar: 0)"
+
+    # 2. Status column
+    stat_u = stat_s.upper()
+    if stat_u in _EXACT_DNP_WORDS or any(tag in stat_u for tag in _DNP_TAGS):
+        return True, f"Montaj Dışı / Dizilmez ({stat_s})"
+
+    # 3. Mounting column
+    mount_u = mount_s.upper()
+    if mount_u in {"DNP", "NP", "NM", "NC"} or mount_u in _EXACT_DNP_WORDS or any(tag in mount_u for tag in _DNP_TAGS):
+        return True, f"Montaj Dışı / Dizilmez (Montaj: {mount_s})"
+
+    # 4. Description, Reference, Part Number fields
+    for field_name, field_val in (("Açıklama", desc_s), ("Referans", ref_s), ("Part Number", pn_s)):
+        val_u = field_val.upper()
+        if not val_u:
+            continue
+        if val_u in _EXACT_DNP_WORDS:
+            return True, f"Montaj Dışı / Dizilmez ({field_val})"
+        for tag in _DNP_TAGS:
+            if tag in val_u:
+                return True, f"Montaj Dışı / Dizilmez ({field_val})"
+
+    return False, ""
+
 
 
 @dataclass(frozen=True)
@@ -900,6 +1027,11 @@ def read_customer_bom(
             value = _string_value(get_value("value")).strip()
             manufacturer = _string_value(get_value("manufacturer")).strip()
             part_str = _string_value(part).strip()
+            status = _string_value(get_value("status")).strip() if "status" in columns else ""
+            mounting = _string_value(get_value("mounting")).strip() if "mounting" in columns else ""
+            is_dnp, _ = is_dnp_row(part_number, value, mounting, status, part_str, qty)
+            if is_dnp and (not status or status.upper() not in _EXACT_DNP_WORDS):
+                status = "DNP"
             if (qty is None or str(qty).strip() == "" or str(qty).lower() == "nan") and part_str:
                 refs = split_references(part_str)
                 if refs:
@@ -911,13 +1043,13 @@ def read_customer_bom(
                     value=value,
                     part_number=part_number,
                     manufacturer=manufacturer,
-                    mounting="",
+                    mounting=mounting,
                     package="",
                     product_code_candidates=tuple(candidates),
                     source_row=dataframe_index + 2,
                     source_sheet=str(resolved_sheet),
                     source_file=workbook_path.name,
-                    status="",
+                    status=status,
                 )
             )
         return rows
@@ -1042,6 +1174,14 @@ def read_customer_bom(
         material_type = get_value("material_type")
 
         part_str = _string_value(part).strip()
+        is_dnp, _ = is_dnp_row(
+            part_number, combined_value, _string_value(mounting).strip(),
+            _string_value(status).strip(), part_str, qty
+        )
+        status_str = _string_value(status).strip()
+        if is_dnp and (not status_str or status_str.upper() not in _EXACT_DNP_WORDS):
+            status_str = "DNP"
+
         if part_str:
             for emb in extract_embedded_part_numbers(part_str):
                 if _explicit_code_like(emb) and not any(c.value == emb for c in candidates):
@@ -1052,12 +1192,14 @@ def read_customer_bom(
                 qty = len(refs)
         elif part_str and qty is not None:
             try:
-                raw_qty_num = int(float(str(qty).strip()))
-                refs = split_references(part_str)
-                if refs and len(refs) == 2 * raw_qty_num:
-                    is_paired, _ = pair_lr_references(refs)
-                    if is_paired:
-                        qty = len(refs)
+                parsed_q = parse_numeric_qty(qty)
+                if parsed_q is not None and parsed_q.is_integer():
+                    raw_qty_num = int(parsed_q)
+                    refs = split_references(part_str)
+                    if refs and len(refs) == 2 * raw_qty_num:
+                        is_paired, _ = pair_lr_references(refs)
+                        if is_paired:
+                            qty = len(refs)
             except (ValueError, TypeError):
                 pass
 
@@ -1096,7 +1238,7 @@ def read_customer_bom(
                 source_row=row_idx + 1,
                 source_sheet=str(resolved_sheet),
                 source_file=workbook_path.name,
-                status=_string_value(status).strip(),
+                status=status_str,
                 material_type=_string_value(material_type).strip(),
             )
         )
@@ -1138,6 +1280,14 @@ def read_customer_bom(
             part = get_value("part")
             qty = get_value("qty")
             part_str = _string_value(part).strip()
+            val_str = _string_value(get_value("value")).strip()
+            mount_str = _string_value(get_value("mounting")).strip()
+            stat_str = _string_value(get_value("status")).strip()
+
+            is_dnp, _ = is_dnp_row(part_number, val_str, mount_str, stat_str, part_str, qty)
+            if is_dnp and (not stat_str or stat_str.upper() not in _EXACT_DNP_WORDS):
+                stat_str = "DNP"
+
             if part_str:
                 for emb in extract_embedded_part_numbers(part_str):
                     if _explicit_code_like(emb) and not any(c.value == emb for c in candidates):
@@ -1147,25 +1297,42 @@ def read_customer_bom(
                 if refs:
                     qty = len(refs)
 
-            if not is_erp:
+            has_ref = bool(part_str and _is_ref_like(part_str))
+            has_pn = bool(part_number or candidates)
+            has_qty = bool(qty is not None and str(qty).strip() and str(qty).lower() != "nan")
+            has_qty_val = bool(has_qty and val_str and len(val_str) > 3)
+
+            if is_erp:
+                if not has_pn:
+                    continue
+            else:
                 row_str_lower = " ".join(str(v).lower() for v in values if v is not None and str(v).strip())
-                if any(kw in row_str_lower for kw in _METADATA_ROW_KEYWORDS) and not (part_str and _is_ref_like(part_str)):
+                if any(kw in row_str_lower for kw in _METADATA_ROW_KEYWORDS) and not has_ref:
+                    continue
+
+                if not has_pn and not has_ref:
+                    continue
+
+                if not (has_pn or has_ref or has_qty_val):
+                    continue
+
+                if _header_field(part_str) is not None and not has_pn:
                     continue
 
             rows.append(
                 CustomerBomRow(
                     part=part_str,
                     qty=qty,
-                    value=_string_value(get_value("value")).strip(),
+                    value=val_str,
                     part_number=part_number,
                     manufacturer=_string_value(get_value("manufacturer")).strip(),
-                    mounting=_string_value(get_value("mounting")).strip(),
+                    mounting=mount_str,
                     package=_string_value(get_value("package")).strip(),
                     product_code_candidates=tuple(candidates),
                     source_row=header_row + dataframe_index + 2,
                     source_sheet=str(resolved_sheet),
                     source_file=workbook_path.name,
-                    status=_string_value(get_value("status")).strip(),
+                    status=stat_str,
                     material_type=_string_value(get_value("material_type")).strip(),
                 )
             )
@@ -1180,20 +1347,27 @@ _IGNORED_SHEET_KEYWORDS = {
 }
 
 
+def _is_ignored_sheet_name(title: str) -> bool:
+    title_lower = title.casefold()
+    tokens = set(re.split(r"[^a-z0-9çğıöşü]+", title_lower))
+    return bool(tokens & _IGNORED_SHEET_KEYWORDS)
+
+
 def find_customer_bom_sheets(path: Path) -> list[str]:
     """Find all worksheets in a workbook that appear to contain a BOM table."""
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
         bom_sheets: list[str] = []
         for worksheet in workbook.worksheets:
-            title_lower = worksheet.title.casefold()
-            if any(kw in title_lower for kw in _IGNORED_SHEET_KEYWORDS):
+            if _is_ignored_sheet_name(worksheet.title):
                 continue
             sample_rows = list(
                 worksheet.iter_rows(min_row=1, max_row=30, values_only=True)
             )
             sheet_score = 0
             for values in sample_rows:
+                if not _is_bom_header_row(values):
+                    continue
                 fields = {
                     field
                     for value in values
@@ -1211,7 +1385,7 @@ def find_customer_bom_sheets(path: Path) -> list[str]:
         if not bom_sheets:
             valid_sheets = [
                 ws for ws in workbook.worksheets
-                if not any(kw in ws.title.casefold() for kw in _IGNORED_SHEET_KEYWORDS)
+                if not _is_ignored_sheet_name(ws.title)
             ]
             if not valid_sheets:
                 return []
@@ -1235,13 +1409,14 @@ def _select_customer_sheet(path: Path) -> str:
         best_sheet = workbook.sheetnames[0]
         best_score = -1
         for worksheet in workbook.worksheets:
-            title_lower = worksheet.title.casefold()
-            if any(kw in title_lower for kw in _IGNORED_SHEET_KEYWORDS):
+            if _is_ignored_sheet_name(worksheet.title):
                 continue
             sample_rows = list(
                 worksheet.iter_rows(min_row=1, max_row=30, values_only=True)
             )
             for row_index, values in enumerate(sample_rows):
+                if not _is_bom_header_row(values):
+                    continue
                 fields = {
                     field
                     for value in values
@@ -1249,13 +1424,32 @@ def _select_customer_sheet(path: Path) -> str:
                 }
                 if not fields:
                     continue
-                # A real BOM header contains several table fields. An explicit
-                # manufacturer-code heading gets extra weight over cover metadata.
                 score = len(fields)
                 score += 8 if "part_number" in fields else 0
                 score += 2 if {"part", "qty", "value"}.issubset(fields) else 0
                 if score > best_score:
-                    best_sheet, best_score = worksheet.title, score
+                    best_score = score
+                    best_sheet = worksheet.title
+        if best_score < 0:
+            for worksheet in workbook.worksheets:
+                if _is_ignored_sheet_name(worksheet.title):
+                    continue
+                sample_rows = list(
+                    worksheet.iter_rows(min_row=1, max_row=30, values_only=True)
+                )
+                for values in sample_rows:
+                    fields = {
+                        field
+                        for value in values
+                        if (field := _header_field(value)) is not None
+                    }
+                    if not fields:
+                        continue
+                    score = len(fields)
+                    score += 8 if "part_number" in fields else 0
+                    if score > best_score:
+                        best_score = score
+                        best_sheet = worksheet.title
         return best_sheet
     finally:
         workbook.close()

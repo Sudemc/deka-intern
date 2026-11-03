@@ -606,3 +606,40 @@ def test_expand_ref_range_patterns():
     ]
 
 
+def test_parse_numeric_qty_and_format_qty_value():
+    from bom_enricher.excel_io import parse_numeric_qty, format_qty_value
+    assert parse_numeric_qty("12") == 12.0
+    assert parse_numeric_qty("12.0") == 12.0
+    assert parse_numeric_qty("4,0") == 4.0
+    assert parse_numeric_qty("0,05") == 0.05
+    assert parse_numeric_qty("10 ADET") == 10.0
+    assert parse_numeric_qty("5 PCS") == 5.0
+    assert parse_numeric_qty("2 EA") == 2.0
+    assert parse_numeric_qty("4 adet") == 4.0
+    assert parse_numeric_qty(15) == 15.0
+    assert parse_numeric_qty(2.5) == 2.5
+    assert parse_numeric_qty("") is None
+    assert parse_numeric_qty(None) is None
+    assert parse_numeric_qty("NOT_A_NUMBER") is None
+
+    assert format_qty_value(12.0) == "12"
+    assert format_qty_value(0.05) == "0.05"
+    assert format_qty_value(10.5) == "10.5"
+    assert format_qty_value(4.0) == "4"
+
+
+def test_is_dnp_row():
+    from bom_enricher.excel_io import is_dnp_row
+    assert is_dnp_row("RC0402", "10K (DNP)", "", "", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "DNP", "", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "", "NM", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "", "", "R1 (DNP)", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "", "", "R1", "0")[0] is True
+    assert is_dnp_row("RC0402", "10K (NOT MOUNTED)", "", "", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K (DO NOT POPULATE)", "", "", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K DİZİLMEZ", "", "", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K NO FIT", "", "", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "", "", "R1", "1")[0] is False
+
+
+

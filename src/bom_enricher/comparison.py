@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import re
 import unicodedata
@@ -14,11 +14,15 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from .excel_io import (
+    _EXACT_DNP_WORDS,
     _auto_layout,
     _select_customer_sheet,
     clean_part_number,
     expand_ref_range,
     find_customer_bom_sheets,
+    format_qty_value,
+    is_dnp_row,
+    parse_numeric_qty,
     read_customer_bom,
     split_references,
     validate_reference_tokens,
@@ -576,10 +580,11 @@ def _qualify_customer_references(
                 new_ref = ", ".join(expanded)
                 new_qty = rec.qty
                 if rec.qty:
-                    try:
-                        new_qty = str(int(float(rec.qty)) * 2)
-                    except (ValueError, TypeError):
-                        new_qty = str(len(expanded))
+                    parsed_q = parse_numeric_qty(rec.qty)
+                    if parsed_q is not None:
+                        new_qty = format_qty_value(parsed_q * 2)
+                    else:
+                        new_qty = rec.qty
                 else:
                     new_qty = str(len(expanded))
                 updated.append(PartRecord(
@@ -673,6 +678,17 @@ def _check_certain_non_assembly(record: PartRecord) -> tuple[bool, str]:
     is not intended for board assembly (e.g. explicit DNP/NP, Fiducial optical marks,
     or dummy mechanical accessories without product codes).
     """
+    is_dnp, dnp_reason = is_dnp_row(
+        record.part_number,
+        record.description,
+        record.mounting,
+        record.status,
+        record.reference,
+        record.qty,
+    )
+    if is_dnp:
+        return True, dnp_reason
+
     status_upper = (record.status or "").strip().upper()
     val_upper = (record.description or "").strip().upper()
     ref_upper = (record.reference or "").strip().upper()
@@ -997,9 +1013,9 @@ def compare_workbooks(
             # (e.g. 38 pcs Yageo + 2 pcs Vishay matching an ERP line of 40 pcs)
             if c_matched.qty and e_matched.qty and e_matched.reference and c_matched.reference:
                 try:
-                    c_q = float(c_matched.qty)
-                    e_q = float(e_matched.qty)
-                    if c_q < e_q:
+                    c_q = parse_numeric_qty(c_matched.qty)
+                    e_q = parse_numeric_qty(e_matched.qty)
+                    if c_q is not None and e_q is not None and c_q < e_q:
                         erefs = _split_refs(e_matched.reference)
                         crefs = _split_refs(c_matched.reference)
                         missing_refs = erefs - crefs
@@ -1013,14 +1029,15 @@ def compare_workbooks(
                                 o_codes_norm = {_normalize_code(c) for c in other_c.all_codes if c}
                                 if (e_codes_norm & o_codes_norm) or _normalize_code(other_c.part_number) in e_codes_norm:
                                     merged_refs = sorted(crefs | o_refs)
-                                    new_c_q = c_q + (float(other_c.qty) if other_c.qty else len(o_refs))
+                                    other_q = parse_numeric_qty(other_c.qty) if other_c.qty else None
+                                    new_c_q = c_q + (other_q if other_q is not None else float(len(o_refs)))
                                     c_matched = PartRecord(
                                         part_number=f"{c_matched.part_number} / {other_c.part_number}",
                                         description=c_matched.description,
                                         mounting=c_matched.mounting,
                                         reference=", ".join(merged_refs),
                                         material_type=c_matched.material_type,
-                                        qty=str(int(new_c_q)) if new_c_q.is_integer() else str(new_c_q),
+                                        qty=format_qty_value(new_c_q),
                                         package=c_matched.package,
                                         manufacturer=f"{c_matched.manufacturer} / {other_c.manufacturer}" if other_c.manufacturer and other_c.manufacturer != c_matched.manufacturer else c_matched.manufacturer,
                                         duplicate=c_matched.duplicate,
@@ -1107,6 +1124,8 @@ def compare_workbooks(
     # Önce tam eşleşenler (exact match crefs == erefs), ardından kısmi örtüşenler
     for pass_mode in ("exact", "fuzzy"):
         for ck in list(unmatched_cust.keys()):
+            if ck.endswith("__NM") and pass_mode != "exact":
+                continue
             c_rec = unmatched_cust.get(ck)
             if not c_rec:
                 continue
@@ -1142,6 +1161,8 @@ def compare_workbooks(
             continue
         e_desc_norm = _normalize_description(e_rec.description)
         for ck in list(unmatched_cust.keys()):
+            if ck.endswith("__NM"):
+                continue
             c_rec = unmatched_cust.get(ck)
             if not c_rec:
                 continue
@@ -1285,12 +1306,12 @@ def compare_workbooks(
 
             # 1. Qty (Miktar) Kıyaslaması
             if customer_qty and erp_qty:
-                try:
-                    c_num = float(customer_qty)
-                    e_num = float(erp_qty)
-                    if c_num != e_num:
+                c_num = parse_numeric_qty(customer_qty)
+                e_num = parse_numeric_qty(erp_qty)
+                if c_num is not None and e_num is not None:
+                    if abs(c_num - e_num) > 1e-6:
                         issues.append(f"Miktar Uyuşmazlığı (Müşteri: {customer_qty}, ERP: {erp_qty})")
-                except ValueError:
+                else:
                     if customer_qty.strip() != erp_qty.strip():
                         issues.append(f"Miktar Uyuşmazlığı (Müşteri: {customer_qty}, ERP: {erp_qty})")
 
@@ -1306,13 +1327,14 @@ def compare_workbooks(
                 ref_count = len(c_split) if c_split else len(valid_refs)
                 if ref_count > 0:
                     try:
-                        c_qty_val = float(customer_qty)
-                        if c_qty_val != ref_count and c_qty_val != len(valid_refs) and c_qty_val != len(ref_tokens):
-                            prefix = f"Satır {customer_record.source_row}: " if customer_record.source_row else ""
-                            issues.append(
-                                f"{prefix}Müşteri Qty ile Referans sayısı uyumsuz (Qty: {customer_qty}, Ref: {ref_count})"
-                            )
-                    except ValueError:
+                        c_qty_val = parse_numeric_qty(customer_qty)
+                        if c_qty_val is not None and c_qty_val.is_integer():
+                            if c_qty_val != ref_count and c_qty_val != len(valid_refs) and c_qty_val != len(ref_tokens):
+                                prefix = f"Satır {customer_record.source_row}: " if customer_record.source_row else ""
+                                issues.append(
+                                    f"{prefix}Müşteri Qty ile Referans sayısı uyumsuz (Qty: {customer_qty}, Ref: {ref_count})"
+                                )
+                    except (ValueError, TypeError):
                         pass
 
             # 2b. ERP Qty vs Referans Adedi
@@ -1327,13 +1349,14 @@ def compare_workbooks(
                 e_ref_count = len(e_split) if e_split else len(valid_e_refs)
                 if e_ref_count > 0:
                     try:
-                        e_qty_val = float(erp_qty)
-                        if e_qty_val != e_ref_count and e_qty_val != len(valid_e_refs) and e_qty_val != len(e_ref_tokens):
-                            prefix = f"Satır {erp_record.source_row}: " if erp_record.source_row else ""
-                            issues.append(
-                                f"{prefix}ERP Qty ile Referans sayısı uyumsuz (ERP Qty: {erp_qty}, ERP Ref: {e_ref_count} adet)"
-                            )
-                    except ValueError:
+                        e_qty_val = parse_numeric_qty(erp_qty)
+                        if e_qty_val is not None and e_qty_val.is_integer():
+                            if e_qty_val != e_ref_count and e_qty_val != len(valid_e_refs) and e_qty_val != len(e_ref_tokens):
+                                prefix = f"Satır {erp_record.source_row}: " if erp_record.source_row else ""
+                                issues.append(
+                                    f"{prefix}ERP Qty ile Referans sayısı uyumsuz (ERP Qty: {erp_qty}, ERP Ref: {e_ref_count} adet)"
+                                )
+                    except (ValueError, TypeError):
                         pass
 
             # 3. Dizgi/Referans Farkı (Müşteri vs ERP)
@@ -1501,6 +1524,10 @@ def read_bom_workbook(path: Path | list[Path] | str | list[str], kind: str = "cu
                             refs = _split_refs(row.part)
                             if refs:
                                 qty_val = str(len(refs))
+                        row_stat = row.status
+                        is_dnp, _ = is_dnp_row(code, row.value, row.mounting, row.status, row.part, qty_val)
+                        if is_dnp and (not row_stat or row_stat.upper() not in _EXACT_DNP_WORDS):
+                            row_stat = "DNP"
                         all_records.append(PartRecord(
                             part_number=code,
                             description=row.value,
@@ -1513,23 +1540,29 @@ def read_bom_workbook(path: Path | list[Path] | str | list[str], kind: str = "cu
                             source_sheet=sheet,
                             all_codes=all_codes,
                             code_labels=code_labels,
-                            status=row.status,
+                            status=row_stat,
                             material_type=row.material_type,
                             source_row=row.source_row,
                         ))
                     else:
                         qty_str = _cell_text(row.qty).strip()
                         if qty_str.lower() == "nan":
-                            qty_str = ""
+                            qty_val = ""
                         if not qty_str and row.part:
                             refs = _split_refs(row.part)
                             if refs:
                                 qty_str = str(len(refs))
                         has_qty = bool(qty_str) and any(c.isdigit() for c in qty_str)
                         ref_str = (row.part or "").strip()
-                        circuit_ref_pattern = r"^(?:R|C|L|D|Q|U|IC|J|CN|P|TP|SW|F|FB|T|LED|BT|Y|X|K|VR|ZD|TR|TH|MOV|TS|BRK)\d+"
-                        has_ref = bool(ref_str and re.match(circuit_ref_pattern, ref_str, re.IGNORECASE))
-                        if has_qty or (has_ref and bool((row.value or "").strip())):
+                        circuit_ref_pattern = r"^(?:R|C|L|D|Q|U|IC|J|CN|P|TP|SW|F|FB|T|LED|BT|Y|X|K|VR|ZD|TR|TH|MOV|TS|BRK|ANT|DISPLAY)\d+"
+                        has_ref = bool(ref_str and (re.match(circuit_ref_pattern, ref_str, re.IGNORECASE) or bool(split_references(ref_str))))
+                        val_str = (row.value or "").strip()
+                        has_qty_val = bool(has_qty and len(val_str) > 3)
+                        if has_ref or has_qty_val:
+                            row_stat = row.status
+                            is_dnp, _ = is_dnp_row("", row.value, row.mounting, row.status, row.part, qty_str)
+                            if is_dnp and (not row_stat or row_stat.upper() not in _EXACT_DNP_WORDS):
+                                row_stat = "DNP"
                             all_records.append(PartRecord(
                                 part_number="",
                                 description=row.value,
@@ -1540,7 +1573,7 @@ def read_bom_workbook(path: Path | list[Path] | str | list[str], kind: str = "cu
                                 package=row.package,
                                 source_file=file_path.name,
                                 source_sheet=sheet,
-                                status=row.status,
+                                status=row_stat,
                                 material_type=row.material_type,
                                 source_row=row.source_row,
                             ))
@@ -1946,11 +1979,22 @@ def _unique_records(records: list[PartRecord], kind: str = "customer") -> dict[s
     no_code_count = 0
     dnp_statuses = {"NM", "N.M.", "NOT MOUNTED", "DNP", "NO POPULATE", "NC", "DO NOT POPULATE"}
     for record in records:
+        is_dnp, _ = is_dnp_row(
+            record.part_number,
+            record.description,
+            record.mounting,
+            record.status,
+            record.reference,
+            record.qty,
+        )
+        is_nm = is_dnp or (record.status or "").strip().upper() in dnp_statuses or "NOT MOUNTED" in (record.status or "").upper()
+        if is_nm and (not record.status or record.status.upper() not in dnp_statuses):
+            record = replace(record, status="DNP")
+
         if not record.part_number.strip():
             no_code_count += 1
             grouped[f"__NO_CODE_{no_code_count}__"].append(record)
         else:
-            is_nm = (record.status or "").strip().upper() in dnp_statuses or "NOT MOUNTED" in (record.status or "").upper()
             norm = _normalize_code(record.part_number)
             if is_nm:
                 grouped[f"{norm}__NM"].append(record)
@@ -1984,39 +2028,40 @@ def _unique_records(records: list[PartRecord], kind: str = "customer") -> dict[s
                 ref_count = len(refs) if refs else len(valid_refs)
                 if ref_count > 0:
                     try:
-                        q_num = float(item.qty)
-                        if q_num != ref_count and q_num != len(valid_refs) and q_num != len(ref_tokens):
-                            q_disp = int(q_num) if q_num.is_integer() else q_num
-                            prefix = f"Satır {item.source_row}: " if item.source_row else ""
-                            if kind == "customer":
-                                err_msg = f"{prefix}Müşteri Qty ile Referans sayısı uyumsuz (Qty: {q_disp}, Ref: {ref_count})"
-                            else:
-                                err_msg = f"{prefix}ERP Qty ile Referans sayısı uyumsuz (ERP Qty: {q_disp}, ERP Ref: {ref_count} adet)"
-                            if err_msg not in group_row_errors:
-                                group_row_errors.append(err_msg)
+                        q_num = parse_numeric_qty(item.qty)
+                        if q_num is not None and q_num.is_integer():
+                            if q_num != ref_count and q_num != len(valid_refs) and q_num != len(ref_tokens):
+                                q_disp = format_qty_value(q_num)
+                                prefix = f"Satır {item.source_row}: " if item.source_row else ""
+                                if kind == "customer":
+                                    err_msg = f"{prefix}Müşteri Qty ile Referans sayısı uyumsuz (Qty: {q_disp}, Ref: {ref_count})"
+                                else:
+                                    err_msg = f"{prefix}ERP Qty ile Referans sayısı uyumsuz (ERP Qty: {q_disp}, ERP Ref: {ref_count} adet)"
+                                if err_msg not in group_row_errors:
+                                    group_row_errors.append(err_msg)
                     except (ValueError, TypeError):
                         pass
 
-        total_qty = 0
-        has_qty = False
+        total_qty = 0.0
+        has_numeric_qty = False
         non_numeric_qtys = []
         for item in group:
             if item.qty:
-                has_qty = True
-                try:
-                    total_qty += int(float(item.qty))
-                except ValueError:
+                pq = parse_numeric_qty(item.qty)
+                if pq is not None:
+                    has_numeric_qty = True
+                    total_qty += pq
+                else:
                     non_numeric_qtys.append(item.qty)
-        if has_qty:
-            if non_numeric_qtys:
-                qty_str = ", ".join(non_numeric_qtys)
-            else:
-                qty_str = str(total_qty)
+        if has_numeric_qty:
+            qty_str = format_qty_value(total_qty)
+        elif non_numeric_qtys:
+            qty_str = ", ".join(non_numeric_qtys)
         else:
             qty_str = ""
 
         is_duplicate = False
-        if not normalized.startswith("__NO_CODE_") and len(group) > 1:
+        if not normalized.startswith("__NO_CODE_") and not normalized.endswith("__NM") and len(group) > 1:
             has_any_ref = any(bool(item.reference.strip()) for item in group)
             if not has_any_ref:
                 sources = {(item.source_file, item.source_sheet) for item in group}
@@ -2038,11 +2083,10 @@ def _unique_records(records: list[PartRecord], kind: str = "customer") -> dict[s
             qs = str(qty).strip()
             if not qs:
                 return "1"
-            try:
-                fv = float(qs)
-                return str(int(fv)) if fv.is_integer() else str(fv)
-            except ValueError:
-                return qs
+            pq = parse_numeric_qty(qs)
+            if pq is not None:
+                return format_qty_value(pq)
+            return qs
 
         sources_map: dict[str, list[PartRecord]] = defaultdict(list)
         for item in group:
@@ -2073,13 +2117,11 @@ def _unique_records(records: list[PartRecord], kind: str = "customer") -> dict[s
                     )
                     parts.append(f"{src}: {sub}")
                 else:
-                    tot = 0
+                    tot = 0.0
                     for it in items:
-                        try:
-                            tot += int(float(it.qty)) if it.qty else 1
-                        except (ValueError, TypeError):
-                            tot += 1
-                    parts.append(f"{src}: {tot} adet")
+                        pq = parse_numeric_qty(it.qty) if it.qty else None
+                        tot += pq if pq is not None else 1.0
+                    parts.append(f"{src}: {format_qty_value(tot)} adet")
             source_breakdown = ", ".join(parts)
 
         all_refs_list: list[str] = []
@@ -2196,7 +2238,8 @@ def _header_field(header: str) -> str | None:
 
 
 def _header_key(value: object) -> str:
-    text = unicodedata.normalize("NFKD", _cell_text(value).casefold())
+    text = _cell_text(value).replace("ı", "i").replace("İ", "i").casefold()
+    text = unicodedata.normalize("NFKD", text)
     return "".join(char for char in text if char.isalnum())
 
 
@@ -2209,7 +2252,8 @@ def _normalize_description(value: str) -> str:
 
 
 def _normalize_label(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value.casefold())
+    text = value.replace("ı", "i").replace("İ", "i").casefold()
+    normalized = unicodedata.normalize("NFKD", text)
     return "".join(character for character in normalized if character.isalnum())
 
 

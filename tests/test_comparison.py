@@ -1224,5 +1224,58 @@ def test_multi_underscore_prefix_base_extraction_and_material_inference():
     assert _infer_material_type(rec_res, None) == "res"
 
 
+def test_comma_decimal_and_unit_quantities_and_fractional_preservation(tmp_path):
+    cust_file = tmp_path / "cust_qty.xlsx"
+    erp_file = tmp_path / "erp_qty.xlsx"
+    _write_book(cust_file, "BOM", ["Part Number", "Value", "RefDes", "Qty"], [
+        ["MPN-1", "10k", "R1, R2, R3, R4", "4,0 ADET"],
+        ["MPN-TAPE", "Kapton Tape", "TAPE1", "0,25"],
+    ])
+    _write_book(erp_file, "ERP", ["Part Number", "Description", "Reference", "Qty", "Mounting"], [
+        ["MPN-1", "10k SMD", "R1, R2, R3, R4", "4 PCS", "SMD"],
+        ["MPN-TAPE", "Kapton Tape", "TAPE1", "0.25", "SMD"],
+    ])
+    res = compare_workbooks(cust_file, erp_file)
+    for r in res.rows:
+        assert r["Durum"] == "UYGUN", f"Row {r['Part Number']} failed: {r['Hata/Uyarı Durumu']}"
+
+
+def test_dnp_row_with_valid_mpn_not_merged_into_active_or_flagged_as_error(tmp_path):
+    cust_file = tmp_path / "cust_dnp.xlsx"
+    erp_file = tmp_path / "erp_dnp.xlsx"
+    _write_book(cust_file, "BOM", ["Part Number", "Value", "RefDes", "Qty"], [
+        ["RC0402FR-0710KL", "10K 0402", "R1, R2", 2],
+        ["RC0402FR-0710KL", "10K 0402 (DNP)", "R3 (DNP)", 1],
+        ["CL05B104KO5NNNC", "100nF (NOT MOUNTED)", "C99", 1],
+    ])
+    _write_book(erp_file, "ERP", ["Part Number", "Description", "Reference", "Qty", "Mounting"], [
+        ["RC0402FR-0710KL", "10K 0402 SMD", "R1, R2", 2, "SMD"],
+    ])
+    res = compare_workbooks(cust_file, erp_file)
+    active_row = next(r for r in res.rows if r["ERP Part Number"] == "RC0402FR-0710KL")
+    assert active_row["Durum"] == "UYGUN"
+    assert active_row["Hata/Uyarı Durumu"] == ""
+    dnp_rows = [r for r in res.rows if r["ERP Part Number"] == ""]
+    assert all(r["Durum"] == "UYARI" and "Montaj Dışı" in r["Hata/Uyarı Durumu"] for r in dnp_rows)
+
+
+def test_multi_sheet_ignores_cover_page_with_project_code_and_keeps_cabin_pcb(tmp_path):
+    from openpyxl import Workbook
+    from bom_enricher.excel_io import find_customer_bom_sheets
+    wb_path = tmp_path / "multi.xlsx"
+    wb = Workbook()
+    ws_cover = wb.active
+    ws_cover.title = "Genel Bilgi"
+    ws_cover.append(["Proje Kodu", "PRJ-2026-01"])
+    ws_cover.append(["Revizyon", "1.0"])
+    ws_bom = wb.create_sheet("CABIN_PCB")
+    ws_bom.append(["Part Number", "Description", "Designator", "Quantity"])
+    ws_bom.append(["RC0402FR-0710KL", "10K", "R1", 1])
+    wb.save(wb_path)
+    wb.close()
+    assert find_customer_bom_sheets(wb_path) == ["CABIN_PCB"]
+
+
+
 
 
