@@ -1019,3 +1019,38 @@ def test_delta_v_orta_altium_bom_comparison(tmp_path):
     assert pcb_row["Durum"] == "UYARI"
     assert "Ham PCB" in pcb_row["Hata/Uyarı Durumu"]
 
+
+
+def test_split_multi_code_preserves_special_characters_and_packaging_variants():
+    from bom_enricher.comparison import _split_multi_code
+
+    # Space separated codes
+    res1 = _split_multi_code("ADR4525WBRZ-R7 ADR4525ARZ")
+    assert "ADR4525WBRZ-R7" in res1
+    assert "ADR4525ARZ" in res1
+
+    # Company code and MPN in parens
+    res2 = _split_multi_code("H010101005006 (MBR0540T1G)")
+    assert "H010101005006" in res2
+    assert "MBR0540T1G" in res2
+
+    # Packaging code with comma
+    res3 = _split_multi_code("PESD5V0S5UD,115")
+    assert "PESD5V0S5UD,115" in res3
+    assert "PESD5V0S5UD" in res3
+
+    # Linear Tech / ADI #TRPBF packaging code
+    res4 = _split_multi_code("LT3092ITS8#TRPBF")
+    assert "LT3092ITS8#TRPBF" in res4
+    assert "LT3092ITS8" in res4
+
+    # Packaging variant with attached parens and comma
+    res5 = _split_multi_code("TLP293(BL-TPL,E)")
+    assert "TLP293(BL-TPL,E)" in res5
+    assert "TLP293" in res5
+
+    # Slash variant packaging inside parens
+    res6 = _split_multi_code("CL10B104KB8NNN(C/D)")
+    assert "CL10B104KB8NNN(C/D)" in res6
+    assert "CL10B104KB8NNNC" in res6
+    assert "CL10B104KB8NNND" in res6

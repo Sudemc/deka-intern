@@ -144,7 +144,7 @@ def _is_integer_sequence(values: list[Any]) -> bool:
     return nums[0] in (0, 1) and all(nums[i + 1] == nums[i] + 1 for i in range(len(nums) - 1))
 
 
-_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-]{3,63}$")
+_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-*#:,~=\[\]%@;+]{3,63}$")
 _EXPLICIT_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-]{1,63}$")
 _REFERENCE_PATTERN = re.compile(
     r"(?i)^(?:(?:R|C|L|D|Q|U|J|FB|LS|LED|TP|SW)\s*\d+[A-Z]?)(?:\s*,\s*(?:(?:R|C|L|D|Q|U|J|FB|LS|LED|TP|SW)\s*\d+[A-Z]?))*$"
@@ -179,7 +179,7 @@ def _header_field(value: Any) -> str | None:
 _PLACEHOLDER_PNS = {
     "C", "R", "L", "D", "Q", "U", "J", "FB", "T", "Y", "X", "P", "F", "K", "M", "CN", "IC",
     "DUMMY", "NONE", "EMPTY", "TBD", "NA", "N/A", "DNP", "NP", "NC", "NO POPULATE",
-    "-", "--", "---", ".", "/", "NAN", "NULL"
+    "-", "--", "---", ".", "/", "NAN", "NULL", "YOK"
 }
 
 DESIGNATOR_REGEX = re.compile(
@@ -192,7 +192,7 @@ _DESIGNATOR_NOISE_WORDS = {
     "MUSTERI", "GELECEK", "TAKILACAK", "VERILECEK", "BAGLANTI", "NOT", "NOTE",
     "SEE", "LOOK", "BAK", "BAKINIZ", "REVIZYON", "REV", "DNP", "NC", "NA", "N/A",
     "NONE", "EMPTY", "TBD", "RIGHT-ANGLE", "VERTICAL", "HORIZONTAL", "SMD", "TH",
-    "THT", "COLOR", "BIN", "TABLE", "OPTIK", "OPTIC", "LED", "LAMP",
+    "THT", "COLOR", "BIN", "TABLE", "OPTIK", "OPTIC", "LED", "LAMP", "YERINE", "YOK",
 }
 
 
@@ -249,15 +249,17 @@ def clean_part_number(s: str) -> str:
     if not s:
         return ""
     # If pattern is 'PREFIX (MPN)' where PREFIX is a project/company name and INNER is an MPN (e.g. 'DELTA-V (IXTT140P10T)')
-    m_cust = re.match(r"^([A-Za-z0-9_\-\s]+?)\s*\(([A-Za-z0-9._/+()\-*#]+)\)$", s)
+    m_cust = re.match(r"^([A-Za-z0-9_\-\s]+?)\s*\((.+)\)$", s)
     if m_cust:
         pref, inner = m_cust.group(1).strip(), m_cust.group(2).strip()
         if not any(c.isdigit() for c in re.sub(r"[-_]v\d*", "", pref, flags=re.I)) and any(c.isdigit() for c in inner):
             return inner
-    cleaned = re.sub(r"\s*\([^)/]*\)", "", s)
-    cleaned = re.sub(r"\s+-\s+(?:Right-Angle|Vertical|Horizontal|Dik|Yatık|SMD|TH).*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+-\s+(?:Right-Angle|Vertical|Horizontal|Dik|Yatık|SMD|TH).*$", "", s, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+\d+-\d+\s+color\)?.*$", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"(?i)\s+BIN(?:\s*TABLE\d*|\s*:\s*[A-Za-z0-9_\-]+|\s+[A-Za-z0-9_\-]+)?.*$", "", cleaned)
+    # Strip unattached parenthetical notes (must be preceded by whitespace, not attached like TLP293(BL-TPL,E))
+    # Do not strip if paren contains '/' (e.g. packaging variant like (C/D))
+    cleaned = re.sub(r"\s+(?:\([^)/]*\)\s*)+$", "", cleaned)
     return cleaned.strip()
 
 
@@ -267,35 +269,61 @@ _NOTE_PREFIX_PATTERN = re.compile(
 
 
 def _explicit_code_like(value: Any) -> bool:
-    """Reject prose/footer text even when it lands under a named code column."""
+    """Reject prose/footer text even when it lands under a named code column.
+
+    Non-destructive validation: preserves all genuine MPNs containing electronic packaging
+    punctuation and symbols (#, (, ), ,, /, :, ~, =, [, ], %, @, ;, +, -, _, ., *),
+    rejecting only explicit placeholders, dates, short integers, and prose notes.
+    """
     raw_candidate = _string_value(value).strip()
     if not raw_candidate or len(raw_candidate) > 128:
         return False
     if _REFERENCE_PATTERN.fullmatch(raw_candidate) or _is_date_like(raw_candidate):
         return False
-    candidate = clean_part_number(raw_candidate)
-    if not candidate or _NOTE_PREFIX_PATTERN.search(candidate) or _is_date_like(candidate):
+    if raw_candidate.upper() in _PLACEHOLDER_PNS:
         return False
+
+    candidate = clean_part_number(raw_candidate)
+    if not candidate or _is_date_like(candidate):
+        return False
+    if candidate.upper() in _PLACEHOLDER_PNS:
+        return False
+
+    # Single character or no alphanumeric content
+    if len(candidate) < 2 or re.fullmatch(r"^[A-Za-z]$", candidate) or not any(c.isalnum() for c in candidate):
+        return False
+
+    # Pure integers <= 3 digits (e.g. row numbers like 1, 12, 123)
     if re.fullmatch(r"^\d{1,3}$", candidate):
         return False
-    if len(candidate) < 2 or candidate.upper() in _PLACEHOLDER_PNS:
+
+    # Common prose / note prefixes or revision markers
+    if _NOTE_PREFIX_PATTERN.search(candidate) or re.match(r"(?i)^rev(?:izyon)?\.?\s*\d+", candidate):
         return False
-    if re.fullmatch(r"^[A-Za-z]$", candidate) or re.fullmatch(r"^[^A-Za-z0-9]+$", candidate):
-        return False
-    if re.match(r"(?i)^rev(?:izyon)?\.?\s*\d+", candidate):
-        return False
+
+    # Section / assembly keywords
     if any(kw in candidate.lower() for kw in ("module", "section", "assembly", "kart bilesen", "kart bileşen")):
         return False
+
+    # Designator noise words
+    cand_upper = candidate.upper().strip(" -_:,;()[]")
+    if cand_upper in _DESIGNATOR_NOISE_WORDS:
+        return False
+
+    # Multi-word prose notes check
     tokens = candidate.split()
     if len(tokens) > 4:
         return False
-    for token in tokens:
-        if not re.fullmatch(r"[A-Za-z0-9._/+()\-*,#]+", token) or not any(c.isalnum() for c in token):
-            return False
+    # If all tokens are designator noise words
+    if all(t.upper().strip(" -_:,;()[]") in _DESIGNATOR_NOISE_WORDS for t in tokens if t.strip(" -_:,;()[]")):
+        return False
+    # Multi-word candidate without any digits is natural language prose
     if len(tokens) > 1 and not any(character.isdigit() for character in candidate):
         return False
+    # Very long candidate without any digits is natural language prose
     if not any(character.isdigit() for character in candidate) and len(candidate) > 20:
         return False
+
     return True
 
 

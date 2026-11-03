@@ -544,3 +544,47 @@ def test_split_references_universal_grammar_and_notes():
 
     # Valid tokens produce no warnings
     assert validate_reference_tokens(["R1", "C2", "U11", "PCB"]) == []
+
+
+def test_non_destructive_part_number_validation():
+    from bom_enricher.excel_io import clean_part_number, _explicit_code_like
+
+    # 1. MPNs with '#' and complex packaging preserved
+    assert clean_part_number("LT3092ITS8#TRPBF") == "LT3092ITS8#TRPBF"
+    assert clean_part_number("LT6015IS5#TRMPBF") == "LT6015IS5#TRMPBF"
+    assert clean_part_number("TLP293(BL-TPL,E") == "TLP293(BL-TPL,E"
+    assert clean_part_number("TLP293(BL-TPL,E)") == "TLP293(BL-TPL,E)"
+    assert clean_part_number("ACS780LLRTR-100U-T") == "ACS780LLRTR-100U-T"
+    assert clean_part_number("MUSBK15230") == "MUSBK15230"
+    assert clean_part_number("ABM8AAIG-25.000MHZ-V2R-T3") == "ABM8AAIG-25.000MHZ-V2R-T3"
+    assert clean_part_number("PESD5V0S5UD,115") == "PESD5V0S5UD,115"
+    assert clean_part_number("DELTA-V (IXTT140P10T)") == "IXTT140P10T"
+    assert clean_part_number("LA G6SP.02 (8E-5F)(2-4 color)") == "LA G6SP.02"
+
+    # 2. _explicit_code_like accepts MPNs with electronic packaging punctuation
+    assert _explicit_code_like("LT3092ITS8#TRPBF") is True
+    assert _explicit_code_like("LT6015IS5#TRMPBF") is True
+    assert _explicit_code_like("TLP293(BL-TPL,E") is True
+    assert _explicit_code_like("TLP293(BL-TPL,E)") is True
+    assert _explicit_code_like("ACS780LLRTR-100U-T") is True
+    assert _explicit_code_like("MUSBK15230") is True
+    assert _explicit_code_like("ABM8AAIG-25.000MHZ-V2R-T3") is True
+    assert _explicit_code_like("PESD5V0S5UD,115") is True
+    assert _explicit_code_like("MAX232+T") is True
+    assert _explicit_code_like("MC7805BD2T:R") is True
+    assert _explicit_code_like("[4E22000001]") is True
+    assert _explicit_code_like("CHIP~01") is True
+    assert _explicit_code_like("VAL=10K") is True
+
+    # 3. Reject only explicit placeholders, dates, integers, and multi-word prose
+    assert _explicit_code_like("YOK") is False
+    assert _explicit_code_like("DNP") is False
+    assert _explicit_code_like("NONE") is False
+    assert _explicit_code_like("TBD") is False
+    assert _explicit_code_like("-") is False
+    assert _explicit_code_like("2026-10-27") is False
+    assert _explicit_code_like("12") is False
+    assert _explicit_code_like("123") is False
+    assert _explicit_code_like("Müşteriden gelecek parçalar monte edilecek") is False
+    assert _explicit_code_like("YERINE") is False
+

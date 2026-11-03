@@ -148,6 +148,54 @@ def expand_parentheses_variants(code: str) -> list[str]:
     return list(dict.fromkeys([code] + results))
 
 
+def _tokenize_multi_code(s: str) -> list[str]:
+    """Split multi-code cell while preserving parentheses and packaging commas."""
+    chars: list[str] = []
+    paren_depth = 0
+    bracket_depth = 0
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c in "([":
+            if c == "(":
+                paren_depth += 1
+            elif c == "[":
+                bracket_depth += 1
+            chars.append(c)
+            i += 1
+        elif c in ")]":
+            if c == ")" and paren_depth > 0:
+                paren_depth -= 1
+            elif c == "]" and bracket_depth > 0:
+                bracket_depth -= 1
+            chars.append(c)
+            i += 1
+        elif paren_depth > 0 or bracket_depth > 0:
+            chars.append(c)
+            i += 1
+        else:
+            if c in ";|\n\r":
+                chars.append(" ")
+                i += 1
+            elif c == ",":
+                # Check for packaging suffix like ',115' or ',118'
+                m = re.match(r"^,\d{2,4}(?=[,\s;|\/]|$)", s[i:])
+                if m:
+                    chars.append(c)
+                    i += 1
+                else:
+                    chars.append(" ")
+                    i += 1
+            elif c == "/" and i > 0 and s[i - 1].isspace() and (i + 1 < n and s[i + 1].isspace()):
+                chars.append(" ")
+                i += 1
+            else:
+                chars.append(c)
+                i += 1
+    return "".join(chars).split()
+
+
 def _split_multi_code(raw: str) -> list[str]:
     """Split an ERP Part Number cell that contains space/comma/slash separated alternative codes.
 
@@ -155,48 +203,67 @@ def _split_multi_code(raw: str) -> list[str]:
     If the cell holds only a single code (e.g. 'BAV99 MDD', 'TE 2324 DPN'),
     it returns the full code (plus any parentheses variants).
     """
-    cleaned_raw = re.sub(r"(?i)\s+BIN(?:\s*TABLE\d*|\s*:\s*[A-Za-z0-9_\-]+|\s+[A-Za-z0-9_\-]+)?.*$", "", raw)
-    cleaned_raw = re.sub(r"\s+-\s+(?:Right-Angle|Vertical|Horizontal|Dik|Yatık|SMD|TH).*$", "", cleaned_raw, flags=re.IGNORECASE)
-    cleaned = re.sub(r"[,;|\n\r]+", " ", cleaned_raw)
-    cleaned = re.sub(r"\s+/\s+", " ", cleaned)
-    tokens = cleaned.split()
+    if raw is None:
+        return []
+    s_raw = str(raw).strip()
+    if not s_raw:
+        return []
 
+    cleaned_raw = re.sub(r"(?i)\s+BIN(?:\s*TABLE\d*|\s*:\s*[A-Za-z0-9_\-]+|\s+[A-Za-z0-9_\-]+)?.*$", "", s_raw)
+    cleaned_raw = re.sub(r"\s+-\s+(?:Right-Angle|Vertical|Horizontal|Dik|Yatık|SMD|TH).*$", "", cleaned_raw, flags=re.IGNORECASE).strip()
+    if not cleaned_raw:
+        return []
+
+    tokens = _tokenize_multi_code(cleaned_raw)
     results: list[str] = []
-    # Search for parenthetical or bracketed codes (e.g. 'DELTA-V (IXTT140P10T)' or '[4E22000001]')
-    for m in re.finditer(r"[\(\[]([A-Za-z0-9._/+()\-]+)[\)\]]", cleaned_raw):
-        inner = m.group(1).strip()
-        if _is_product_code_token(inner):
-            results.extend(expand_parentheses_variants(inner))
 
-    # Strip packaging suffix like ',118' or ',115'
-    m_pkg = re.match(r"^([A-Za-z0-9._/+()\-]+),\d{2,4}$", cleaned_raw)
-    if m_pkg:
-        base_pkg = m_pkg.group(1).strip()
-        if _is_product_code_token(base_pkg):
-            results.extend(expand_parentheses_variants(base_pkg))
-
+    # 1. Process each token in natural left-to-right order
     for t in tokens:
-        m = re.match(r"^([A-Za-z0-9._/+()\-]+)\((.+)\)$", t)
+        m = re.match(r"^([A-Za-z0-9._/+()\-*#]+)\((.+)\)$", t)
         if m:
             outer = m.group(1).strip()
             inner = m.group(2).strip()
+            results.extend(expand_parentheses_variants(t))
             if _is_product_code_token(outer):
                 results.extend(expand_parentheses_variants(outer))
             if _is_product_code_token(inner):
                 results.extend(expand_parentheses_variants(inner))
-            results.append(t)
         else:
             t_clean = t.strip("()[]")
-            if _is_product_code_token(t_clean):
-                results.extend(expand_parentheses_variants(t_clean))
-            elif _is_product_code_token(t):
-                results.extend(expand_parentheses_variants(t))
+            target = t_clean if _is_product_code_token(t_clean) else (t if _is_product_code_token(t) else "")
+            if target:
+                results.extend(expand_parentheses_variants(target))
+                # Packaging suffix like ',115' or ',118'
+                if re.search(r",\d{2,4}$", target):
+                    base_pkg = re.sub(r",\d{2,4}$", "", target)
+                    if _is_product_code_token(base_pkg):
+                        results.extend(expand_parentheses_variants(base_pkg))
+                # Linear Tech / ADI packaging suffix '#TRPBF'
+                if re.search(r"#[A-Za-z0-9_\-]+$", target):
+                    base_hash = re.sub(r"#[A-Za-z0-9_\-]+$", "", target)
+                    if _is_product_code_token(base_hash):
+                        results.extend(expand_parentheses_variants(base_hash))
+
+    # 2. Extract parenthetical or bracketed codes (e.g. 'DELTA-V (IXTT140P10T)' or '[4E22000001]')
+    for m in re.finditer(r"[\(\[]([^()\[\]]+)[\)\]]", cleaned_raw):
+        inner = m.group(1).strip()
+        if _is_product_code_token(inner):
+            results.extend(expand_parentheses_variants(inner))
+            if re.search(r",\d{2,4}$", inner):
+                base_inner = re.sub(r",\d{2,4}$", "", inner)
+                if _is_product_code_token(base_inner):
+                    results.extend(expand_parentheses_variants(base_inner))
+            if re.search(r"#[A-Za-z0-9_\-]+$", inner):
+                base_inner = re.sub(r"#[A-Za-z0-9_\-]+$", "", inner)
+                if _is_product_code_token(base_inner):
+                    results.extend(expand_parentheses_variants(base_inner))
 
     if results:
-        results.append(cleaned_raw.strip())
+        if cleaned_raw not in results:
+            results.append(cleaned_raw)
         return list(dict.fromkeys(results))
 
-    return expand_parentheses_variants(cleaned_raw.strip())
+    return expand_parentheses_variants(cleaned_raw)
 
 
 def _normalize_ref_token(token: str) -> str:
