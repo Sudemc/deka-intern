@@ -726,9 +726,17 @@ def compare_descriptions(customer_text: str, erp_text: str, mpn_matched: bool = 
 
     # 0. Cross-category conflict: Capacitance vs Resistance/Inductance (only if not mpn_matched)
     if not mpn_matched:
-        composite_keywords = r"\b(rc[- ]?net|rc[- ]?network|rc[- ]?filter|filter|filtre|f\.?bead|ferrite\s*bead|bead|ind|inductor|bobin|choke)\b"
-        is_cust_composite = bool(re.search(composite_keywords, cust_clean)) or (bool(cust_specs.capacitances) and bool(cust_specs.resistances or cust_specs.inductances))
-        is_erp_composite = bool(re.search(composite_keywords, erp_clean)) or (bool(erp_specs.capacitances) and bool(erp_specs.resistances or erp_specs.inductances)) or (bool(erp_specs.resistances) and bool(erp_specs.inductances))
+        composite_keywords = r"\b(rc[- ]?net|rc[- ]?network|rc[- ]?filter|filter|filtre|f\.?bead|ferrite\s*bead|bead)\b"
+        is_cust_composite = (
+            bool(re.search(composite_keywords, cust_clean))
+            or (bool(cust_specs.capacitances) and bool(cust_specs.resistances or cust_specs.inductances))
+            or (bool(cust_specs.resistances) and bool(cust_specs.inductances))
+        )
+        is_erp_composite = (
+            bool(re.search(composite_keywords, erp_clean))
+            or (bool(erp_specs.capacitances) and bool(erp_specs.resistances or erp_specs.inductances))
+            or (bool(erp_specs.resistances) and bool(erp_specs.inductances))
+        )
 
         if not is_cust_composite and not is_erp_composite:
             cust_is_cap_only = bool(cust_specs.capacitances) and not cust_specs.resistances and not cust_specs.inductances

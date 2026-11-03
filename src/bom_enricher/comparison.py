@@ -663,7 +663,13 @@ def _qualify_customer_references(
             new_tokens: list[str] = []
             for token in ref_tokens:
                 stripped = _normalize_ref_token(token)
-                if pfx and not stripped.startswith(f"{pfx}_") and not any(stripped.startswith(f"{ep}_") for ep in erp_prefixes) and "_" not in stripped:
+                if (
+                    pfx
+                    and re.match(r"^[A-Z]+\d+", stripped)
+                    and not stripped.startswith(f"{pfx}_")
+                    and not any(stripped.startswith(f"{ep}_") for ep in erp_prefixes)
+                    and "_" not in stripped
+                ):
                     new_tokens.append(f"{pfx}_{stripped}")
                 else:
                     new_tokens.append(stripped)

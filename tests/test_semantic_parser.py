@@ -144,3 +144,9 @@ def test_cross_category_color_polarity_frequency_and_mpn_matched_value_conflicts
     assert compare_descriptions("4.7K 0603", "SMD 0603, 10k, %1, Yageo", mpn_matched=True)
     assert compare_descriptions("100nF 0402", "SMD 0805 Package, 100nF", mpn_matched=True)
 
+
+def test_pure_inductor_vs_capacitor_triggers_material_type_conflict():
+    from bom_enricher.semantic_parser import compare_descriptions
+    issues = compare_descriptions("100nF", "10uH Inductor", mpn_matched=False)
+    assert issues == ["Açıklama Çelişkisi (Malzeme Tipi farklı: Müşteri Kapasitör, ERP Endüktans)"]
+

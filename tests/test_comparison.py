@@ -1329,8 +1329,3 @@ def test_find_ref_near_misses_single_ref_strict_index_diff():
     nm3 = _find_ref_near_misses({"LED1"}, {"T2R_LED1"})
     assert len(nm3) == 0
 
-
-
-
-
-
