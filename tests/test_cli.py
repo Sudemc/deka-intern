@@ -164,3 +164,34 @@ def test_cli_leaves_multiple_unmatched_code_candidates_for_review(tmp_path):
         assert unresolved_codes == {"ABC12345", "XYZ98765"}
     finally:
         output.close()
+
+
+def test_cli_handles_corrupt_file_gracefully(tmp_path):
+    corrupt_file = tmp_path / "corrupt.xlsx"
+    corrupt_file.write_bytes(b"not a valid zip or excel file")
+    output_path = tmp_path / "out.xlsx"
+    environment = os.environ.copy()
+    source_root = str(PROJECT_ROOT / "src")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        filter(None, [source_root, environment.get("PYTHONPATH", "")])
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "bom_enricher.main",
+            "--input",
+            str(corrupt_file),
+            "--provider",
+            "sample",
+            "--output",
+            str(output_path),
+        ],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "Error:" in completed.stderr

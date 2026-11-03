@@ -314,66 +314,75 @@ UNICODE_DASH_PATTERN = re.compile(r"[\u2212\u2010\u2011\u2012\u2013\u2014\u00ad]
 
 def extract_pdf_data(stream_or_path: BinaryIO | bytes | Path, part_number: str | None = None) -> tuple[str, int, list[int]]:
     """Extract informative text from a PDF, intelligently filtering long documents."""
+    should_close = False
     if isinstance(stream_or_path, (bytes, bytearray)):
         if not stream_or_path:
             return "", 0, []
         stream = io.BytesIO(stream_or_path)
     elif isinstance(stream_or_path, Path):
         stream = open(stream_or_path, "rb")
+        should_close = True
     else:
         stream = stream_or_path
 
-    reader = PdfReader(stream)
-    total_pages = len(reader.pages)
-    if total_pages == 0:
-        return "", 0, []
+    try:
+        reader = PdfReader(stream)
+        total_pages = len(reader.pages)
+        if total_pages == 0:
+            return "", 0, []
 
-    # If small PDF (<= 15 pages), read all pages
-    if total_pages <= 15:
-        pages_to_read = list(range(total_pages))
-    else:
-        # Prioritize key pages: always pages 0 and 1 (cover & main specifications)
-        pages_set = {0, 1}
-        pn_clean = re.sub(r"[^A-Za-z0-9]", "", part_number or "").casefold()
-        keywords = (
-            "ordering", "part number", "specifications", "electrical", "ratings",
-            "absolute maximum", "dimension", "package", "characteristics", "marking",
-            "features", "description", "table", "typical", "standard", "selection guide",
-            "pin configuration", "terminal", "connection", "cable", "wire", "drawing",
-            "mechanical", "outline", "schematic", "application", "input", "output", "diagram"
-        )
-        for i in range(total_pages):
-            if len(pages_set) >= 20:
-                break
-            page_text = ""
+        # If small PDF (<= 15 pages), read all pages
+        if total_pages <= 15:
+            pages_to_read = list(range(total_pages))
+        else:
+            # Prioritize key pages: always pages 0 and 1 (cover & main specifications)
+            pages_set = {0, 1}
+            pn_clean = re.sub(r"[^A-Za-z0-9]", "", part_number or "").casefold()
+            keywords = (
+                "ordering", "part number", "specifications", "electrical", "ratings",
+                "absolute maximum", "dimension", "package", "characteristics", "marking",
+                "features", "description", "table", "typical", "standard", "selection guide",
+                "pin configuration", "terminal", "connection", "cable", "wire", "drawing",
+                "mechanical", "outline", "schematic", "application", "input", "output", "diagram"
+            )
+            for i in range(total_pages):
+                if len(pages_set) >= 20:
+                    break
+                page_text = ""
+                try:
+                    raw_text = reader.pages[i].extract_text() or ""
+                    page_text = UNICODE_DASH_PATTERN.sub("-", raw_text)
+                except Exception:
+                    continue
+                text_lower = page_text.casefold()
+                if pn_clean and pn_clean in re.sub(r"[^A-Za-z0-9]", "", text_lower):
+                    pages_set.add(i)
+                elif any(k in text_lower for k in keywords):
+                    pages_set.add(i)
+
+            pages_to_read = sorted(pages_set)[:16]
+
+        extracted_parts = []
+        analyzed_pages = []
+        for idx in pages_to_read:
             try:
-                raw_text = reader.pages[i].extract_text() or ""
-                page_text = UNICODE_DASH_PATTERN.sub("-", raw_text)
+                page_txt = reader.pages[idx].extract_text()
+                if page_txt:
+                    # Normalize Unicode characters (e.g. non-breaking spaces, symbols), Unicode dashes, and line breaks
+                    clean_txt = unicodedata.normalize("NFKC", page_txt).replace("\r\n", "\n").replace("\r", "\n")
+                    clean_txt = UNICODE_DASH_PATTERN.sub("-", clean_txt)
+                    extracted_parts.append(f"--- PAGE {idx + 1} ---\n" + clean_txt)
+                    analyzed_pages.append(idx + 1)
             except Exception:
                 continue
-            text_lower = page_text.casefold()
-            if pn_clean and pn_clean in re.sub(r"[^A-Za-z0-9]", "", text_lower):
-                pages_set.add(i)
-            elif any(k in text_lower for k in keywords):
-                pages_set.add(i)
 
-        pages_to_read = sorted(pages_set)[:16]
-
-    extracted_parts = []
-    analyzed_pages = []
-    for idx in pages_to_read:
-        try:
-            page_txt = reader.pages[idx].extract_text()
-            if page_txt:
-                # Normalize Unicode characters (e.g. non-breaking spaces, symbols), Unicode dashes, and line breaks
-                clean_txt = unicodedata.normalize("NFKC", page_txt).replace("\r\n", "\n").replace("\r", "\n")
-                clean_txt = UNICODE_DASH_PATTERN.sub("-", clean_txt)
-                extracted_parts.append(f"--- PAGE {idx + 1} ---\n" + clean_txt)
-                analyzed_pages.append(idx + 1)
-        except Exception:
-            continue
-
-    return "\n\n".join(extracted_parts), total_pages, analyzed_pages
+        return "\n\n".join(extracted_parts), total_pages, analyzed_pages
+    finally:
+        if should_close:
+            try:
+                stream.close()
+            except Exception:
+                pass
 
 
 def is_catalog_document_name(name: str) -> bool:
@@ -4910,12 +4919,12 @@ CRITICAL_SPECS_BY_MATERIAL_TYPE: dict[str, tuple[str, ...]] = {
     "CAP": ("capacitance_str", "capacitance_pf"),
     "IND": ("inductance_str",),
     "DIO": ("voltage", "current"),
-    "TRA": ("vds", "vce", "type_transistor"),
+    "TRA": ("tra_type", "value_tra", "package"),
     "CRY": ("frequency_str",),
     "DSP": ("type_display", "color"),
-    "FUS": ("current", "voltage"),
-    "REL": ("coil_voltage", "contact_current"),
-    "SWI": ("type_switch",),
+    "FUS": ("type_fuse", "fuse_current", "package"),
+    "REL": ("relay_coil_voltage", "relay_contact_current", "package"),
+    "SWT": ("switch_characteristic", "package"),
     "ADP": ("voltage_output", "current_output", "voltage_adapter_output", "current_adapter_output", "type_adaptor"),
     "ANT": ("mounting", "type_antenna"),
     "BAH": ("type_battery_holder",),
@@ -4924,7 +4933,7 @@ CRITICAL_SPECS_BY_MATERIAL_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
-def is_critical_spec_missing(mat_type: str, specs: dict[str, Any], is_text_empty: bool) -> bool:
+def is_critical_spec_missing(mat_type: str, specs: dict[str, Any], is_text_empty: bool = False) -> bool:
     """Determine whether critical specs are missing, triggering Vision LLM fusion if available."""
     if is_text_empty or mat_type == "BİLİNMİYOR" or not mat_type:
         return True
@@ -5479,12 +5488,12 @@ def analyze_datasheet(
                         matched_mfr, matched_code = None, None
                         if rulebook and hasattr(rulebook, "manufacturers"):
                             for s_term, d_name, e_code in rulebook.manufacturers:
-                                if s_term in mfr_lower:
+                                if re.search(rf"\b{re.escape(s_term)}\b", mfr_lower):
                                     matched_mfr, matched_code = d_name, e_code
                                     break
                         if not matched_mfr:
                             for kw, d_name, e_code in KNOWN_MANUFACTURERS:
-                                if kw in mfr_lower:
+                                if re.search(rf"\b{re.escape(kw)}\b", mfr_lower):
                                     matched_mfr, matched_code = d_name, e_code
                                     break
                         final_mfr = matched_mfr if matched_mfr else m_cand

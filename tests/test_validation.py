@@ -293,3 +293,20 @@ def test_json_catalog_rejects_duplicate_normalized_part_numbers(tmp_path):
 
     with pytest.raises(ValueError, match="duplicate normalized part number"):
         JsonCatalogProvider(catalog_path)
+
+
+def test_critical_specs_by_material_type_matches_extracted_keys():
+    from bom_enricher.datasheet_analyzer import is_critical_spec_missing
+    assert not is_critical_spec_missing("REL", {"relay_coil_voltage": "12VDC", "relay_contact_current": "10A", "package": "TH"})
+    assert not is_critical_spec_missing("SWT", {"switch_characteristic": "ON-OFF", "package": "SMD"})
+    assert not is_critical_spec_missing("TRA", {"tra_type": "NPN", "value_tra": "45V / 100MA", "package": "SOT-23"})
+    assert not is_critical_spec_missing("FUS", {"type_fuse": "FAST", "fuse_current": "2A", "package": "1206"})
+
+
+def test_validation_quantity_expands_reference_ranges():
+    from bom_enricher.models import CustomerBomRow
+    from bom_enricher.validation import _validate_quantity
+    row = CustomerBomRow(row_number=2, part="C1-C5", part_number="MPN1", value="100nF", qty="5")
+    qty, status, msg, issue = _validate_quantity(row)
+    assert status == "confirmed"
+    assert issue is None

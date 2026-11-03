@@ -136,11 +136,6 @@ def select_and_render_pages(
     try:
         doc = pdfium.PdfDocument(pdf_bytes)
     except Exception as exc:
-        if pdf_bytes.startswith(b"%PDF-") and max_pages > 0:
-            try:
-                return [_synthesize_blank_page(width=1000, height=1000)]
-            except Exception:
-                pass
         logger.warning("Failed to open PDF with pypdfium2: %s", exc)
         return []
 
@@ -148,11 +143,6 @@ def select_and_render_pages(
     try:
         total_pages = len(doc)
         if total_pages == 0:
-            if pdf_bytes.startswith(b"%PDF-") and max_pages > 0:
-                try:
-                    return [_synthesize_blank_page(width=1000, height=1000)]
-                except Exception:
-                    pass
             return []
 
         # Lightweight text extraction for smart page selection

@@ -6,6 +6,8 @@ import argparse
 from pathlib import Path
 import sys
 
+from zipfile import BadZipFile
+from openpyxl.utils.exceptions import InvalidFileException
 from bom_enricher.workflow import process_bom
 
 
@@ -37,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
             catalog_path=args.catalog,
             sheet_name=args.sheet or 0,
         )
-    except (OSError, ValueError, RuntimeError) as error:
+    except (OSError, ValueError, RuntimeError, BadZipFile, InvalidFileException) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 2
 

@@ -29,6 +29,7 @@ class CustomerBomRow:
     source_file: str = ""
     status: str = ""
     material_type: str = ""
+    row_number: int = 0
 
 
 @dataclass(frozen=True)

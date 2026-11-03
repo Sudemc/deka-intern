@@ -610,6 +610,7 @@ def test_analyze_datasheet_cad_zero_text_uses_vision_fusion():
     buf = io.BytesIO()
     c = canvas.Canvas(buf)
     # Empty canvas simulating vector CAD drawing without extractable text
+    c.showPage()
     c.save()
     cad_pdf_bytes = buf.getvalue()
 
@@ -681,6 +682,7 @@ def test_analyze_datasheet_vision_unavailable_graceful_fallback(rulebook):
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf)
+    c.showPage()
     c.save()
     cad_pdf_bytes = buf.getvalue()
 
@@ -700,6 +702,7 @@ def test_analyze_datasheet_adopts_vlm_material_type_for_unknown():
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf)
+    c.showPage()
     c.save()
     empty_pdf = buf.getvalue()
 
@@ -737,6 +740,7 @@ def test_analyze_datasheet_normalizes_vlm_material_type_synonyms():
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf)
+    c.showPage()
     c.save()
     empty_pdf = buf.getvalue()
 
@@ -2103,3 +2107,25 @@ def test_wurth_socket_header_e2e_arbitration_and_trace(rulebook):
     assert "llm_status" in res
     assert isinstance(res["llm_status"], str)
 
+
+
+def test_extract_pdf_data_closes_path_stream(tmp_path):
+    from bom_enricher.datasheet_analyzer import extract_pdf_data
+    test_pdf = tmp_path / "sample.pdf"
+    pdf_bytes = _create_sample_pdf("Title", "PN-01", ["Page content 1"])
+    test_pdf.write_bytes(pdf_bytes)
+
+    text, total_pages, analyzed_pages = extract_pdf_data(test_pdf)
+    assert total_pages == 1
+    assert "Page content 1" in text
+
+    # Verifying file handle was closed by successfully removing/writing over the file on Windows
+    test_pdf.unlink()
+    assert not test_pdf.exists()
+
+
+def test_pdf_renderer_corrupt_pdf_does_not_synthesize_blank_page():
+    from bom_enricher.pdf_renderer import select_and_render_pages
+    corrupt_pdf = b"%PDF-1.4 corrupt data not valid pdf at all"
+    rendered = select_and_render_pages(corrupt_pdf, max_pages=2)
+    assert rendered == []

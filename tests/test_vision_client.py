@@ -309,3 +309,26 @@ def test_extract_specs_from_images_status_tracking():
 
 
 
+
+
+def test_vision_client_heuristic_detects_swt_switch():
+    client = VisionLLMClient(base_url="http://localhost:11434", model="test-model")
+    raw_content = "Component Type: SWT, switch_characteristic: ON-OFF"
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = {"message": {"content": raw_content}}
+    with patch("httpx.post", return_value=mock_resp):
+        res = client.extract_specs_from_images(images=["dummy"], target_pn="SW-01")
+        assert res is not None
+        assert res["material_type"] == "SWT"
+
+
+def test_vision_client_normalizes_diode_reverse_voltage_without_forward_voltage_overwrite():
+    client = VisionLLMClient(base_url="http://localhost:11434", model="test-model")
+    raw_content = '{"material_type": "DIO", "specs": {"reverse_voltage": "400V", "forward_voltage": "1.1V"}}'
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = {"message": {"content": raw_content}}
+    with patch("httpx.post", return_value=mock_resp):
+        res = client.extract_specs_from_images(images=["dummy"], target_pn="DIO-400V")
+        assert res is not None
+        assert res["specs"].get("voltage") == "400V"
+        assert res["specs"].get("forward_voltage") == "1.1V"

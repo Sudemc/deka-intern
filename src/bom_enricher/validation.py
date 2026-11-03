@@ -4,6 +4,7 @@ from decimal import Decimal, InvalidOperation
 import re
 
 from .component_data import normalize_part_number
+from .excel_io import split_references
 from .models import CheckIssue, ComponentData, ComponentLookupResult, CustomerBomRow, RowResult
 
 
@@ -64,45 +65,54 @@ def _verified_component(
     return component
 
 
-def _validate_quantity(row: CustomerBomRow, issues: list[CheckIssue]) -> None:
-    references = [reference.strip() for reference in row.part.split(",") if reference.strip()]
+def _validate_quantity(
+    row: CustomerBomRow, issues: list[CheckIssue] | None = None
+) -> tuple[Decimal | None, str, str, CheckIssue | None]:
+    references = split_references(row.part)
+    if not references and row.part and row.part.strip():
+        references = [reference.strip() for reference in row.part.split(",") if reference.strip()]
     try:
         quantity = Decimal(str(row.qty).strip())
     except (InvalidOperation, ValueError):
         quantity = None
 
     if quantity is None or not quantity.is_finite() or quantity <= 0:
-        issues.append(
-            CheckIssue(
-                field="quantity",
-                status="invalid",
-                original=str(row.qty),
-                proposed=str(row.qty),
-                message="Qty must be a positive numeric value.",
-            )
+        issue = CheckIssue(
+            field="quantity",
+            status="invalid",
+            original=str(row.qty),
+            proposed=str(row.qty),
+            message="Qty must be a positive numeric value.",
         )
-        return
+        if issues is not None:
+            issues.append(issue)
+        return quantity, "invalid", issue.message, issue
+
     if not references:
-        issues.append(
-            CheckIssue(
-                field="part",
-                status="invalid",
-                original=row.part,
-                proposed=row.part,
-                message="Part must contain at least one board reference.",
-            )
+        issue = CheckIssue(
+            field="part",
+            status="invalid",
+            original=row.part,
+            proposed=row.part,
+            message="Part must contain at least one board reference.",
         )
-        return
+        if issues is not None:
+            issues.append(issue)
+        return quantity, "invalid", issue.message, issue
+
     if quantity != Decimal(len(references)):
-        issues.append(
-            CheckIssue(
-                field="quantity",
-                status="conflict",
-                original=str(row.qty),
-                proposed=str(len(references)),
-                message="Qty does not match the count of comma-separated board references.",
-            )
+        issue = CheckIssue(
+            field="quantity",
+            status="conflict",
+            original=str(row.qty),
+            proposed=str(len(references)),
+            message="Qty does not match the count of comma-separated board references.",
         )
+        if issues is not None:
+            issues.append(issue)
+        return quantity, "conflict", issue.message, issue
+
+    return quantity, "confirmed", "Qty matches reference count.", None
 
 
 def _validate_description(
@@ -296,9 +306,9 @@ def _validate_mounting(
 
 def _canonical_mounting(value: str) -> str:
     normalized = " ".join(value.casefold().replace("-", " ").split())
-    if normalized in {"th", "through hole", "throughhole"}:
+    if normalized in {"th", "through hole", "throughhole", "tht", "dip"}:
         return "TH"
-    if normalized in {"smd", "surface mount", "surfacemount"}:
+    if normalized in {"smd", "surface mount", "surfacemount", "smt"}:
         return "SMD"
     return ""
 

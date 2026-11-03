@@ -251,7 +251,7 @@ class VisionLLMClient:
                 m_type = re.search(r"(?:Type|Component|Material(?:\s*Type)?)\s*[:=]\s*([A-Za-z0-9_-]+)", cleaned_content, re.IGNORECASE)
                 if m_type:
                     cand = m_type.group(1).upper()
-                    if cand in ("CON", "RES", "CAP", "IND", "DIO", "TRA", "CRY", "DSP", "FUS", "REL", "SWI"):
+                    if cand in ("CON", "RES", "CAP", "IND", "DIO", "TRA", "CRY", "DSP", "FUS", "REL", "SWT"):
                         mat_type = cand
                     elif "CONNECTOR" in cand or "HEADER" in cand or "TERMINAL" in cand:
                         mat_type = "CON"
@@ -340,11 +340,12 @@ class VisionLLMClient:
         normalized_specs: dict[str, Any] = {}
         key_aliases = {
             "vrrm": "voltage",
-            "forward_voltage": "voltage",
             "reverse_voltage": "voltage",
             "breakdown_voltage": "voltage",
             "blocking_voltage": "voltage",
             "rated_voltage": "voltage",
+            "vf": "forward_voltage",
+            "forward_voltage": "forward_voltage",
             "if": "current",
             "if_av": "current",
             "forward_current": "current",
@@ -385,6 +386,8 @@ class VisionLLMClient:
             normalized_specs[k] = v
             norm_k = key_aliases.get(k.lower().strip())
             if norm_k and norm_k != k:
+                if norm_k == "voltage" and "voltage" in normalized_specs:
+                    continue
                 normalized_specs[norm_k] = v
 
         # Normalize pin_number string format (strip whitespace)
