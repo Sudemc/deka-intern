@@ -1103,3 +1103,49 @@ def test_erp_table_profiling(tmp_path):
     issue_text = stm_row["Hata/Uyarı Durumu"]
     assert "Malformed reference designator" in issue_text or "missing component class letter" in issue_text
 
+
+def test_multi_row_annotation(tmp_path):
+    from openpyxl import Workbook
+    from bom_enricher.comparison import compare_workbooks
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "BOM"
+    ws.append(["Part Number", "Description", "Designator", "Quantity"])  # Row 1
+    ws.append(["BLM21PG221SN1D", "Ferrite Bead 0805", "L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12", 12])  # Row 2
+    for i in range(3, 18):
+        ws.append([f"RES-{i:03d}", f"{i}k Resistor", f"R{i}", 1])
+    ws.append(["BLM21PG221SN1D", "Ferrite Bead 0805", "L13, L14", 2])  # Row 18
+    for i in range(19, 21):
+        ws.append([f"CAP-{i:03d}", f"{i}uF Capacitor", f"C{i}", 1])
+    ws.append(["IND-001", "Choke Inductor", "L2, L3, L4, L5, L6, L8, L9", 6])  # Row 21
+    cust_path = tmp_path / "customer_bom.xlsx"
+    wb.save(cust_path)
+    wb.close()
+
+    wb_erp = Workbook()
+    ws_erp = wb_erp.active
+    ws_erp.title = "ERP"
+    ws_erp.append(["Part Number", "Description", "Designator", "Quantity", "TH/SMD"])
+    ws_erp.append(["BLM21PG221SN1D", "Ferrite Bead 0805 SMD", "L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14", 14, "SMD"])
+    ws_erp.append(["IND-001", "Choke Inductor SMD", "L2, L3, L4, L5, L6, L8, L9", 6, "SMD"])
+    for i in range(3, 18):
+        ws_erp.append([f"RES-{i:03d}", f"{i}k Resistor SMD", f"R{i}", 1, "SMD"])
+    for i in range(19, 21):
+        ws_erp.append([f"CAP-{i:03d}", f"{i}uF Capacitor SMD", f"C{i}", 1, "SMD"])
+    erp_path = tmp_path / "erp_bom.xlsx"
+    wb_erp.save(erp_path)
+    wb_erp.close()
+
+    res = compare_workbooks(cust_path, erp_path)
+
+    blm_row = next(r for r in res.rows if r.get("Part Number") == "BLM21PG221SN1D")
+    assert blm_row["Kaynak Kart / BOM"] == "Satır 2 (12 adet) + Satır 18 (2 adet)"
+    assert blm_row["Müşteri Qty"] == "14"
+    assert blm_row["Durum"] == "UYGUN"
+
+    ind_row = next(r for r in res.rows if r.get("Part Number") == "IND-001")
+    assert "Satır 21: Müşteri Qty ile Referans sayısı uyumsuz (Qty: 6, Ref: 7)" in ind_row["Hata/Uyarı Durumu"]
+    assert ind_row["Durum"] == "HATA"
+
+

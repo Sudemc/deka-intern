@@ -1228,6 +1228,6 @@ def read_bom_table(
     return read_customer_bom(path, sheet_name=sheet_name, mapping=mapping, is_erp=is_erp)
 
 
-def read_bom_workbook(path: Path | str, kind: str = "customer"):
+def read_bom_workbook(path: Path | list[Path] | str | list[str], kind: str = "customer"):
     from bom_enricher.comparison import read_bom_workbook as _read_bom_workbook
     return _read_bom_workbook(path, kind=kind)

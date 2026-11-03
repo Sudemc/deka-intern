@@ -86,6 +86,8 @@ class PartRecord:
     all_codes: tuple[str, ...] = ()
     code_labels: dict[str, str] = field(default_factory=dict)
     status: str = ""
+    source_row: int = 0
+    row_errors: tuple[str, ...] = ()
 
 
 
@@ -543,6 +545,8 @@ def _qualify_customer_references(
                     all_codes=rec.all_codes,
                     code_labels=rec.code_labels,
                     status=rec.status,
+                    source_row=rec.source_row,
+                    row_errors=rec.row_errors,
                 ))
                 continue
 
@@ -566,6 +570,8 @@ def _qualify_customer_references(
                 all_codes=rec.all_codes,
                 code_labels=rec.code_labels,
                 status=rec.status,
+                source_row=rec.source_row,
+                row_errors=rec.row_errors,
             ))
             continue
 
@@ -607,6 +613,8 @@ def _qualify_customer_references(
             all_codes=rec.all_codes,
             code_labels=rec.code_labels,
             status=rec.status,
+            source_row=rec.source_row,
+            row_errors=rec.row_errors,
         ))
     return updated
 
@@ -753,9 +761,14 @@ def compare_workbooks(
                     qty=rec.qty,
                     manufacturer=rec.manufacturer,
                     package=rec.package,
+                    duplicate=rec.duplicate,
                     source_file=rec.source_file,
                     source_sheet=rec.source_sheet,
                     all_codes=tuple(codes),
+                    code_labels=rec.code_labels,
+                    status=rec.status,
+                    source_row=rec.source_row,
+                    row_errors=rec.row_errors,
                 ))
                 group.add(_normalize_code(code))
             sibling_groups.append({
@@ -778,10 +791,12 @@ def compare_workbooks(
                 all_codes=rec.all_codes or tuple(codes),
                 code_labels=rec.code_labels,
                 status=rec.status,
+                source_row=rec.source_row,
+                row_errors=rec.row_errors,
             ))
 
-    customer_by_code = _unique_records(customer)
-    erp_by_code = _unique_records(erp)
+    customer_by_code = _unique_records(customer, kind="customer")
+    erp_by_code = _unique_records(erp, kind="erp")
 
     # ── Üç Aşamalı Eşleme (Three-Pass Matching) ──
     # Aşama 1: Normalized Part Number üzerinden birincil eşleme
@@ -855,6 +870,8 @@ def compare_workbooks(
                                         all_codes=tuple(dict.fromkeys(c_matched.all_codes + other_c.all_codes)),
                                         code_labels={**c_matched.code_labels, **other_c.code_labels},
                                         status=c_matched.status,
+                                        source_row=c_matched.source_row,
+                                        row_errors=c_matched.row_errors + other_c.row_errors,
                                     )
                                     crefs = set(merged_refs)
                                     missing_refs = erefs - crefs
@@ -894,6 +911,8 @@ def compare_workbooks(
                         all_codes=e_matched.all_codes,
                         code_labels=e_matched.code_labels,
                         status=e_matched.status,
+                        source_row=e_matched.source_row,
+                        row_errors=e_matched.row_errors,
                     )
                     remaining_erefs = erefs - crefs
                     e_nm = PartRecord(
@@ -913,6 +932,8 @@ def compare_workbooks(
                         all_codes=e_matched.all_codes,
                         code_labels=e_matched.code_labels,
                         status=e_matched.status,
+                        source_row=e_matched.source_row,
+                        row_errors=e_matched.row_errors,
                     )
                     matched_pairs.append((c_matched, e_active))
                     matched_pairs.append((c_nm, e_nm))
@@ -1050,6 +1071,11 @@ def compare_workbooks(
                 customer_mounting = inferred_cust
         issues: list[str] = []
 
+        if customer_record and customer_record.row_errors:
+            issues.extend(customer_record.row_errors)
+        if erp_record and erp_record.row_errors:
+            issues.extend(erp_record.row_errors)
+
         if customer_record and customer_record.reference:
             ref_warnings = validate_reference_tokens(customer_record.reference)
             for w in ref_warnings:
@@ -1108,7 +1134,8 @@ def compare_workbooks(
                         issues.append(f"Miktar Uyuşmazlığı (Müşteri: {customer_qty}, ERP: {erp_qty})")
 
             # 2. Müşteri Qty vs Referans Adedi
-            if customer_record.reference and customer_qty:
+            has_cust_ref_err = any("Müşteri Qty ile Referans sayısı uyumsuz" in err for err in (customer_record.row_errors if customer_record else ()))
+            if not has_cust_ref_err and customer_record and customer_record.reference and customer_qty:
                 ref_tokens = [r.strip() for r in re.split(r"[,;|\s/]+", customer_record.reference) if r.strip()]
                 valid_refs = [
                     r for r in ref_tokens
@@ -1118,14 +1145,16 @@ def compare_workbooks(
                     try:
                         c_qty_val = float(customer_qty)
                         if c_qty_val != len(valid_refs) and c_qty_val != len(ref_tokens):
+                            prefix = f"Satır {customer_record.source_row}: " if customer_record.source_row else ""
                             issues.append(
-                                f"Müşteri Qty ile Referans sayısı uyumsuz (Qty: {customer_qty}, Ref: {len(valid_refs)})"
+                                f"{prefix}Müşteri Qty ile Referans sayısı uyumsuz (Qty: {customer_qty}, Ref: {len(valid_refs)})"
                             )
                     except ValueError:
                         pass
 
             # 2b. ERP Qty vs Referans Adedi
-            if erp_record.reference and erp_qty:
+            has_erp_ref_err = any("ERP Qty ile Referans sayısı uyumsuz" in err for err in (erp_record.row_errors if erp_record else ()))
+            if not has_erp_ref_err and erp_record and erp_record.reference and erp_qty:
                 e_ref_tokens = [r.strip() for r in re.split(r"[,;|\s/]+", erp_record.reference) if r.strip()]
                 valid_e_refs = [
                     r for r in e_ref_tokens
@@ -1135,8 +1164,9 @@ def compare_workbooks(
                     try:
                         e_qty_val = float(erp_qty)
                         if e_qty_val != len(valid_e_refs) and e_qty_val != len(e_ref_tokens):
+                            prefix = f"Satır {erp_record.source_row}: " if erp_record.source_row else ""
                             issues.append(
-                                f"ERP Qty ile Referans sayısı uyumsuz (ERP Qty: {erp_qty}, ERP Ref: {len(valid_e_refs)} adet)"
+                                f"{prefix}ERP Qty ile Referans sayısı uyumsuz (ERP Qty: {erp_qty}, ERP Ref: {len(valid_e_refs)} adet)"
                             )
                     except ValueError:
                         pass
@@ -1314,6 +1344,7 @@ def read_bom_workbook(path: Path | list[Path] | str | list[str], kind: str = "cu
                             code_labels=code_labels,
                             status=row.status,
                             material_type=row.material_type,
+                            source_row=row.source_row,
                         ))
                     else:
                         qty_str = _cell_text(row.qty).strip()
@@ -1340,6 +1371,7 @@ def read_bom_workbook(path: Path | list[Path] | str | list[str], kind: str = "cu
                                 source_sheet=sheet,
                                 status=row.status,
                                 material_type=row.material_type,
+                                source_row=row.source_row,
                             ))
         if not all_records:
             first_name = paths[0].name if paths else "Müşteri dosyası"
@@ -1376,6 +1408,8 @@ def read_bom_workbook(path: Path | list[Path] | str | list[str], kind: str = "cu
                         all_codes=r.all_codes,
                         code_labels=r.code_labels,
                         status=r.status,
+                        source_row=r.source_row,
+                        row_errors=r.row_errors,
                     ))
                 else:
                     updated_records.append(r)
@@ -1450,6 +1484,7 @@ def read_bom_workbook(path: Path | list[Path] | str | list[str], kind: str = "cu
                     all_codes=all_codes,
                     code_labels=code_labels,
                     status=row.status,
+                    source_row=row.source_row,
                 ))
 
     if not records:
@@ -1735,7 +1770,7 @@ def write_comparison_report(rows: list[dict[str, str]], output_path: Path) -> No
     workbook.close()
 
 
-def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
+def _unique_records(records: list[PartRecord], kind: str = "customer") -> dict[str, PartRecord]:
     grouped: dict[str, list[PartRecord]] = defaultdict(list)
     no_code_count = 0
     dnp_statuses = {"NM", "N.M.", "NOT MOUNTED", "DNP", "NO POPULATE", "NC", "DO NOT POPULATE"}
@@ -1758,6 +1793,38 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
         material_types = list(dict.fromkeys(item.material_type for item in group if item.material_type))
         packages = list(dict.fromkeys(item.package for item in group if item.package))
         manufacturers = list(dict.fromkeys(item.manufacturer for item in group if item.manufacturer))
+
+        # Per-row pre-validation: check Qty == len(refs) before grouping
+        group_row_errors: list[str] = []
+        for item in group:
+            if item.row_errors:
+                for err in item.row_errors:
+                    if err not in group_row_errors:
+                        group_row_errors.append(err)
+            if _check_certain_non_assembly(item)[0]:
+                continue
+            if item.reference and item.qty:
+                ref_tokens = [r.strip() for r in re.split(r"[,;|\s/]+", item.reference) if r.strip()]
+                valid_refs = [
+                    r for r in ref_tokens
+                    if re.match(r"^(?:[A-Za-z0-9]+_)?[A-Za-z][A-Za-z0-9_]*$", r)
+                ]
+                refs = _split_refs(item.reference)
+                ref_count = len(refs) if refs else len(valid_refs)
+                if ref_count > 0:
+                    try:
+                        q_num = float(item.qty)
+                        if q_num != ref_count and q_num != len(valid_refs) and q_num != len(ref_tokens):
+                            q_disp = int(q_num) if q_num.is_integer() else q_num
+                            prefix = f"Satır {item.source_row}: " if item.source_row else ""
+                            if kind == "customer":
+                                err_msg = f"{prefix}Müşteri Qty ile Referans sayısı uyumsuz (Qty: {q_disp}, Ref: {ref_count})"
+                            else:
+                                err_msg = f"{prefix}ERP Qty ile Referans sayısı uyumsuz (ERP Qty: {q_disp}, ERP Ref: {ref_count} adet)"
+                            if err_msg not in group_row_errors:
+                                group_row_errors.append(err_msg)
+                    except (ValueError, TypeError):
+                        pass
 
         total_qty = 0
         has_qty = False
@@ -1794,22 +1861,55 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
                         break
 
         # Source breakdown and combined references
-        source_counts: dict[str, int] = defaultdict(int)
-        for item in group:
-            if not item.source_file:
-                continue
-            src_label = f"{item.source_file} ({item.source_sheet})" if item.source_sheet else item.source_file
+        def _fmt_q(qty: object) -> str:
+            if qty is None:
+                return "1"
+            qs = str(qty).strip()
+            if not qs:
+                return "1"
             try:
-                source_counts[src_label] += int(float(item.qty)) if item.qty else 1
-            except (ValueError, TypeError):
-                source_counts[src_label] += 1
+                fv = float(qs)
+                return str(int(fv)) if fv.is_integer() else str(fv)
+            except ValueError:
+                return qs
 
-        if len(source_counts) > 1:
-            source_breakdown = ", ".join(f"{src}: {cnt} adet" for src, cnt in source_counts.items())
-        elif len(source_counts) == 1:
-            source_breakdown = list(source_counts.keys())[0]
+        sources_map: dict[str, list[PartRecord]] = defaultdict(list)
+        for item in group:
+            src_label = f"{item.source_file} ({item.source_sheet})" if item.source_sheet else (item.source_file or "")
+            sources_map[src_label].append(item)
+
+        if len(sources_map) <= 1:
+            # Single source file/sheet (or no file)
+            if len(group) > 1 and any(item.source_row for item in group):
+                source_breakdown = " + ".join(
+                    f"Satır {item.source_row} ({_fmt_q(item.qty)} adet)"
+                    if item.source_row else f"({_fmt_q(item.qty)} adet)"
+                    for item in group
+                )
+            elif len(sources_map) == 1 and list(sources_map.keys())[0]:
+                source_breakdown = list(sources_map.keys())[0]
+            else:
+                source_breakdown = ""
         else:
-            source_breakdown = ""
+            # Multiple source files/sheets
+            parts: list[str] = []
+            for src, items in sources_map.items():
+                if len(items) > 1 and any(it.source_row for it in items):
+                    sub = " + ".join(
+                        f"Satır {it.source_row} ({_fmt_q(it.qty)} adet)"
+                        if it.source_row else f"({_fmt_q(it.qty)} adet)"
+                        for it in items
+                    )
+                    parts.append(f"{src}: {sub}")
+                else:
+                    tot = 0
+                    for it in items:
+                        try:
+                            tot += int(float(it.qty)) if it.qty else 1
+                        except (ValueError, TypeError):
+                            tot += 1
+                    parts.append(f"{src}: {tot} adet")
+            source_breakdown = ", ".join(parts)
 
         all_refs_list: list[str] = []
         for item in group:
@@ -1841,6 +1941,8 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
             all_codes=merged_all_codes,
             code_labels=merged_code_labels,
             status=merged_status,
+            source_row=group[0].source_row,
+            row_errors=tuple(group_row_errors),
         )
     return result
 
