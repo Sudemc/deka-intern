@@ -618,6 +618,8 @@ def test_parse_numeric_qty_and_format_qty_value():
     assert parse_numeric_qty("4 adet") == 4.0
     assert parse_numeric_qty(15) == 15.0
     assert parse_numeric_qty(2.5) == 2.5
+    assert parse_numeric_qty(True) is None
+    assert parse_numeric_qty(False) is None
     assert parse_numeric_qty("") is None
     assert parse_numeric_qty(None) is None
     assert parse_numeric_qty("NOT_A_NUMBER") is None
@@ -633,6 +635,10 @@ def test_is_dnp_row():
     assert is_dnp_row("RC0402", "10K (DNP)", "", "", "R1", "1")[0] is True
     assert is_dnp_row("RC0402", "10K", "DNP", "", "R1", "1")[0] is True
     assert is_dnp_row("RC0402", "10K", "", "NM", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "", "Process: NM", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "", "Process:NM", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "", "Process: SMD", "R1", "1")[0] is False
+    assert is_dnp_row("RC0402", "10K", "", "SMD", "R1", "1")[0] is False
     assert is_dnp_row("RC0402", "10K", "", "", "R1 (DNP)", "1")[0] is True
     assert is_dnp_row("RC0402", "10K", "", "", "R1", "0")[0] is True
     assert is_dnp_row("RC0402", "10K (NOT MOUNTED)", "", "", "R1", "1")[0] is True

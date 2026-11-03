@@ -1977,7 +1977,10 @@ def write_comparison_report(rows: list[dict[str, str]], output_path: Path) -> No
 def _unique_records(records: list[PartRecord], kind: str = "customer") -> dict[str, PartRecord]:
     grouped: dict[str, list[PartRecord]] = defaultdict(list)
     no_code_count = 0
-    dnp_statuses = {"NM", "N.M.", "NOT MOUNTED", "DNP", "NO POPULATE", "NC", "DO NOT POPULATE"}
+    dnp_statuses = {
+        "NM", "N.M.", "NOT MOUNTED", "DNP", "NO POPULATE", "NC", "DO NOT POPULATE",
+        "PROCESS: NM", "PROCESS:NM", "PROSES: NM", "PROSES:NM",
+    }
     for record in records:
         is_dnp, _ = is_dnp_row(
             record.part_number,
@@ -1987,8 +1990,14 @@ def _unique_records(records: list[PartRecord], kind: str = "customer") -> dict[s
             record.reference,
             record.qty,
         )
-        is_nm = is_dnp or (record.status or "").strip().upper() in dnp_statuses or "NOT MOUNTED" in (record.status or "").upper()
-        if is_nm and (not record.status or record.status.upper() not in dnp_statuses):
+        stat_upper = (record.status or "").strip().upper()
+        is_nm = (
+            is_dnp
+            or stat_upper in dnp_statuses
+            or "NOT MOUNTED" in stat_upper
+            or bool(re.search(r"\bNM\b", stat_upper))
+        )
+        if is_nm and (not record.status or (stat_upper not in dnp_statuses and not bool(re.search(r"\bNM\b", stat_upper)))):
             record = replace(record, status="DNP")
 
         if not record.part_number.strip():

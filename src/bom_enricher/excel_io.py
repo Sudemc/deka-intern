@@ -26,7 +26,7 @@ _QTY_RE = re.compile(
 
 def parse_numeric_qty(raw: object) -> float | None:
     """Parse numeric quantities supporting commas, decimals, and unit suffixes into float."""
-    if raw is None or pd.isna(raw):
+    if raw is None or pd.isna(raw) or isinstance(raw, bool):
         return None
     if isinstance(raw, (int, float)):
         try:
@@ -93,6 +93,7 @@ _EXACT_DNP_WORDS = {
     "NOT MOUNTED", "DO NOT POPULATE", "NOT POPULATED",
     "DİZİLMEZ", "DIZILMEZ", "DİZİLMEYECEK", "DIZILMEYECEK",
     "NO FIT", "NO POP", "NO POPULATE", "MONTAJ DIŞI", "MONTAJ DISI", "MONTAJ YOK",
+    "PROCESS: NM", "PROCESS:NM", "PROCESS : NM", "PROSES: NM", "PROSES:NM",
 }
 
 
@@ -118,7 +119,11 @@ def is_dnp_row(
 
     # 2. Status column
     stat_u = stat_s.upper()
-    if stat_u in _EXACT_DNP_WORDS or any(tag in stat_u for tag in _DNP_TAGS):
+    if (
+        stat_u in _EXACT_DNP_WORDS
+        or any(tag in stat_u for tag in _DNP_TAGS)
+        or bool(re.search(r"\bNM\b", stat_u))
+    ):
         return True, f"Montaj Dışı / Dizilmez ({stat_s})"
 
     # 3. Mounting column
@@ -1285,7 +1290,7 @@ def read_customer_bom(
             stat_str = _string_value(get_value("status")).strip()
 
             is_dnp, _ = is_dnp_row(part_number, val_str, mount_str, stat_str, part_str, qty)
-            if is_dnp and (not stat_str or stat_str.upper() not in _EXACT_DNP_WORDS):
+            if is_dnp and (not stat_str or (stat_str.upper() not in _EXACT_DNP_WORDS and not bool(re.search(r"\bNM\b", stat_str.upper())))):
                 stat_str = "DNP"
 
             if part_str:
@@ -1343,13 +1348,17 @@ def read_customer_bom(
 _IGNORED_SHEET_KEYWORDS = {
     "bin", "revision", "revizyon", "history", "cover", "kapak", "tarihce", "tarihçe",
     "doc", "dokuman", "özeti", "ozeti", "summary", "kickoff", "spec", "specification",
-    "gerber", "readme", "data", "lookup", "dropdown", "secim", "seçim", "parametre",
+    "gerber", "readme", "lookup", "dropdown", "secim", "seçim", "parametre",
 }
 
 
 def _is_ignored_sheet_name(title: str) -> bool:
     title_lower = title.casefold()
     tokens = set(re.split(r"[^a-z0-9çğıöşü]+", title_lower))
+    if ("pcb" in tokens or "bom" in tokens or "dizgi" in tokens) and not (
+        tokens & {"spec", "specification", "gerber", "readme", "history", "tarihce", "tarihçe", "revision", "revizyon", "cover", "kapak"}
+    ):
+        return False
     return bool(tokens & _IGNORED_SHEET_KEYWORDS)
 
 

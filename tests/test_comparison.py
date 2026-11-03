@@ -1271,9 +1271,14 @@ def test_multi_sheet_ignores_cover_page_with_project_code_and_keeps_cabin_pcb(tm
     ws_bom = wb.create_sheet("CABIN_PCB")
     ws_bom.append(["Part Number", "Description", "Designator", "Quantity"])
     ws_bom.append(["RC0402FR-0710KL", "10K", "R1", 1])
+    ws_data = wb.create_sheet("DATA_PCB")
+    ws_data.append(["Part Number", "Description", "Designator", "Quantity"])
+    ws_data.append(["RC0402FR-07100RL", "100R", "R2", 1])
+    ws_spec = wb.create_sheet("PCB Specification File")
+    ws_spec.append(["Board Thickness", "1.6mm"])
     wb.save(wb_path)
     wb.close()
-    assert find_customer_bom_sheets(wb_path) == ["CABIN_PCB"]
+    assert find_customer_bom_sheets(wb_path) == ["CABIN_PCB", "DATA_PCB"]
 
 
 
