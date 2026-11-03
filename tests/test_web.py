@@ -22,17 +22,33 @@ def _request(method, url, **kwargs):
     return asyncio.run(send())
 
 
-def _workbook_bytes(tmp_path, filename, sheet_name, headers, rows):
-    path = tmp_path / filename
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = sheet_name
-    sheet.append(headers)
-    for row in rows:
-        sheet.append(row)
-    workbook.save(path)
-    workbook.close()
-    return path.read_bytes()
+def _workbook_bytes(*args):
+    import io
+    if len(args) == 3:
+        sheet_name, headers, rows = args
+        wb = Workbook()
+        ws = wb.active
+        ws.title = sheet_name
+        ws.append(headers)
+        for row in rows:
+            ws.append(row)
+        buf = io.BytesIO()
+        wb.save(buf)
+        wb.close()
+        return buf.getvalue()
+    elif len(args) == 5:
+        tmp_path, filename, sheet_name, headers, rows = args
+        path = tmp_path / filename
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = sheet_name
+        sheet.append(headers)
+        for row in rows:
+            sheet.append(row)
+        workbook.save(path)
+        workbook.close()
+        return path.read_bytes()
+    raise ValueError(f"Unexpected number of arguments to _workbook_bytes: {len(args)}")
 
 
 def _files(tmp_path):
@@ -102,7 +118,7 @@ def test_web_compares_three_files_and_returns_report_download(tmp_path):
 
 def test_web_rejects_non_xlsx_upload(tmp_path):
     files = _files(tmp_path)
-    files["customer_file"] = ("parts.csv", b"part,description", "text/csv")
+    files["customer_file"] = ("parts.txt", b"part,description", "text/plain")
 
     response = _request("POST", "/api/compare", files=files)
 
@@ -364,5 +380,94 @@ def test_index_html_contains_llm_accordion_template():
     assert "Açıklama" in page.text
     assert "Regex Parametreleri" in page.text
     assert "LLM Parametreleri" in page.text
+
+
+def test_index_html_renders_reference_columns_and_metric_filters():
+    page = _request("GET", "/")
+    assert page.status_code == 200
+    assert "Kaynak Kart / BOM" in page.text
+    assert "Müşteri Referans" in page.text
+    assert "ERP Referans" in page.text
+    assert 'data-status-filter="ALL"' in page.text
+    assert 'data-status-filter="HATA"' in page.text
+    assert 'data-status-filter="UYARI"' in page.text
+    assert 'data-status-filter="INFO"' in page.text
+    assert 'data-status-filter="UYGUN"' in page.text
+    assert 'onclick="removePdf(' not in page.text
+    assert 'onclick="copyText(' not in page.text
+
+
+
+def test_web_handles_csv_upload_and_corrupted_zip_without_500():
+    client = TestClient(app)
+    csv_cust = b"Part Number,Description,Reference,Qty\nRC0402FR-0710KL,10K,R1,1\n"
+    erp_bytes = _workbook_bytes("ERP", ["Part Number", "Description", "Reference", "Qty", "Mounting"], [
+        ["RC0402FR-0710KL", "10K SMD", "R1", 1, "SMD"],
+    ])
+    resp = client.post(
+        "/api/compare",
+        files=[
+            ("customer_files", ("cust.csv", csv_cust, "text/csv")),
+            ("erp_file", ("erp.xlsx", erp_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+        ],
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["clean_count"] == 1
+
+
+def test_web_datasheet_analyze_rejects_oversized_pdf(monkeypatch):
+    import bom_enricher.web as web_mod
+    monkeypatch.setattr(web_mod, "_MAX_UPLOAD_BYTES", 100)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/datasheet-analyze",
+        files=[("pdf_files", ("big.pdf", b"%PDF-1.4 " + b"0" * 200, "application/pdf"))],
+    )
+    assert resp.status_code == 413
+
+
+def test_web_rejects_ole2_encrypted_or_legacy_file():
+    client = TestClient(app)
+    ole2_bytes = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 100
+    erp_bytes = _workbook_bytes("ERP", ["Part Number", "Description", "Reference", "Qty", "Mounting"], [
+        ["RC0402FR-0710KL", "10K SMD", "R1", 1, "SMD"],
+    ])
+    resp = client.post(
+        "/api/compare",
+        files=[
+            ("customer_files", ("legacy.xlsx", ole2_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+            ("erp_file", ("erp.xlsx", erp_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+        ],
+    )
+    assert resp.status_code == 422
+    assert "eski Excel (.xls)" in resp.json()["detail"] or "şifre" in resp.json()["detail"]
+
+
+def test_web_preserves_subfolder_prefix_on_duplicate_filenames():
+    client = TestClient(app)
+    cust1 = _workbook_bytes("BOM", ["Part Number", "Value", "Part", "Qty"], [
+        ["RC0402FR-0710KL", "10K", "C1, C2", 2]
+    ])
+    cust2 = _workbook_bytes("BOM", ["Part Number", "Value", "Part", "Qty"], [
+        ["RC0402FR-0710KL", "10K", "C3, C4", 2]
+    ])
+    erp_bytes = _workbook_bytes("ERP", ["Part Number", "Description", "Part", "Qty", "TH/SMD"], [
+        ["RC0402FR-0710KL", "10K", "SUB1_C1, SUB1_C2, SUB2_C3, SUB2_C4", 4, "SMD"]
+    ])
+    resp = client.post(
+        "/api/compare",
+        files=[
+            ("customer_files", ("sub1/BOM.xlsx", cust1, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+            ("customer_files", ("sub2/BOM.xlsx", cust2, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+            ("erp_file", ("erp.xlsx", erp_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+        ],
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_part_count"] == 1
+    assert data["clean_count"] == 1
+
+
 
 

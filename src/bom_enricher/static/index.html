@@ -637,6 +637,16 @@
       padding: 18px 20px;
       text-align: center;
       border-right: 1px solid var(--gray-200);
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s ease, box-shadow 0.15s ease;
+    }
+    .metric:hover {
+      background: var(--gray-100, #f3f4f6);
+    }
+    .metric.active {
+      background: #ffffff;
+      box-shadow: inset 0 -3px 0 var(--deka-red);
     }
     .metric:last-child {
       border-right: none;
@@ -1328,23 +1338,23 @@
         </div>
 
         <div class="metrics">
-          <div class="metric">
+          <div class="metric active" data-status-filter="ALL" title="Tüm parçaları göster">
             <div class="metric-num" id="metric-total">0</div>
             <div class="metric-label">Toplam Parça</div>
           </div>
-          <div class="metric">
+          <div class="metric" data-status-filter="HATA" title="Yalnızca hatalı kayıtları filtrele">
             <div class="metric-num" style="color:var(--deka-red)" id="metric-error">0</div>
             <div class="metric-label">Hata (Kırmızı)</div>
           </div>
-          <div class="metric">
+          <div class="metric" data-status-filter="UYARI" title="Yalnızca uyarıları filtrele">
             <div class="metric-num" style="color:var(--amber)" id="metric-warn">0</div>
             <div class="metric-label">Uyarı (Sarı)</div>
           </div>
-          <div class="metric">
+          <div class="metric" data-status-filter="INFO" title="Yalnızca montaj dışı kayıtları filtrele">
             <div class="metric-num" style="color:var(--blue)" id="metric-info">0</div>
             <div class="metric-label">Montaj Dışı (Açık Mavi)</div>
           </div>
-          <div class="metric">
+          <div class="metric" data-status-filter="UYGUN" title="Yalnızca sorunsuz kayıtları filtrele">
             <div class="metric-num" style="color:var(--green)" id="metric-clean">0</div>
             <div class="metric-label">Sorunsuz (Uygun)</div>
           </div>
@@ -1745,6 +1755,17 @@
       }
     });
 
+    let currentFilter = 'ALL';
+
+    document.querySelectorAll('.metric[data-status-filter]').forEach(card => {
+      card.addEventListener('click', () => {
+        document.querySelectorAll('.metric[data-status-filter]').forEach(c => c.classList.remove('active'));
+        card.classList.add('active');
+        currentFilter = card.dataset.statusFilter || 'ALL';
+        renderTable();
+      });
+    });
+
     function render(data) {
       document.querySelector('#result-summary').textContent = 'Tüm satırlar karşılaştırıldı · dış API kullanılmadı';
       document.querySelector('#metric-total').textContent = data.row_count;
@@ -1754,6 +1775,11 @@
       document.querySelector('#metric-clean').textContent = data.clean_count;
       document.querySelector('#download-link').href = data.download_url;
       document.querySelector('#results').classList.add('show');
+      currentFilter = 'ALL';
+      document.querySelectorAll('.metric[data-status-filter]').forEach((c, idx) => {
+        if (idx === 0) c.classList.add('active');
+        else c.classList.remove('active');
+      });
       renderTable();
       document.querySelector('#results').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
@@ -1761,10 +1787,24 @@
     function renderTable() {
       const head = document.querySelector('#table-head');
       const body = document.querySelector('#table-body');
-      head.innerHTML = '<tr><th>Durum</th><th>Müşteri Part Number</th><th>ERP Part Number</th><th>Müşteri Qty</th><th>ERP Qty</th><th>Müşteri Value</th><th>ERP Description</th><th>Müşteri Montaj</th><th>ERP Montaj</th><th>Hata / Uyarı Açıklaması</th></tr>';
-      const rows = lastResult.rows;
+      head.innerHTML = '<tr><th>Durum</th><th>Müşteri Part Number</th><th>ERP Part Number</th><th>Müşteri Qty</th><th>ERP Qty</th><th>Müşteri Value</th><th>ERP Description</th><th>Müşteri Montaj</th><th>ERP Montaj</th><th>Kaynak Kart / BOM</th><th>Müşteri Referans</th><th>ERP Referans</th><th>Hata / Uyarı Açıklaması</th></tr>';
+      
+      let rows = (lastResult && lastResult.rows) ? lastResult.rows : [];
+      if (currentFilter !== 'ALL') {
+        rows = rows.filter(row => {
+          const durum = row['Durum'] || 'UYGUN';
+          const issueText = row['Hata/Uyarı Durumu'] || '';
+          const isNonErp = issueText.includes('Montaj Dışı') || issueText.includes("ERP'ye Girilmez");
+          if (currentFilter === 'HATA') return durum === 'HATA';
+          if (currentFilter === 'UYARI') return durum === 'UYARI' && !isNonErp;
+          if (currentFilter === 'INFO') return durum === 'UYARI' && isNonErp;
+          if (currentFilter === 'UYGUN') return durum === 'UYGUN';
+          return true;
+        });
+      }
+
       if (!rows.length) {
-        body.innerHTML = '<tr><td class="empty" colspan="10">Eşleştirilecek satır bulunamadı.</td></tr>';
+        body.innerHTML = '<tr><td class="empty" colspan="13">Filtreye uygun satır bulunamadı.</td></tr>';
         return;
       }
       body.innerHTML = rows.map(row => {
@@ -1800,6 +1840,9 @@
           <td>${escapeHtml(row['ERP Description'] || '—')}</td>
           <td>${escapeHtml(row['Müşteri TH/SMD'] || '—')}</td>
           <td>${escapeHtml(row['ERP TH/SMD'] || '—')}</td>
+          <td>${escapeHtml(row['Kaynak Kart / BOM'] || '—')}</td>
+          <td style="max-width:180px; word-break:break-word; font-family:var(--font-mono, monospace); font-size:11px;">${escapeHtml(row['Müşteri Referans'] || '—')}</td>
+          <td style="max-width:180px; word-break:break-word; font-family:var(--font-mono, monospace); font-size:11px;">${escapeHtml(row['ERP Referans'] || '—')}</td>
           <td>${row['Hata/Uyarı Durumu'] ? `<span class="pill ${badgeClass}">${escapeHtml(row['Hata/Uyarı Durumu'])}</span>` : '<span style="color:#6b7280">Sorunsuz</span>'}</td>
         </tr>`;
       }).join('');
@@ -1812,6 +1855,11 @@
       document.querySelector('#results').classList.remove('show');
       document.querySelector('#workspace').scrollIntoView({ behavior: 'smooth' });
       selected = { customer: [], erp: null };
+      currentFilter = 'ALL';
+      document.querySelectorAll('.metric[data-status-filter]').forEach((c, idx) => {
+        if (idx === 0) c.classList.add('active');
+        else c.classList.remove('active');
+      });
       document.querySelectorAll('.upload[data-role] input').forEach(input => input.value = '');
       document.querySelectorAll('.upload[data-role] .file-selected').forEach(label => label.textContent = '');
     });
@@ -1979,7 +2027,7 @@
                 </optgroup>
               </select>
             </div>
-            <button type="button" class="btn-remove-pdf" onclick="removePdf('${escapeHtml(f.name)}')" title="Kaldır">✕</button>
+            <button type="button" class="btn-remove-pdf" data-filename="${escapeHtml(f.name)}" title="Kaldır">✕</button>
             ${isCat ? `
               <div class="catalog-hint">
                 <span class="pill pill-uyari" style="font-size:10px; padding:2px 8px;">⚠️ Katalog / Seri Dokümanı</span>
@@ -2017,6 +2065,14 @@
         });
       });
     }
+
+    dsPdfList.addEventListener('click', e => {
+      const btn = e.target.closest('.btn-remove-pdf');
+      if (btn) {
+        const fn = btn.dataset.filename;
+        if (fn) removePdf(fn);
+      }
+    });
 
     window.removePdf = function(filename) {
       dsSelected.pdfs = dsSelected.pdfs.filter(f => f.name !== filename);
@@ -2291,7 +2347,7 @@
                     <div style="margin-top:8px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
                       <span style="font-weight:600; color:#78350f;">Dokümanda Tespit Edilen Kodlar:</span>
                       ${item.detected_part_numbers.slice(0, 6).map(mpn => `
-                        <button type="button" class="btn-mpn-chip" onclick="applyDetectedMpn('${escapeHtml(item.filename)}', '${escapeHtml(mpn)}')">${escapeHtml(mpn)} ↗</button>
+                        <button type="button" class="btn-mpn-chip" data-filename="${escapeHtml(item.filename)}" data-mpn="${escapeHtml(mpn)}">${escapeHtml(mpn)} ↗</button>
                       `).join('')}
                     </div>
                   ` : ''}
@@ -2303,7 +2359,7 @@
               <div class="erp-box" style="margin-bottom: 8px; border-left: 4px solid #10b981; background: #f0fdf4;">
                 <div class="erp-box-label">
                   <span style="color: #065f46; font-weight: 700;">⭐ Zenginleştirilmiş Mühendislik Açıklaması (Sektör Standardı)</span>
-                  <button type="button" class="btn-copy" id="${copyIdRich}" onclick="copyText('${escapeHtml(item.rich_description)}', '${copyIdRich}')">📋 Açıklamayı Kopyala</button>
+                  <button type="button" class="btn-copy" id="${copyIdRich}" data-copy-text="${escapeHtml(item.rich_description || '')}">📋 Açıklamayı Kopyala</button>
                 </div>
                 <div class="erp-box-content" style="margin-top: 4px;">
                   <span class="erp-box-val" style="font-size: 14px; color: #047857; font-weight: 700;">${escapeHtml(item.rich_description)}</span>
@@ -2314,7 +2370,7 @@
               <div class="erp-box" style="margin-bottom: 8px;">
                 <div class="erp-box-label">
                   <span>Önerilen ERP Açıklaması (Malzeme Tipleri Sözlüğündeki VALUE AÇIKLAMASI & SORTNO Sıralı)</span>
-                  <button type="button" class="btn-copy" id="${copyIdDesc}" onclick="copyText('${escapeHtml(item.suggested_description)}', '${copyIdDesc}')">📋 Açıklamayı Kopyala</button>
+                  <button type="button" class="btn-copy" id="${copyIdDesc}" data-copy-text="${escapeHtml(item.suggested_description || '')}">📋 Açıklamayı Kopyala</button>
                 </div>
                 <div class="erp-box-content" style="margin-top: 4px;">
                   <span class="erp-box-val" style="font-size: 14px; color: var(--deka-red); font-weight: 700;">${escapeHtml(item.suggested_description || 'Açıklama üretilemedi')}</span>
@@ -2325,7 +2381,7 @@
               <div class="erp-box" style="margin-bottom: 12px;">
                 <div class="erp-box-label">
                   <span>Önerilen ERP Kodu (Sözlük Kural Kodları Birleşimi)</span>
-                  <button type="button" class="btn-copy" id="${copyIdCode}" onclick="copyText('${escapeHtml(item.suggested_erp_code)}', '${copyIdCode}')">📋 Kodu Kopyala</button>
+                  <button type="button" class="btn-copy" id="${copyIdCode}" data-copy-text="${escapeHtml(item.suggested_erp_code || '')}">📋 Kodu Kopyala</button>
                 </div>
                 <div class="erp-box-content" style="margin-top: 4px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                   <code style="font-size: 14px; color: #1e40af; font-weight: 700;">${escapeHtml(item.suggested_erp_code)}</code>
@@ -2411,6 +2467,41 @@
 
       resultsSection.classList.add('show');
       resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    const dsCardsContainer = document.querySelector('#ds-cards-container');
+    if (dsCardsContainer) {
+      dsCardsContainer.addEventListener('click', e => {
+        const copyBtn = e.target.closest('.btn-copy');
+        if (copyBtn) {
+          const text = copyBtn.dataset.copyText;
+          if (text) {
+            navigator.clipboard.writeText(text).then(() => {
+              const original = copyBtn.textContent;
+              copyBtn.textContent = '✓ Kopyalandı!';
+              copyBtn.classList.add('copied');
+              setTimeout(() => {
+                copyBtn.textContent = original;
+                copyBtn.classList.remove('copied');
+              }, 2000);
+              showToast('Panoya kopyalandı.');
+            }).catch(() => {
+              showToast('Kopyalama başarısız oldu.', true);
+            });
+          }
+          return;
+        }
+
+        const chipBtn = e.target.closest('.btn-mpn-chip');
+        if (chipBtn) {
+          const fn = chipBtn.dataset.filename;
+          const mpn = chipBtn.dataset.mpn;
+          if (fn && mpn) {
+            applyDetectedMpn(fn, mpn);
+          }
+          return;
+        }
+      });
     }
 
     window.applyDetectedMpn = function(filename, mpn) {

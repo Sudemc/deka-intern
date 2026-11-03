@@ -6,23 +6,25 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 from threading import Lock
+import csv
+import io
+import json
 from uuid import uuid4
 from zipfile import BadZipFile
-
-import json
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from openpyxl import Workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
 from bom_enricher.comparison import RuleBook, compare_workbooks, load_rulebook
 from bom_enricher.datasheet_analyzer import (
     analyze_single_datasheet,
     generate_datasheet_excel_report,
+    get_default_rulebook,
 )
 from bom_enricher.vision_llm import VisionLLMClient
-
 
 
 _MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -31,6 +33,53 @@ _STATIC_DIR = Path(__file__).with_name("static")
 DEFAULT_RULES_PATH = Path(__file__).resolve().parents[2] / "data" / "rules.xlsx"
 _jobs: dict[str, tuple[Path, datetime, tempfile.TemporaryDirectory]] = {}
 _jobs_lock = Lock()
+
+
+def _safe_cleanup(directory: tempfile.TemporaryDirectory | None) -> None:
+    if directory is None:
+        return
+    try:
+        directory.cleanup()
+    except (PermissionError, OSError):
+        pass
+
+
+def _convert_csv_to_xlsx(content: bytes, dest_path: Path) -> None:
+    text = None
+    for enc in ("utf-8-sig", "utf-8", "cp1254", "iso-8859-9", "latin-1"):
+        try:
+            text = content.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        text = content.decode("utf-8", errors="replace")
+
+    sample = text[:4096]
+    delimiter = ","
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=";,\t|")
+        delimiter = dialect.delimiter
+    except Exception:
+        semis = sample.count(";")
+        commas = sample.count(",")
+        tabs = sample.count("\t")
+        if semis > commas and semis > tabs:
+            delimiter = ";"
+        elif tabs > commas and tabs > semis:
+            delimiter = "\t"
+        else:
+            delimiter = ","
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "BOM"
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+    for row in reader:
+        ws.append(row)
+    wb.save(dest_path)
+    wb.close()
+
 
 app = FastAPI(
     title="DEKA BOM Karşılaştırma",
@@ -85,20 +134,48 @@ async def compare_uploads(
     customer_paths: list[Path] = []
     paths: dict[str, Path | None] = {}
     try:
+        raw_names = [(u.filename or "").replace("\\", "/").strip("/") for u in all_customer_uploads]
+        base_names = [Path(rn).name for rn in raw_names]
+        has_duplicate_basenames = len(base_names) != len(set(base_names))
+
         for index, upload in enumerate(all_customer_uploads, start=1):
-            filename = Path(upload.filename or "").name
-            if Path(filename).suffix.casefold() != ".xlsx":
-                raise HTTPException(status_code=400, detail="customer: yalnızca .xlsx dosyası yükleyin.")
+            raw_fn = (upload.filename or "").replace("\\", "/").strip("/")
+            path_obj = Path(raw_fn)
+            base_name = path_obj.name
+            suffix = path_obj.suffix.casefold()
+            if suffix not in (".xlsx", ".csv"):
+                raise HTTPException(status_code=400, detail="customer: yalnızca .xlsx veya .csv dosyası yükleyin.")
             content = await upload.read(_MAX_UPLOAD_BYTES + 1)
             if not content:
                 raise HTTPException(status_code=400, detail="customer: seçilen dosya boş.")
             if len(content) > _MAX_UPLOAD_BYTES:
                 raise HTTPException(status_code=413, detail="customer: dosya 20 MB sınırını aşıyor.")
-            clean_name = Path(filename).name
-            c_path = Path(job_dir.name) / clean_name
+            if content.startswith(b"\xd0\xcf\x11\xe0"):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"'{base_name}': Dosya şifre korumalı veya eski Excel (.xls) formatında. Lütfen dosyayı Excel ile açıp modern '.xlsx' formatında kaydederek tekrar yükleyin."
+                )
+
+            parent_parts = [p for p in path_obj.parts[:-1] if p and p not in (".", "/")]
+            subfolder_prefix = "_".join(parent_parts)
+            stem = path_obj.stem
+            if (has_duplicate_basenames or (Path(job_dir.name) / f"{base_name}").exists()) and subfolder_prefix:
+                target_stem = f"{subfolder_prefix}_{stem}"
+            else:
+                target_stem = stem
+
+            c_path = Path(job_dir.name) / f"{target_stem}.xlsx"
             if c_path.exists():
-                c_path = Path(job_dir.name) / f"{index}_{clean_name}"
-            c_path.write_bytes(content)
+                c_path = (
+                    Path(job_dir.name) / f"{subfolder_prefix}_{index}_{stem}.xlsx"
+                    if subfolder_prefix
+                    else Path(job_dir.name) / f"{index}_{target_stem}.xlsx"
+                )
+
+            if suffix == ".csv":
+                _convert_csv_to_xlsx(content, c_path)
+            else:
+                c_path.write_bytes(content)
             customer_paths.append(c_path)
 
         other_uploads: dict[str, UploadFile] = {"erp": erp_file}
@@ -106,16 +183,29 @@ async def compare_uploads(
             other_uploads["rules"] = rules_file
 
         for role, upload in other_uploads.items():
-            filename = Path(upload.filename or "").name
-            if Path(filename).suffix.casefold() != ".xlsx":
-                raise HTTPException(status_code=400, detail=f"{role}: yalnızca .xlsx dosyası yükleyin.")
+            raw_fn = (upload.filename or "").replace("\\", "/").strip("/")
+            path_obj = Path(raw_fn)
+            base_name = path_obj.name
+            suffix = path_obj.suffix.casefold()
+            allowed = (".xlsx",) if role == "rules" else (".xlsx", ".csv")
+            if suffix not in allowed:
+                allowed_str = "yalnızca .xlsx" if role == "rules" else "yalnızca .xlsx veya .csv"
+                raise HTTPException(status_code=400, detail=f"{role}: {allowed_str} dosyası yükleyin.")
             content = await upload.read(_MAX_UPLOAD_BYTES + 1)
             if not content:
                 raise HTTPException(status_code=400, detail=f"{role}: seçilen dosya boş.")
             if len(content) > _MAX_UPLOAD_BYTES:
                 raise HTTPException(status_code=413, detail=f"{role}: dosya 20 MB sınırını aşıyor.")
+            if content.startswith(b"\xd0\xcf\x11\xe0"):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"'{base_name}': Dosya şifre korumalı veya eski Excel (.xls) formatında. Lütfen dosyayı Excel ile açıp modern '.xlsx' formatında kaydederek tekrar yükleyin."
+                )
             path = Path(job_dir.name) / f"{role}.xlsx"
-            path.write_bytes(content)
+            if suffix == ".csv":
+                _convert_csv_to_xlsx(content, path)
+            else:
+                path.write_bytes(content)
             paths[role] = path
 
         if "rules" not in paths:
@@ -124,11 +214,14 @@ async def compare_uploads(
         output_path = Path(job_dir.name) / "Hata_ve_Kiyaslama_Raporu.xlsx"
         result = compare_workbooks(customer_paths, paths["erp"], paths.get("rules"), output_path)
     except HTTPException:
-        job_dir.cleanup()
+        _safe_cleanup(job_dir)
         raise
     except (BadZipFile, InvalidFileException, OSError, ValueError, RuntimeError) as error:
-        job_dir.cleanup()
+        _safe_cleanup(job_dir)
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        _safe_cleanup(job_dir)
+        raise HTTPException(status_code=422, detail=f"Dosya işlenirken hata oluştu: {error}") from error
     finally:
         for upload in all_customer_uploads:
             await upload.close()
@@ -142,7 +235,7 @@ async def compare_uploads(
     error_count = sum(1 for row in result.rows if row.get("Durum") == "HATA")
     info_count = sum(
         1 for row in result.rows
-        if "Montaj Dışı" in row.get("Hata/Uyarı Durumu", "") or "ERP'ye Girilmez" in row.get("Hata/Uyarı Durumu", "")
+        if row.get("Durum") == "UYARI" and ("Montaj Dışı" in row.get("Hata/Uyarı Durumu", "") or "ERP'ye Girilmez" in row.get("Hata/Uyarı Durumu", ""))
     )
     warning_count = sum(
         1 for row in result.rows
@@ -175,6 +268,7 @@ async def compare_uploads(
 @app.post("/api/datasheet-analyze", tags=["Datasheet"])
 async def analyze_datasheets(
     datasheet_files: list[UploadFile] = File(default=[]),
+    pdf_files: list[UploadFile] = File(default=[]),
     file: UploadFile | None = File(None),
     datasheet_file: UploadFile | None = File(None),
     rules_file: UploadFile | None = File(None),
@@ -189,6 +283,9 @@ async def analyze_datasheets(
     if datasheet_file is not None and getattr(datasheet_file, "filename", None):
         all_datasheet_uploads.append(datasheet_file)
     for u in datasheet_files:
+        if getattr(u, "filename", None):
+            all_datasheet_uploads.append(u)
+    for u in pdf_files:
         if getattr(u, "filename", None):
             all_datasheet_uploads.append(u)
 
@@ -206,6 +303,13 @@ async def analyze_datasheets(
             content = await rules_file.read(_MAX_UPLOAD_BYTES + 1)
             if not content:
                 raise HTTPException(status_code=400, detail="Kurallar dosyası boş.")
+            if len(content) > _MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="Kurallar dosyası 20 MB sınırını aşıyor.")
+            if content.startswith(b"\xd0\xcf\x11\xe0"):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"'{filename}': Dosya şifre korumalı veya eski Excel (.xls) formatında. Lütfen dosyayı Excel ile açıp modern '.xlsx' formatında kaydederek tekrar yükleyin."
+                )
             rules_path = Path(job_dir.name) / "rules.xlsx"
             rules_path.write_bytes(content)
             try:
@@ -216,8 +320,7 @@ async def analyze_datasheets(
                     detail=f"Seçtiğiniz '{filename}' kural dosyasında 'BİRLEŞTİRİLMİŞ' sayfası bulunamadı. Lütfen DEKA Malzeme_Tipleri.xlsx kural dosyasını yükleyin veya sistemdeki varsayılan kuralları kullanmak için kural dosyası alanını boş bırakın."
                 ) from ve
         elif DEFAULT_RULES_PATH.exists():
-            rules_path = DEFAULT_RULES_PATH
-            rulebook = load_rulebook(rules_path)
+            rulebook = get_default_rulebook() or RuleBook()
         else:
             rulebook = RuleBook()
 
@@ -246,6 +349,8 @@ async def analyze_datasheets(
             pdf_bytes = await upload.read(_MAX_UPLOAD_BYTES + 1)
             if not pdf_bytes:
                 continue
+            if len(pdf_bytes) > _MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail=f"'{fname}': PDF dosyası 20 MB sınırını aşıyor.")
             pn_override = pn_overrides.get(fname) or (part_number.strip() if part_number and part_number.strip() else None)
             mat_override = mat_overrides.get(fname) or (material_type.strip() if material_type and material_type.strip() else None)
             res = analyze_single_datasheet(
@@ -279,10 +384,10 @@ async def analyze_datasheets(
             "part_number": primary.get("part_number", ""),
         }
     except HTTPException:
-        job_dir.cleanup()
+        _safe_cleanup(job_dir)
         raise
     except Exception as exc:
-        job_dir.cleanup()
+        _safe_cleanup(job_dir)
         raise HTTPException(status_code=422, detail=f"Datasheet analizi hatası: {str(exc)}") from exc
     finally:
         for upload in all_datasheet_uploads:
@@ -324,7 +429,7 @@ def _store_result(
         expired = [job_id for job_id, (_, created, _) in _jobs.items() if now - created > _RESULT_TTL]
         for job_id in expired:
             _, _, owner = _jobs.pop(job_id)
-            owner.cleanup()
+            _safe_cleanup(owner)
         _jobs[result_id] = (output_path, now, directory)
 
 
