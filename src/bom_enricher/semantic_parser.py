@@ -423,7 +423,26 @@ def compare_descriptions(customer_text: str, erp_text: str, mpn_matched: bool = 
                     f"Açıklama Çelişkisi (Kritik Değer: Direnç farklı{ratio_note} - Müşteri {_format_res(best_pair[0])}, ERP {_format_res(best_pair[1])})"
                 )
 
-    # 3. Check Voltage
+    # 3. Check Inductance
+    if cust_specs.inductances and erp_specs.inductances:
+        if not (cust_specs.inductances & erp_specs.inductances):
+            best_pair = min(
+                ((l, e) for l in cust_specs.inductances for e in erp_specs.inductances),
+                key=lambda p: _calc_ratio(p[0], p[1]),
+            )
+            ratio = _calc_ratio(best_pair[0], best_pair[1])
+            if not mpn_matched or ratio >= 10:
+                if ratio.is_infinite():
+                    ratio_note = ", sıfır vs değerli endüktans farkı"
+                elif ratio >= 10:
+                    ratio_note = f", {int(ratio)} kat fark!"
+                else:
+                    ratio_note = ""
+                contradictions.append(
+                    f"Açıklama Çelişkisi (Kritik Değer: Endüktans farklı{ratio_note} - Müşteri {_format_ind(best_pair[0])}, ERP {_format_ind(best_pair[1])})"
+                )
+
+    # 4. Check Voltage
     if cust_specs.voltages and erp_specs.voltages:
         if not (cust_specs.voltages & erp_specs.voltages):
             is_clamp_or_protection = bool(
@@ -445,7 +464,7 @@ def compare_descriptions(customer_text: str, erp_text: str, mpn_matched: bool = 
                     f"Açıklama Çelişkisi (Voltaj farklı: Müşteri {best_pair[0]}V, ERP {best_pair[1]}V)"
                 )
 
-    # 4. Check Tolerance
+    # 5. Check Tolerance
     if cust_specs.tolerances and erp_specs.tolerances:
         if not (cust_specs.tolerances & erp_specs.tolerances):
             if not mpn_matched:
@@ -457,7 +476,7 @@ def compare_descriptions(customer_text: str, erp_text: str, mpn_matched: bool = 
                     f"Açıklama Çelişkisi (Tolerans farklı: Müşteri %{best_pair[0]}, ERP %{best_pair[1]})"
                 )
 
-    # 5. Check Package
+    # 6. Check Package
     if cust_specs.packages and erp_specs.packages:
         if not (cust_specs.packages & erp_specs.packages):
             if not mpn_matched:

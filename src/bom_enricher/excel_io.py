@@ -149,7 +149,6 @@ def _is_integer_sequence(values: list[Any]) -> bool:
 
 
 _CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-*#:,~=\[\]%@;+]{3,63}$")
-_EXPLICIT_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-]{1,63}$")
 _REFERENCE_PATTERN = re.compile(
     r"(?i)^(?:(?:R|C|L|D|Q|U|J|FB|LS|LED|TP|SW)\s*\d+[A-Z]?)(?:\s*,\s*(?:(?:R|C|L|D|Q|U|J|FB|LS|LED|TP|SW)\s*\d+[A-Z]?))*$"
 )
@@ -250,6 +249,9 @@ def _code_like(value: Any) -> bool:
 
 def clean_part_number(s: str) -> str:
     """Clean auxiliary notes from part numbers (e.g. bin codes or mounting orientation notes)."""
+    if s is None:
+        return ""
+    s = str(s).strip()
     if not s:
         return ""
     # If pattern is 'PREFIX (MPN)' where PREFIX is a project/company name and INNER is an MPN (e.g. 'DELTA-V (IXTT140P10T)')
@@ -1019,6 +1021,10 @@ def read_customer_bom(
         material_type = get_value("material_type")
 
         part_str = _string_value(part).strip()
+        if part_str:
+            for emb in extract_embedded_part_numbers(part_str):
+                if _explicit_code_like(emb) and not any(c.value == emb for c in candidates):
+                    candidates.append(PartNumberCandidate(emb, "Embedded Ref Note"))
         if (qty is None or str(qty).strip() == "" or str(qty).lower() == "nan") and part_str:
             refs = split_references(part_str)
             if refs:
@@ -1111,6 +1117,10 @@ def read_customer_bom(
             part = get_value("part")
             qty = get_value("qty")
             part_str = _string_value(part).strip()
+            if part_str:
+                for emb in extract_embedded_part_numbers(part_str):
+                    if _explicit_code_like(emb) and not any(c.value == emb for c in candidates):
+                        candidates.append(PartNumberCandidate(emb, "Embedded Ref Note"))
             if (qty is None or str(qty).strip() == "" or str(qty).lower() == "nan") and part_str:
                 refs = split_references(part_str)
                 if refs:
