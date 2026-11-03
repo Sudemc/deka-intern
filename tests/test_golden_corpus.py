@@ -10,11 +10,17 @@ Tests all 5 historical production datasets:
 Ensures zero regressions, exact baseline counts, and clean issue cells for all UYGUN rows.
 """
 
+import os
 from pathlib import Path
 import pytest
 from bom_enricher.comparison import compare_workbooks
 
-UPLOAD_DIR = Path("C:/Users/sudem/.gemini/antigravity/brain/212f92ee-c0ed-4409-b01a-8aa6bf1d8d4b/.user_uploaded")
+UPLOAD_DIR = Path(
+    os.environ.get(
+        "GOLDEN_CORPUS_DIR",
+        "C:/Users/sudem/.gemini/antigravity/brain/212f92ee-c0ed-4409-b01a-8aa6bf1d8d4b/.user_uploaded",
+    )
+)
 
 
 def _status_counts(comparison_result) -> dict[str, int]:
