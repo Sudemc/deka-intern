@@ -1281,6 +1281,56 @@ def test_multi_sheet_ignores_cover_page_with_project_code_and_keeps_cabin_pcb(tm
     assert find_customer_bom_sheets(wb_path) == ["CABIN_PCB", "DATA_PCB"]
 
 
+def test_led_and_sw_refdes_pairing_and_inverse_erp_row_split(tmp_path):
+    cust_file = tmp_path / "cust_split.xlsx"
+    erp_file = tmp_path / "erp_split.xlsx"
+    _write_book(cust_file, "BOM", ["Part Number", "Value", "RefDes", "Qty"], [
+        ["LA-G6SP / LS-G6SP", "Amber LED", "LED1, LED2, LED3, LED4", 4],
+        ["CAP-100N-A", "100nF 50V 0402", "C1, C2, C3, C4", 4],
+    ])
+    _write_book(erp_file, "ERP", ["Part Number", "Description", "Reference", "Qty", "Mounting"], [
+        ["LS-G6SP", "Amber LED SMD", "LED1, LED2, LED3, LED4", 4, "SMD"],
+        ["CAP-100N-A", "100nF 50V 0402 SMD", "C1, C2", 2, "SMD"],
+        ["CAP-100N-B", "100nF 50V 0402 SMD", "C3, C4", 2, "SMD"],
+    ])
+    res = compare_workbooks(cust_file, erp_file)
+    led_row = next(r for r in res.rows if "LS-G6SP" in r["ERP Part Number"])
+    assert led_row["Durum"] == "UYGUN"
+    assert led_row["Hata/Uyarı Durumu"] == ""
+    cap_row = next(r for r in res.rows if "CAP-100N" in r["Part Number"])
+    assert cap_row["Durum"] in ("UYGUN", "UYARI")
+    assert "Miktar Uyuşmazlığı" not in cap_row["Hata/Uyarı Durumu"]
+
+
+def test_clean_part_number_preserves_short_non_mpn_parentheticals():
+    from bom_enricher.excel_io import clean_part_number
+    assert clean_part_number("FUSE (5A)") == "FUSE"
+    assert clean_part_number("HEADER (2X5)") == "HEADER"
+    # Genuine embedded MPN should be extracted
+    assert clean_part_number("DELTA-V (IXTT140P10T)") == "IXTT140P10T"
+
+
+def test_should_pair_refs_multi_letter_designators():
+    from bom_enricher.comparison import _should_pair_refs
+    assert _should_pair_refs({"LED1", "LED2"}, {"LED1", "LED2", "LED3"}) is True
+    assert _should_pair_refs({"SW1"}, {"SW1", "SW2"}) is True
+    assert _should_pair_refs({"FB1", "FB2"}, {"FB1"}) is True
+
+
+def test_find_ref_near_misses_single_ref_strict_index_diff():
+    from bom_enricher.comparison import _find_ref_near_misses
+    # Index difference <= 2 and matching board prefix
+    nm1 = _find_ref_near_misses({"LED1"}, {"LED2"})
+    assert len(nm1) == 1
+    # Index difference > 2 should NOT match
+    nm2 = _find_ref_near_misses({"LED1"}, {"LED10"})
+    assert len(nm2) == 0
+    # Different board prefix should NOT match for single-ref
+    nm3 = _find_ref_near_misses({"LED1"}, {"T2R_LED1"})
+    assert len(nm3) == 0
+
+
+
 
 
 

@@ -323,10 +323,19 @@ def _ref_base_component(ref: str) -> tuple[str, str, str]:
     return prefix.strip().upper(), base, comp_type
 
 
+_PAIRABLE_COMP_TYPES = {
+    "C", "R", "L", "D", "Q", "U", "J", "S", "F",
+    "LED", "LD", "SW", "FB", "IC", "CN", "CON", "P",
+    "X", "Y", "T", "TR", "K", "RL", "B", "BT", "VR",
+    "RV", "ZD", "DZ", "TP", "JP", "TH", "MOV", "LS", "BZ",
+}
+
+
 def _find_ref_near_misses(c_refs: set[str], e_refs: set[str]) -> list[tuple[str, str, str]]:
     """Identify pairs of customer and ERP reference tokens that differ only by index or prefix."""
     near_misses: list[tuple[str, str, str]] = []
     e_pool = set(e_refs)
+    is_single_ref = len(c_refs) == 1
     for c in sorted(c_refs):
         cp, cb, ct = _ref_base_component(c)
         m_c = re.match(r"^([A-Za-z]+)(\d+.*)$", cb)
@@ -335,6 +344,20 @@ def _find_ref_near_misses(c_refs: set[str], e_refs: set[str]) -> list[tuple[str,
         for e in sorted(e_pool):
             ep, eb, et = _ref_base_component(e)
             m_e = re.match(r"^([A-Za-z]+)(\d+.*)$", eb)
+            if is_single_ref:
+                if cp != ep:
+                    continue
+                m_c_num = re.match(r"^([A-Za-z]+)(\d+)", cb)
+                m_e_num = re.match(r"^([A-Za-z]+)(\d+)", eb)
+                if not (m_c_num and m_e_num and m_c_num.group(1) == m_e_num.group(1)):
+                    continue
+                try:
+                    idx_diff = abs(int(m_c_num.group(2)) - int(m_e_num.group(2)))
+                    if idx_diff > 2:
+                        continue
+                except ValueError:
+                    continue
+
             # Case 1: Same board prefix and same component type (e.g. T2R_LED1 vs T2R_LED2)
             if cp == ep and ct == et and ct:
                 if cp:
@@ -351,7 +374,7 @@ def _find_ref_near_misses(c_refs: set[str], e_refs: set[str]) -> list[tuple[str,
                             best_score = score
                             best_match = (e, "malzeme tipi aynı, dizgi indeksi farklı")
             # Case 2: Same base ref, different prefix (e.g. T2L_LED1 vs T2R_LED1)
-            elif cb == eb and cb and cp != ep:
+            elif not is_single_ref and cb == eb and cb and cp != ep:
                 score = 40
                 if score > best_score:
                     best_score = score
@@ -374,7 +397,7 @@ def _should_pair_refs(crefs: set[str], erefs: set[str]) -> bool:
     if overlap:
         c_types = {_ref_base_component(r)[2] for r in crefs if r}
         e_types = {_ref_base_component(r)[2] for r in erefs if r}
-        if len(c_types) == 1 and c_types == e_types and list(c_types)[0] in "CRLDQUJSF":
+        if len(c_types) == 1 and c_types == e_types and list(c_types)[0] in _PAIRABLE_COMP_TYPES:
             if crefs.issubset(erefs) or erefs.issubset(crefs):
                 return True
             if len(overlap) / min(len(crefs), len(erefs)) >= 0.5:
@@ -386,7 +409,7 @@ def _should_pair_refs(crefs: set[str], erefs: set[str]) -> bool:
     if c_bases and e_bases and c_bases == e_bases:
         c_types = {_ref_base_component(r)[2] for r in crefs if r}
         e_types = {_ref_base_component(r)[2] for r in erefs if r}
-        if len(c_types) == 1 and c_types == e_types and list(c_types)[0] in "CRLDQUJSF":
+        if len(c_types) == 1 and c_types == e_types and list(c_types)[0] in _PAIRABLE_COMP_TYPES:
             return True
 
     return False
@@ -894,6 +917,192 @@ def _reconcile_cross_component_references(report: list[dict[str, str]]) -> None:
                 r_row["Hata/Uyarı Durumu"] = "; ".join(dict.fromkeys(r_issues))
 
 
+def _specs_compatible(rec1: PartRecord, rec2: PartRecord) -> bool:
+    """Check if two part records have compatible specs for split aggregation."""
+    # 1. Component type compatibility from references
+    if rec1.reference and rec2.reference:
+        t1 = {_ref_base_component(r)[2] for r in _split_refs(rec1.reference) if r}
+        t2 = {_ref_base_component(r)[2] for r in _split_refs(rec2.reference) if r}
+        if t1 and t2 and not (t1 & t2):
+            return False
+
+    # 2. Mounting compatibility
+    if rec1.mounting and rec2.mounting:
+        m1 = normalize_mounting(rec1.mounting)
+        m2 = normalize_mounting(rec2.mounting)
+        if m1 and m2 and m1 != m2:
+            return False
+
+    # 3. Description compatibility via semantic parser
+    if rec1.description and rec2.description:
+        issues = compare_descriptions(rec1.description, rec2.description, mpn_matched=True)
+        contradictions = [
+            i for i in issues
+            if any(k in i.lower() for k in ("uyumsuz", "fark", "çelişki", "celiski", "different", "mismatch"))
+        ]
+        return len(contradictions) == 0
+
+    # If at least one description is missing, require common part number prefix or same component type
+    p1 = _normalize_code(rec1.part_number)
+    p2 = _normalize_code(rec2.part_number)
+    if p1 and p2:
+        prefix_len = 0
+        for c1, c2 in zip(p1, p2):
+            if c1 == c2:
+                prefix_len += 1
+            else:
+                break
+        if prefix_len >= 5:
+            return True
+
+    if rec1.reference and rec2.reference:
+        t1 = {_ref_base_component(r)[2] for r in _split_refs(rec1.reference) if r}
+        t2 = {_ref_base_component(r)[2] for r in _split_refs(rec2.reference) if r}
+        if t1 and t2 and (t1 & t2):
+            return True
+
+    return False
+
+
+def _remove_erp_siblings(
+    e_rec: PartRecord,
+    unmatched_erp: dict[str, PartRecord],
+    sibling_groups: list[dict[str, object]],
+) -> None:
+    """When an ERP code matches, immediately mark its sibling group as matched and remove clones."""
+    norm_e = _normalize_code(e_rec.part_number)
+    for group in sibling_groups:
+        if norm_e in group["all"]:
+            group["matched"] = True
+            for sc in group["all"]:
+                unmatched_erp.pop(sc, None)
+                unmatched_erp.pop(f"{sc}__NM", None)
+            for k in list(unmatched_erp.keys()):
+                rec = unmatched_erp[k]
+                if _normalize_code(rec.part_number) in group["all"] and (
+                    rec.source_row == e_rec.source_row
+                    or rec.reference == e_rec.reference
+                ):
+                    del unmatched_erp[k]
+
+
+def _reconcile_split_rows(
+    c_matched: PartRecord,
+    e_matched: PartRecord,
+    unmatched_cust: dict[str, PartRecord],
+    unmatched_erp: dict[str, PartRecord],
+    sibling_groups: list[dict[str, object]],
+) -> tuple[PartRecord, PartRecord]:
+    """Support bidirectional row splits (both c_q < e_q and e_q < c_q) when specs and refs align."""
+    if not (c_matched.qty and e_matched.qty and c_matched.reference and e_matched.reference):
+        return c_matched, e_matched
+
+    try:
+        c_q = parse_numeric_qty(c_matched.qty)
+        e_q = parse_numeric_qty(e_matched.qty)
+        if c_q is None or e_q is None:
+            return c_matched, e_matched
+
+        # Case 1: Customer multi-row split (c_q < e_q)
+        if c_q < e_q:
+            erefs = _split_refs(e_matched.reference)
+            crefs = _split_refs(c_matched.reference)
+            missing_refs = erefs - crefs
+            for other_ck, other_c in list(unmatched_cust.items()):
+                if other_ck.endswith("__NM") or not other_c.reference:
+                    continue
+                o_refs = _split_refs(other_c.reference)
+                if o_refs and o_refs.issubset(missing_refs):
+                    e_codes = set(e_matched.all_codes) | set(_split_multi_code(e_matched.part_number))
+                    e_codes_norm = {_normalize_code(c) for c in e_codes if c}
+                    o_codes = set(other_c.all_codes) | ({other_c.part_number} if other_c.part_number else set())
+                    o_codes_norm = {_normalize_code(c) for c in o_codes if c}
+                    code_match = bool(e_codes_norm & o_codes_norm)
+                    specs_match = _specs_compatible(c_matched, other_c) or _specs_compatible(e_matched, other_c)
+                    if code_match or specs_match:
+                        merged_refs = sorted(crefs | o_refs)
+                        other_q = parse_numeric_qty(other_c.qty) if other_c.qty else None
+                        new_c_q = c_q + (other_q if other_q is not None else float(len(o_refs)))
+                        c_matched = PartRecord(
+                            part_number=f"{c_matched.part_number} / {other_c.part_number}" if other_c.part_number and other_c.part_number != c_matched.part_number else c_matched.part_number,
+                            description=c_matched.description,
+                            mounting=c_matched.mounting,
+                            reference=", ".join(merged_refs),
+                            material_type=c_matched.material_type,
+                            qty=format_qty_value(new_c_q),
+                            package=c_matched.package,
+                            manufacturer=f"{c_matched.manufacturer} / {other_c.manufacturer}" if other_c.manufacturer and other_c.manufacturer != c_matched.manufacturer else c_matched.manufacturer,
+                            duplicate=c_matched.duplicate,
+                            source_file=c_matched.source_file,
+                            source_sheet=f"{c_matched.source_sheet}, {other_c.source_sheet}" if other_c.source_sheet != c_matched.source_sheet else c_matched.source_sheet,
+                            source_breakdown=f"{c_matched.source_breakdown}; {other_c.source_breakdown}" if other_c.source_breakdown else c_matched.source_breakdown,
+                            unmapped_prefix=c_matched.unmapped_prefix,
+                            all_codes=tuple(dict.fromkeys(c_matched.all_codes + other_c.all_codes)),
+                            code_labels={**c_matched.code_labels, **other_c.code_labels},
+                            status=c_matched.status,
+                            source_row=c_matched.source_row,
+                            row_errors=c_matched.row_errors + other_c.row_errors,
+                        )
+                        crefs = set(merged_refs)
+                        missing_refs = erefs - crefs
+                        c_q = new_c_q
+                        unmatched_cust.pop(other_ck, None)
+                        if not missing_refs or c_q >= e_q:
+                            break
+
+        # Case 2: ERP multi-row split (e_q < c_q)
+        elif e_q < c_q:
+            crefs = _split_refs(c_matched.reference)
+            erefs = _split_refs(e_matched.reference)
+            missing_refs = crefs - erefs
+            for other_ek, other_e in list(unmatched_erp.items()):
+                if not other_e.reference:
+                    continue
+                oe_refs = _split_refs(other_e.reference)
+                if oe_refs and oe_refs.issubset(missing_refs):
+                    c_codes = set(c_matched.all_codes) | set(_split_multi_code(c_matched.part_number))
+                    c_codes_norm = {_normalize_code(c) for c in c_codes if c}
+                    oe_codes = set(other_e.all_codes) | ({other_e.part_number} if other_e.part_number else set())
+                    oe_codes_norm = {_normalize_code(c) for c in oe_codes if c}
+                    code_match = bool(c_codes_norm & oe_codes_norm)
+                    specs_match = _specs_compatible(c_matched, other_e) or _specs_compatible(e_matched, other_e)
+                    if code_match or specs_match:
+                        merged_refs = sorted(erefs | oe_refs)
+                        other_q = parse_numeric_qty(other_e.qty) if other_e.qty else None
+                        new_e_q = e_q + (other_q if other_q is not None else float(len(oe_refs)))
+                        e_matched = PartRecord(
+                            part_number=f"{e_matched.part_number} / {other_e.part_number}" if other_e.part_number and other_e.part_number != e_matched.part_number else e_matched.part_number,
+                            description=e_matched.description,
+                            mounting=e_matched.mounting,
+                            reference=", ".join(merged_refs),
+                            material_type=e_matched.material_type,
+                            qty=format_qty_value(new_e_q),
+                            package=e_matched.package,
+                            manufacturer=f"{e_matched.manufacturer} / {other_e.manufacturer}" if other_e.manufacturer and other_e.manufacturer != e_matched.manufacturer else e_matched.manufacturer,
+                            duplicate=e_matched.duplicate,
+                            source_file=e_matched.source_file,
+                            source_sheet=f"{e_matched.source_sheet}, {other_e.source_sheet}" if other_e.source_sheet != e_matched.source_sheet else e_matched.source_sheet,
+                            source_breakdown=f"{e_matched.source_breakdown}; {other_e.source_breakdown}" if other_e.source_breakdown else e_matched.source_breakdown,
+                            unmapped_prefix=e_matched.unmapped_prefix,
+                            all_codes=tuple(dict.fromkeys(e_matched.all_codes + other_e.all_codes)),
+                            code_labels={**e_matched.code_labels, **other_e.code_labels},
+                            status=e_matched.status,
+                            source_row=e_matched.source_row,
+                            row_errors=e_matched.row_errors + other_e.row_errors,
+                        )
+                        erefs = set(merged_refs)
+                        missing_refs = crefs - erefs
+                        e_q = new_e_q
+                        unmatched_erp.pop(other_ek, None)
+                        _remove_erp_siblings(other_e, unmatched_erp, sibling_groups)
+                        if not missing_refs or e_q >= c_q:
+                            break
+    except (ValueError, TypeError):
+        pass
+
+    return c_matched, e_matched
+
+
 def compare_workbooks(
     customer_path: Path | list[Path] | str | list[str],
     erp_path: Path | str,
@@ -1008,57 +1217,10 @@ def compare_workbooks(
                         break
             c_matched = unmatched_cust.pop(ck)
             e_matched = unmatched_erp.pop(best_ek)
-
-            # Check if this ERP record aggregates multiple customer rows of alternative MPNs
-            # (e.g. 38 pcs Yageo + 2 pcs Vishay matching an ERP line of 40 pcs)
-            if c_matched.qty and e_matched.qty and e_matched.reference and c_matched.reference:
-                try:
-                    c_q = parse_numeric_qty(c_matched.qty)
-                    e_q = parse_numeric_qty(e_matched.qty)
-                    if c_q is not None and e_q is not None and c_q < e_q:
-                        erefs = _split_refs(e_matched.reference)
-                        crefs = _split_refs(c_matched.reference)
-                        missing_refs = erefs - crefs
-                        for other_ck, other_c in list(unmatched_cust.items()):
-                            if other_ck.endswith("__NM") or not other_c.reference:
-                                continue
-                            o_refs = _split_refs(other_c.reference)
-                            if o_refs and o_refs.issubset(missing_refs):
-                                e_codes = set(e_matched.all_codes) | set(_split_multi_code(e_matched.part_number))
-                                e_codes_norm = {_normalize_code(c) for c in e_codes if c}
-                                o_codes_norm = {_normalize_code(c) for c in other_c.all_codes if c}
-                                if (e_codes_norm & o_codes_norm) or _normalize_code(other_c.part_number) in e_codes_norm:
-                                    merged_refs = sorted(crefs | o_refs)
-                                    other_q = parse_numeric_qty(other_c.qty) if other_c.qty else None
-                                    new_c_q = c_q + (other_q if other_q is not None else float(len(o_refs)))
-                                    c_matched = PartRecord(
-                                        part_number=f"{c_matched.part_number} / {other_c.part_number}",
-                                        description=c_matched.description,
-                                        mounting=c_matched.mounting,
-                                        reference=", ".join(merged_refs),
-                                        material_type=c_matched.material_type,
-                                        qty=format_qty_value(new_c_q),
-                                        package=c_matched.package,
-                                        manufacturer=f"{c_matched.manufacturer} / {other_c.manufacturer}" if other_c.manufacturer and other_c.manufacturer != c_matched.manufacturer else c_matched.manufacturer,
-                                        duplicate=c_matched.duplicate,
-                                        source_file=c_matched.source_file,
-                                        source_sheet=f"{c_matched.source_sheet}, {other_c.source_sheet}",
-                                        source_breakdown=f"{c_matched.source_breakdown}; {other_c.source_breakdown}",
-                                        unmapped_prefix=c_matched.unmapped_prefix,
-                                        all_codes=tuple(dict.fromkeys(c_matched.all_codes + other_c.all_codes)),
-                                        code_labels={**c_matched.code_labels, **other_c.code_labels},
-                                        status=c_matched.status,
-                                        source_row=c_matched.source_row,
-                                        row_errors=c_matched.row_errors + other_c.row_errors,
-                                    )
-                                    crefs = set(merged_refs)
-                                    missing_refs = erefs - crefs
-                                    c_q = new_c_q
-                                    unmatched_cust.pop(other_ck)
-                                    if not missing_refs or c_q >= e_q:
-                                        break
-                except (ValueError, TypeError):
-                    pass
+            _remove_erp_siblings(e_matched, unmatched_erp, sibling_groups)
+            c_matched, e_matched = _reconcile_split_rows(
+                c_matched, e_matched, unmatched_cust, unmatched_erp, sibling_groups
+            )
 
             # Check if this ERP record aggregates an active customer row and an NM customer row
             nm_candidate_keys = [f"{ck}__NM"] + [
@@ -1146,9 +1308,13 @@ def compare_workbooks(
                     match = True
 
                 if match:
-                    matched_pairs.append((c_rec, e_rec))
-                    del unmatched_cust[ck]
-                    del unmatched_erp[ek]
+                    c_matched = unmatched_cust.pop(ck)
+                    e_matched = unmatched_erp.pop(ek)
+                    _remove_erp_siblings(e_matched, unmatched_erp, sibling_groups)
+                    c_matched, e_matched = _reconcile_split_rows(
+                        c_matched, e_matched, unmatched_cust, unmatched_erp, sibling_groups
+                    )
+                    matched_pairs.append((c_matched, e_matched))
                     break
 
     # Aşama 3: Açıklama (Description) ile Eşleme
@@ -1188,7 +1354,7 @@ def compare_workbooks(
         skip = False
         for group in sibling_groups:
             if code_norm in group["all"]:
-                if group["all"] & matched_erp_normalized_codes:
+                if group.get("matched") or (group["all"] & matched_erp_normalized_codes):
                     skip = True
                 elif code_norm != group["primary"]:
                     skip = True
@@ -1513,6 +1679,12 @@ def read_bom_workbook(path: Path | list[Path] | str | list[str], kind: str = "cu
                     for c in candidates:
                         if c not in all_codes_list:
                             all_codes_list.append(c)
+
+                    for c in list(all_codes_list):
+                        for sub_c in _split_multi_code(c):
+                            if sub_c not in all_codes_list:
+                                all_codes_list.append(sub_c)
+
                     all_codes = tuple(clean_part_number(c) for c in all_codes_list if clean_part_number(c))
 
                     if code:

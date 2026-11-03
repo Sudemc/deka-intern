@@ -391,7 +391,8 @@ def clean_part_number(s: str) -> str:
     if m_cust:
         pref, inner = m_cust.group(1).strip(), m_cust.group(2).strip()
         if not any(c.isdigit() for c in re.sub(r"[-_]v\d*", "", pref, flags=re.I)) and any(c.isdigit() for c in inner):
-            return inner
+            if len(inner) >= 5 and _code_like(inner):
+                return inner
     cleaned = re.sub(r"\s+-\s+(?:Right-Angle|Vertical|Horizontal|Dik|Yatık|SMD|TH).*$", "", s, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+\d+-\d+\s+color\)?.*$", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"(?i)\s+BIN(?:\s*TABLE\d*|\s*:\s*[A-Za-z0-9_\-]+|\s+[A-Za-z0-9_\-]+)?.*$", "", cleaned)
@@ -1021,12 +1022,16 @@ def read_customer_bom(
         rows: list[CustomerBomRow] = []
         for dataframe_index, values in enumerate(dataframe.itertuples(index=False, name=None)):
             get_value = lambda field: values[columns[field]] if field in columns and isinstance(columns[field], int) else None
-            part_number = clean_part_number(_string_value(get_value("part_number")).strip())
+            raw_pn = _string_value(get_value("part_number")).strip()
+            part_number = clean_part_number(raw_pn)
             if _is_date_like(part_number) or not _explicit_code_like(part_number):
                 part_number = ""
             candidates: list[PartNumberCandidate] = []
             if part_number:
                 candidates.append(PartNumberCandidate(part_number, mapping.part_number))
+            for emb in extract_embedded_part_numbers(raw_pn):
+                if emb not in [c.value for c in candidates] and _code_like(emb):
+                    candidates.append(PartNumberCandidate(emb, f"{mapping.part_number} (embedded)"))
             part = get_value("part")
             qty = get_value("qty")
             value = _string_value(get_value("value")).strip()
@@ -1111,7 +1116,8 @@ def read_customer_bom(
 
         get_value = lambda field: values[cols[field]] if field in cols and isinstance(cols[field], int) and cols[field] < len(values) else None
 
-        part_number = clean_part_number(_string_value(get_value("part_number")).strip())
+        raw_pn = _string_value(get_value("part_number")).strip()
+        part_number = clean_part_number(raw_pn)
         if _is_date_like(part_number) or not _explicit_code_like(part_number):
             part_number = ""
 
@@ -1119,7 +1125,8 @@ def read_customer_bom(
         for column_index in code_cols:
             if column_index >= len(values):
                 continue
-            cand_val = clean_part_number(_string_value(values[column_index]).strip())
+            raw_col_val = _string_value(values[column_index]).strip()
+            cand_val = clean_part_number(raw_col_val)
             if not cand_val or _is_date_like(cand_val):
                 continue
             source_header = raw_hdrs[column_index] if column_index < len(raw_hdrs) else None
@@ -1133,6 +1140,9 @@ def read_customer_bom(
             hdr_name = _string_value(source_header).strip() or f"Column {column_index + 1}"
             if cand_val not in [c.value for c in candidates]:
                 candidates.append(PartNumberCandidate(cand_val, hdr_name))
+            for emb in extract_embedded_part_numbers(raw_col_val):
+                if emb not in [c.value for c in candidates] and _code_like(emb):
+                    candidates.append(PartNumberCandidate(emb, f"{hdr_name} (embedded)"))
 
         if part_number and not candidates:
             pn_col = cols.get("part_number", -1) if isinstance(cols.get("part_number"), int) else -1
@@ -1262,18 +1272,23 @@ def read_customer_bom(
         columns = detected
         for dataframe_index, values in enumerate(dataframe.itertuples(index=False, name=None)):
             get_value = lambda field: values[columns[field]] if field in columns and isinstance(columns[field], int) else None
-            part_number = clean_part_number(_string_value(get_value("part_number")).strip())
+            raw_pn = _string_value(get_value("part_number")).strip()
+            part_number = clean_part_number(raw_pn)
             if _is_date_like(part_number) or not _explicit_code_like(part_number):
                 part_number = ""
             candidates = []
             for column_index in code_columns:
                 if column_index >= len(values):
                     continue
-                cand_val = clean_part_number(_string_value(values[column_index]).strip())
+                raw_col_val = _string_value(values[column_index]).strip()
+                cand_val = clean_part_number(raw_col_val)
                 if not cand_val or _is_date_like(cand_val) or not _code_like(cand_val):
                     continue
                 src_hdr = raw_headers[column_index] if column_index < len(raw_headers) else f"Column {column_index + 1}"
                 candidates.append(PartNumberCandidate(cand_val, _string_value(src_hdr).strip()))
+                for emb in extract_embedded_part_numbers(raw_col_val):
+                    if emb not in [c.value for c in candidates] and _code_like(emb):
+                        candidates.append(PartNumberCandidate(emb, f"{_string_value(src_hdr).strip()} (embedded)"))
             if part_number and not candidates:
                 candidates.append(PartNumberCandidate(part_number, "Part Number"))
             if not part_number and candidates:
