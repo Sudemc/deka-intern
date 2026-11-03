@@ -114,3 +114,33 @@ def test_exposed_helper_functions():
     assert "BLM21PG221SN1D" in codes
     assert is_valid_part_number("RC0603FR-0710KL") is True
     assert is_valid_part_number("SEE NOTE") is False
+
+
+def test_jedec_diodes_and_cap_rcodes_do_not_parse_as_inductance():
+    from bom_enricher.semantic_parser import parse_specs_set, compare_descriptions
+    s_diode = parse_specs_set("1N4148")
+    assert not s_diode.capacitances
+    assert not s_diode.inductances
+    s_cap = parse_specs_set("4u7 16V 0603")
+    assert s_cap.capacitances and not s_cap.inductances
+    assert compare_descriptions("1N4148", "1N4007 Rectifier Diode", mpn_matched=False) == []
+
+
+def test_megaohm_vs_milliohm_and_resistor_arrays():
+    from decimal import Decimal
+    from bom_enricher.semantic_parser import parse_specs_set
+    assert Decimal("10000000") in parse_specs_set("10M").resistances
+    assert Decimal("10000000") in parse_specs_set("10MOhm").resistances
+    assert Decimal("0.01") in parse_specs_set("10mOhm").resistances
+    assert Decimal("10000") in parse_specs_set("4x10K 0603").resistances
+
+
+def test_cross_category_color_polarity_frequency_and_mpn_matched_value_conflicts():
+    from bom_enricher.semantic_parser import compare_descriptions
+    assert compare_descriptions("100nF", "RES SMD 100R 1% 0402", mpn_matched=False)
+    assert compare_descriptions("Red LED 0603", "Yellow LED 0603", mpn_matched=False)
+    assert compare_descriptions("NPN SOT-23", "PNP SOT-23", mpn_matched=False)
+    assert compare_descriptions("8MHz", "16MHz Crystal", mpn_matched=False)
+    assert compare_descriptions("4.7K 0603", "SMD 0603, 10k, %1, Yageo", mpn_matched=True)
+    assert compare_descriptions("100nF 0402", "SMD 0805 Package, 100nF", mpn_matched=True)
+
