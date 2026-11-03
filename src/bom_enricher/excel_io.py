@@ -943,7 +943,10 @@ def read_customer_bom(
         if not row_str_lower:
             continue
         if any(kw in row_str_lower for kw in _METADATA_ROW_KEYWORDS):
-            if not any(_is_ref_like(v) for v in values if v is not None):
+            ref_col = cols.get("part")
+            ref_val = values[ref_col] if ref_col is not None and isinstance(ref_col, int) and ref_col < len(values) else None
+            ref_str = _string_value(ref_val).strip()
+            if not ref_str or not _is_ref_like(ref_str):
                 continue
 
         get_value = lambda field: values[cols[field]] if field in cols and isinstance(cols[field], int) and cols[field] < len(values) else None
@@ -1040,6 +1043,9 @@ def read_customer_bom(
             if not has_pn:
                 continue
         else:
+            if any(kw in row_str_lower for kw in _METADATA_ROW_KEYWORDS) and not has_ref:
+                continue
+
             # Every genuine BOM component must have either reference designators or a quantity
             if not (has_ref or has_qty):
                 continue
@@ -1109,6 +1115,12 @@ def read_customer_bom(
                 refs = split_references(part_str)
                 if refs:
                     qty = len(refs)
+
+            if not is_erp:
+                row_str_lower = " ".join(str(v).lower() for v in values if v is not None and str(v).strip())
+                if any(kw in row_str_lower for kw in _METADATA_ROW_KEYWORDS) and not (part_str and _is_ref_like(part_str)):
+                    continue
+
             rows.append(
                 CustomerBomRow(
                     part=part_str,
