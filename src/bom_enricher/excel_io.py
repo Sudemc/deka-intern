@@ -116,6 +116,10 @@ _HEADER_ALIASES = {
         "montaj durumu", "dizgi durumu", "montajdurumu", "dizgidurumu",
         "process", "proses", "islem", "islem tipi", "process type",
     },
+    "material_type": {
+        "material type", "materialtype", "malzeme tipi", "malzemetipi",
+        "component type", "componenttype", "part type", "parttype", "tip", "type",
+    },
 }
 _DATE_PATTERN = re.compile(r"^\d{1,4}[./\-]\d{1,2}[./\-]\d{1,4}$")
 
@@ -565,6 +569,17 @@ def _resolve_table_layout(
         else:
             found["part"] = [sorted_by_ref[0]]
 
+    # Filter out integer sequence columns from 'part'
+    if "part" in found:
+        valid_part_cols = []
+        for col_idx in found["part"]:
+            col_vals = [r[col_idx] for r in sample_data_rows if col_idx < len(r) and r[col_idx] is not None]
+            if _is_integer_sequence(col_vals):
+                found.setdefault("item", []).append(col_idx)
+            else:
+                valid_part_cols.append(col_idx)
+        found["part"] = valid_part_cols
+
     # If 'part' contains 0 references but high MPN codes, reassign to 'part_number'
     if "part" in found:
         valid_part_cols = []
@@ -835,6 +850,7 @@ def read_customer_bom(
     path: Path,
     sheet_name: str | int | None = None,
     mapping: ColumnMapping | None = None,
+    is_erp: bool = False,
 ) -> list[CustomerBomRow]:
     """Read customer BOM rows while validating raw worksheet headers first."""
 
@@ -997,6 +1013,7 @@ def read_customer_bom(
         manufacturer = get_value("manufacturer")
         mounting = get_value("mounting")
         status = get_value("status")
+        material_type = get_value("material_type")
 
         part_str = _string_value(part).strip()
         if (qty is None or str(qty).strip() == "" or str(qty).lower() == "nan") and part_str:
@@ -1019,15 +1036,19 @@ def read_customer_bom(
         has_pn = bool(part_number or candidates)
         has_qty_val = bool(has_qty and combined_value and len(combined_value) > 3)
 
-        # Every genuine BOM component must have either reference designators or a quantity
-        if not (has_ref or has_qty):
-            continue
+        if is_erp:
+            if not has_pn:
+                continue
+        else:
+            # Every genuine BOM component must have either reference designators or a quantity
+            if not (has_ref or has_qty):
+                continue
 
-        if not (has_ref or has_pn or has_qty_val):
-            continue
+            if not (has_ref or has_pn or has_qty_val):
+                continue
 
-        if _header_field(part_str) is not None and not has_pn:
-            continue
+            if _header_field(part_str) is not None and not has_pn:
+                continue
 
         rows.append(
             CustomerBomRow(
@@ -1043,6 +1064,7 @@ def read_customer_bom(
                 source_sheet=str(resolved_sheet),
                 source_file=workbook_path.name,
                 status=_string_value(status).strip(),
+                material_type=_string_value(material_type).strip(),
             )
         )
 
@@ -1074,6 +1096,12 @@ def read_customer_bom(
                 candidates.append(PartNumberCandidate(cand_val, _string_value(src_hdr).strip()))
             if part_number and not candidates:
                 candidates.append(PartNumberCandidate(part_number, "Part Number"))
+            if not part_number and candidates:
+                part_number = candidates[0].value
+
+            if is_erp and not (part_number or candidates):
+                continue
+
             part = get_value("part")
             qty = get_value("qty")
             part_str = _string_value(part).strip()
@@ -1095,6 +1123,7 @@ def read_customer_bom(
                     source_sheet=str(resolved_sheet),
                     source_file=workbook_path.name,
                     status=_string_value(get_value("status")).strip(),
+                    material_type=_string_value(get_value("material_type")).strip(),
                 )
             )
 
@@ -1188,3 +1217,17 @@ def _select_customer_sheet(path: Path) -> str:
     finally:
         workbook.close()
 
+
+
+def read_bom_table(
+    path: Path,
+    sheet_name: str | int | None = None,
+    mapping: ColumnMapping | None = None,
+    is_erp: bool = False,
+) -> list[CustomerBomRow]:
+    return read_customer_bom(path, sheet_name=sheet_name, mapping=mapping, is_erp=is_erp)
+
+
+def read_bom_workbook(path: Path | str, kind: str = "customer"):
+    from bom_enricher.comparison import read_bom_workbook as _read_bom_workbook
+    return _read_bom_workbook(path, kind=kind)

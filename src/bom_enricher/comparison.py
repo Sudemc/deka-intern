@@ -14,10 +14,13 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from .excel_io import (
+    _auto_layout,
+    _select_customer_sheet,
     clean_part_number,
     find_customer_bom_sheets,
     read_customer_bom,
     split_references,
+    validate_reference_tokens,
 )
 from .semantic_parser import compare_descriptions, normalize_code_key, normalize_mounting
 
@@ -734,6 +737,10 @@ def compare_workbooks(
         cleaned_first = clean_part_number(rec.part_number)
         if cleaned_first and cleaned_first not in codes:
             codes.append(cleaned_first)
+        for extra in rec.all_codes:
+            cleaned_extra = clean_part_number(extra)
+            if cleaned_extra and cleaned_extra not in codes:
+                codes.append(cleaned_extra)
         if len(codes) > 1:
             group: set[str] = set()
             for code in codes:
@@ -768,6 +775,9 @@ def compare_workbooks(
                 duplicate=rec.duplicate,
                 source_file=rec.source_file,
                 source_sheet=rec.source_sheet,
+                all_codes=rec.all_codes or tuple(codes),
+                code_labels=rec.code_labels,
+                status=rec.status,
             ))
 
     customer_by_code = _unique_records(customer)
@@ -1040,6 +1050,11 @@ def compare_workbooks(
                 customer_mounting = inferred_cust
         issues: list[str] = []
 
+        if customer_record and customer_record.reference:
+            ref_warnings = validate_reference_tokens(customer_record.reference)
+            for w in ref_warnings:
+                issues.append(f"Referans Uyarısı: {w}")
+
         if customer_record is None:
             is_consumable, cons_reason = _check_erp_consumable_or_pcb(erp_record)
             if is_consumable:
@@ -1236,8 +1251,8 @@ def compare_workbooks(
     return ComparisonResult(report, len(matched_pairs))
 
 
-def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[PartRecord]:
-    """Load customer or ERP rows, finding a header row and common header aliases."""
+def read_bom_workbook(path: Path | list[Path] | str | list[str], kind: str = "customer") -> list[PartRecord]:
+    """Load customer or ERP rows using unified data profiling for column detection."""
     if kind not in {"customer", "erp"}:
         raise ValueError("kind must be 'customer' or 'erp'.")
     if kind == "customer":
@@ -1298,6 +1313,7 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
                             all_codes=all_codes,
                             code_labels=code_labels,
                             status=row.status,
+                            material_type=row.material_type,
                         ))
                     else:
                         qty_str = _cell_text(row.qty).strip()
@@ -1323,6 +1339,7 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
                                 source_file=file_path.name,
                                 source_sheet=sheet,
                                 status=row.status,
+                                material_type=row.material_type,
                             ))
         if not all_records:
             first_name = paths[0].name if paths else "Müşteri dosyası"
@@ -1366,43 +1383,83 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
 
         return all_records
 
-    erp_path = Path(path[0]) if isinstance(path, (list, tuple)) else Path(path)
-    frame, headers = _read_table_with_detected_header(erp_path, sheet_name=None)
-    part_col = _find_column(headers, "part_number")
-    description_col = (
-        _find_column(headers, "description") or _find_column(headers, "value")
-    )
-    mounting_col = _find_column(headers, "mounting")
-    reference_col = _find_column(headers, "reference")
-    material_type_col = _find_column(headers, "material_type")
-    qty_col = _find_column(headers, "qty")
-    package_col = _find_column(headers, "package")
-    manufacturer_col = _find_column(headers, "manufacturer")
-    if part_col is None:
-        raise ValueError(f"{erp_path.name}: Part Number / ürün kodu sütunu bulunamadı.")
-    if description_col is None:
-        raise ValueError(f"{erp_path.name}: Description / açıklama sütunu bulunamadı.")
-
+    # kind == "erp"
+    erp_paths = [Path(p) for p in path] if isinstance(path, (list, tuple)) else [Path(path)]
     records: list[PartRecord] = []
-    for _, row in frame.iterrows():
-        code = _cell_text(row.get(part_col))
-        if not code:
-            continue
-        records.append(PartRecord(
-            part_number=code,
-            description=_cell_text(row.get(description_col)),
-            mounting=_cell_text(row.get(mounting_col)) if mounting_col else "",
-            reference=_cell_text(row.get(reference_col)) if reference_col else "",
-            material_type=_cell_text(row.get(material_type_col)) if material_type_col else "",
-            qty=_cell_text(row.get(qty_col)) if qty_col else "",
-            package=_cell_text(row.get(package_col)) if package_col else "",
-            manufacturer=_cell_text(row.get(manufacturer_col)) if manufacturer_col else "",
-            source_file=erp_path.name,
-            source_sheet="",
-        ))
+    for erp_path in erp_paths:
+        bom_sheets = find_customer_bom_sheets(erp_path)
+        if not bom_sheets:
+            bom_sheets = [_select_customer_sheet(erp_path)]
+        for sheet in bom_sheets:
+            erp_rows = read_customer_bom(erp_path, sheet_name=sheet, is_erp=True)
+            for row in erp_rows:
+                code = row.part_number
+                candidates = list(dict.fromkeys(
+                    candidate.value.strip()
+                    for candidate in row.product_code_candidates
+                    if candidate.value.strip()
+                ))
+                code_labels: dict[str, str] = {}
+                for candidate in row.product_code_candidates:
+                    val = candidate.value.strip()
+                    if val and val not in code_labels:
+                        code_labels[val] = candidate.source_column
+
+                if not code:
+                    if len(candidates) == 1:
+                        code = candidates[0]
+                    elif len(candidates) > 1:
+                        mpn_cand = next(
+                            (c for c in candidates if any(k in code_labels.get(c, "").lower() for k in ("üretici", "uretici", "mfr", "manufacturer", "mpn"))),
+                            None
+                        )
+                        code = mpn_cand or candidates[0]
+
+                all_codes_list = [code] if code else []
+                for c in candidates:
+                    if c not in all_codes_list:
+                        all_codes_list.append(c)
+
+                for c in list(all_codes_list):
+                    for sub_c in _split_multi_code(c):
+                        if sub_c not in all_codes_list:
+                            all_codes_list.append(sub_c)
+
+                all_codes = tuple(clean_part_number(c) for c in all_codes_list if clean_part_number(c))
+                if code:
+                    code = clean_part_number(code)
+
+                if not code and not all_codes:
+                    continue
+
+                qty_str = _cell_text(row.qty).strip()
+                if qty_str.lower() == "nan":
+                    qty_str = ""
+
+                records.append(PartRecord(
+                    part_number=code or (all_codes[0] if all_codes else ""),
+                    description=row.value,
+                    mounting=row.mounting,
+                    reference=row.part,
+                    material_type=row.material_type,
+                    qty=qty_str,
+                    package=row.package,
+                    manufacturer=row.manufacturer,
+                    source_file=erp_path.name,
+                    source_sheet=sheet,
+                    all_codes=all_codes,
+                    code_labels=code_labels,
+                    status=row.status,
+                ))
+
     if not records:
-        raise ValueError(f"{erp_path.name}: başlık bulundu ancak ürün kodu içeren satır yok.")
+        first_name = erp_paths[0].name if erp_paths else "ERP dosyası"
+        raise ValueError(f"{first_name}: başlık bulundu ancak ürün kodu içeren satır yok.")
     return records
+
+
+def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[PartRecord]:
+    return read_bom_workbook(path, kind=kind)
 
 
 KNOWN_MANUFACTURERS: tuple[tuple[str, str, str], ...] = (
@@ -1790,20 +1847,14 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
 
 def _read_table_with_detected_header(path: Path, sheet_name: str | None) -> tuple[pd.DataFrame, dict[str, str]]:
     with pd.ExcelFile(path) as book:
-        selected_sheet = sheet_name or book.sheet_names[0]
-        raw = pd.read_excel(book, sheet_name=selected_sheet, header=None, dtype=object)
-        for row_index in range(min(_MAX_SHEET_SCAN_ROWS, len(raw))):
-            headers = [_cell_text(value) for value in raw.iloc[row_index].tolist()]
-            keys = {_header_key(header) for header in headers}
-            if any(_header_field(header) == "part_number" for header in keys):
-                frame = pd.read_excel(book, sheet_name=selected_sheet, header=row_index, dtype=object)
-                resolved: dict[str, str] = {}
-                for column in frame.columns:
-                    role = _header_field(_cell_text(column))
-                    if role and role not in resolved:
-                        resolved[role] = str(column)
-                return frame, resolved
-    raise ValueError(f"{path.name}: ilk {_MAX_SHEET_SCAN_ROWS} satırda ürün kodu başlığı bulunamadı.")
+        selected_sheet = sheet_name or _select_customer_sheet(path)
+        sheet, header_row, raw_headers, detected, code_columns = _auto_layout(path, selected_sheet)
+        frame = pd.read_excel(book, sheet_name=sheet, header=header_row, dtype=object)
+        resolved: dict[str, str] = {}
+        for role, col_idx in detected.items():
+            if isinstance(col_idx, int) and col_idx < len(frame.columns):
+                resolved[role] = str(frame.columns[col_idx])
+        return frame, resolved
 
 
 def _find_rules_sheet(sheet_names: list[str]) -> str:

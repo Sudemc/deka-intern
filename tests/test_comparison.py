@@ -1054,3 +1054,52 @@ def test_split_multi_code_preserves_special_characters_and_packaging_variants():
     assert "CL10B104KB8NNN(C/D)" in res6
     assert "CL10B104KB8NNNC" in res6
     assert "CL10B104KB8NNND" in res6
+
+
+def test_erp_table_profiling(tmp_path):
+    import pandas as pd
+    from bom_enricher.comparison import compare_workbooks, load_records
+
+    # 1. ERP file with 'Parça' as sequential integers 1..N, 'REFERANS' as designators,
+    # and both 'DTSİS KODU' and 'ÜRETİCİ KODU'
+    erp_df = pd.DataFrame({
+        "Parça": [1, 2],
+        "DTSİS KODU": ["H010101005006", "H020202008001"],
+        "ÜRETİCİ KODU": ["MBR0540T1G", "STM32F103C8T6"],
+        "TANIM": ["SCHOTTKY DIODE SOD123", "MCU LQFP48 72MHz"],
+        "REFERANS": ["D13, D15", "U1"],
+        "ADET": [2, 1],
+    })
+    erp_path = tmp_path / "erp_profile.xlsx"
+    erp_df.to_excel(erp_path, index=False)
+
+    erp_records = load_records(erp_path, kind="erp")
+    assert len(erp_records) == 2
+
+    # Verify 'REFERANS' was mapped to reference, NOT 'Parça' (integers 1..N)
+    assert erp_records[0].reference == "D13, D15"
+    assert erp_records[0].reference != "1"
+    assert erp_records[1].reference == "U1"
+
+    # Verify both 'DTSİS KODU' and 'ÜRETİCİ KODU' captured in all_codes
+    assert "H010101005006" in erp_records[0].all_codes
+    assert "MBR0540T1G" in erp_records[0].all_codes
+    assert "H020202008001" in erp_records[1].all_codes
+    assert "STM32F103C8T6" in erp_records[1].all_codes
+
+    # 2. Customer row with bare number '1' as designator generates malformed designator warning
+    cust_df = pd.DataFrame({
+        "Designator": ["D13, D15", "1"],
+        "Part Number": ["MBR0540T1G", "STM32F103C8T6"],
+        "Description": ["SCHOTTKY DIODE SOD123", "MCU LQFP48 72MHz"],
+        "Qty": [2, 1],
+    })
+    cust_path = tmp_path / "cust_profile.xlsx"
+    cust_df.to_excel(cust_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    # Find STM32 row
+    stm_row = next(r for r in res.rows if "STM32F103C8T6" in r.get("Part Number", "") or "STM32F103C8T6" in r.get("ERP Part Number", ""))
+    issue_text = stm_row["Hata/Uyarı Durumu"]
+    assert "Malformed reference designator" in issue_text or "missing component class letter" in issue_text
+
