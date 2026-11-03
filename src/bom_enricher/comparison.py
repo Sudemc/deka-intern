@@ -266,6 +266,9 @@ def _split_multi_code(raw: str) -> list[str]:
     return expand_parentheses_variants(cleaned_raw)
 
 
+split_multi_code = _split_multi_code
+
+
 def _normalize_ref_token(token: str) -> str:
     """Normalize delimiter in designator token like TR1.C1 or TR1-C1 to TR1_C1."""
     tok = token.strip().upper()
@@ -1162,7 +1165,7 @@ def compare_workbooks(
                     issues.append(f"Montaj Tipi Çelişkisi (Müşteri: {customer_mounting}, ERP: {erp_mounting})")
 
             # 5. Semantik Açıklama ve Teknik Değer Kıyaslaması
-            issues.extend(compare_descriptions(customer_value, erp_description))
+            issues.extend(compare_descriptions(customer_value, erp_description, mpn_matched=pn_matches))
 
         if erp_record:
             if customer_record and customer_record.material_type and erp_record.material_type:

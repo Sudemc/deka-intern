@@ -20,6 +20,7 @@ _CAP_MULTIPLIERS = {
     "nf": Decimal("1e-9"),
     "uf": Decimal("1e-6"),
     "µf": Decimal("1e-6"),
+    "\u03bcf": Decimal("1e-6"),
     "mf": Decimal("1e-3"),
     "f": Decimal("1"),
 }
@@ -48,6 +49,7 @@ _IND_MULTIPLIERS = {
     "nh": Decimal("1e-9"),
     "uh": Decimal("1e-6"),
     "µh": Decimal("1e-6"),
+    "\u03bch": Decimal("1e-6"),
     "mh": Decimal("1e-3"),
     "h": Decimal("1"),
 }
@@ -62,6 +64,17 @@ class ElectricalSpecs:
     tolerance_pct: Decimal | None = None
     mounting: str | None = None  # 'SMD' or 'TH'
     package: str | None = None   # e.g. '0603', '0805', '1206'
+
+
+@dataclass(frozen=True)
+class MultiElectricalSpecs:
+    capacitances: frozenset[Decimal] = frozenset()
+    resistances: frozenset[Decimal] = frozenset()
+    inductances: frozenset[Decimal] = frozenset()
+    voltages: frozenset[Decimal] = frozenset()
+    tolerances: frozenset[Decimal] = frozenset()
+    packages: frozenset[str] = frozenset()
+    mountings: frozenset[str] = frozenset()
 
 
 def normalize_code_key(value: str) -> str:
@@ -91,7 +104,10 @@ def normalize_mounting(value: str | None) -> str | None:
 
 
 def parse_specs(text: str) -> ElectricalSpecs:
-    """Extract electrical specifications from a descriptive string."""
+    """Extract electrical specifications from a descriptive string.
+    
+    Backward-compatible: returns the first extracted specification for each property.
+    """
     clean = " " + text.replace(",", " ").replace(";", " ") + " "
     clean_lower = clean.casefold()
 
@@ -114,28 +130,82 @@ def parse_specs(text: str) -> ElectricalSpecs:
     )
 
 
-def _extract_capacitance(text: str) -> Decimal | None:
-    # Matches: 100nf, 0.1uf, 10uf, 100000pf, 4.7uf, 4u7, etc.
+def parse_specs_set(text: str) -> MultiElectricalSpecs:
+    """Extract all electrical specifications from a descriptive string as sets."""
+    clean = " " + text.replace(",", " ").replace(";", " ") + " "
+    clean_lower = clean.casefold()
+
+    return MultiElectricalSpecs(
+        capacitances=_extract_capacitances(clean_lower),
+        resistances=_extract_resistances(clean_lower),
+        inductances=_extract_inductances(clean_lower),
+        voltages=_extract_voltages(clean_lower),
+        tolerances=_extract_tolerances(clean_lower),
+        packages=_extract_packages(clean),
+        mountings=_extract_mountings(clean),
+    )
+
+
+def _extract_capacitances(text: str) -> frozenset[Decimal]:
+    caps: set[Decimal] = set()
     # Pattern 1: standard number + unit
-    match = re.search(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(pf|nf|uf|µf|mf|f)(?![a-z0-9])", text)
+    for match in re.finditer(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(pf|nf|uf|µf|\u03bcf|mf|f)(?![a-z0-9])", text):
+        num, unit = match.groups()
+        caps.add(Decimal(num) * _CAP_MULTIPLIERS.get(unit, Decimal("1")))
+    # Pattern 2: R-code like 4u7 -> 4.7 uF
+    for match_rcode in re.finditer(r"(?<![a-z0-9])(\d+)(u|p|n|µ|\u03bc)(\d+)(?![a-z0-9])", text):
+        whole, unit_char, frac = match_rcode.groups()
+        num_str = f"{whole}.{frac}"
+        unit = "uf" if unit_char in ("u", "µ", "\u03bc") else f"{unit_char}f"
+        if unit in _CAP_MULTIPLIERS:
+            caps.add(Decimal(num_str) * _CAP_MULTIPLIERS[unit])
+    return frozenset(caps)
+
+
+def _extract_capacitance(text: str) -> Decimal | None:
+    match = re.search(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(pf|nf|uf|µf|\u03bcf|mf|f)(?![a-z0-9])", text)
     if match:
         num, unit = match.groups()
         return Decimal(num) * _CAP_MULTIPLIERS.get(unit, Decimal("1"))
-    # Pattern 2: R-code like 4u7 -> 4.7 uF
-    match_rcode = re.search(r"(?<![a-z0-9])(\d+)(u|p|n)(\d+)(?![a-z0-9])", text)
+    match_rcode = re.search(r"(?<![a-z0-9])(\d+)(u|p|n|µ|\u03bc)(\d+)(?![a-z0-9])", text)
     if match_rcode:
         whole, unit_char, frac = match_rcode.groups()
         num_str = f"{whole}.{frac}"
-        unit = f"{unit_char}f"
+        unit = "uf" if unit_char in ("u", "µ", "\u03bc") else f"{unit_char}f"
         if unit in _CAP_MULTIPLIERS:
             return Decimal(num_str) * _CAP_MULTIPLIERS[unit]
     return None
 
 
-def _extract_resistance(text: str) -> Decimal | None:
-    # Matches: 10k, 10kohm, 10 kohm, 10000 ohm, 4k7, 0r1, 100mr, 1m, 330r, 330 ohm
-    # Exclude capacitance or voltage matches like 10uf, 50v
+def _extract_resistances(text: str) -> frozenset[Decimal]:
+    res: set[Decimal] = set()
     # Pattern 1: R-code like 4k7, 0r1, 2m2
+    for match_rcode in re.finditer(r"(?<![a-z0-9])(\d+)([rkmo])(\d+)(?![a-z0-9])", text):
+        whole, unit_char, frac = match_rcode.groups()
+        num_str = f"{whole}.{frac}"
+        unit_map = {"r": "r", "k": "k", "m": "m", "o": "r"}
+        unit = unit_map[unit_char]
+        res.add(Decimal(num_str) * _RES_MULTIPLIERS[unit])
+
+    # Pattern 2: number + unit (k, kohm, ohm, r, etc.)
+    for match in re.finditer(
+        r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(kohms?|kω|mohms?|mω|ohms?|ω|mr|k|r)(?![a-z0-9])",
+        text,
+    ):
+        num, unit = match.groups()
+        if unit == "k":
+            res.add(Decimal(num) * Decimal("1e3"))
+        elif unit in _RES_MULTIPLIERS:
+            res.add(Decimal(num) * _RES_MULTIPLIERS[unit])
+
+    # Pattern 3: explicit "xxx ohm" or "xxx R"
+    for match_ohm in re.finditer(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(?:ohm|r)(?![a-z0-9])", text):
+        res.add(Decimal(match_ohm.group(1)))
+
+    return frozenset(res)
+
+
+def _extract_resistance(text: str) -> Decimal | None:
     match_rcode = re.search(r"(?<![a-z0-9])(\d+)([rkmo])(\d+)(?![a-z0-9])", text)
     if match_rcode:
         whole, unit_char, frac = match_rcode.groups()
@@ -144,20 +214,17 @@ def _extract_resistance(text: str) -> Decimal | None:
         unit = unit_map[unit_char]
         return Decimal(num_str) * _RES_MULTIPLIERS[unit]
 
-    # Pattern 2: number + unit (k, kohm, ohm, r, etc.)
     match = re.search(
         r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(kohms?|kω|mohms?|mω|ohms?|ω|mr|k|r)(?![a-z0-9])",
         text,
     )
     if match:
         num, unit = match.groups()
-        # Avoid matching 'm' as mega unless explicit 'mohm' or 'meg'
         if unit == "k":
             return Decimal(num) * Decimal("1e3")
         if unit in _RES_MULTIPLIERS:
             return Decimal(num) * _RES_MULTIPLIERS[unit]
 
-    # Pattern 3: explicit "xxx ohm" or "xxx R"
     match_ohm = re.search(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(?:ohm|r)(?![a-z0-9])", text)
     if match_ohm:
         return Decimal(match_ohm.group(1))
@@ -165,25 +232,50 @@ def _extract_resistance(text: str) -> Decimal | None:
     return None
 
 
+def _extract_inductances(text: str) -> frozenset[Decimal]:
+    inds: set[Decimal] = set()
+    for match in re.finditer(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(nh|uh|µh|\u03bch|mh|h)(?![a-z0-9])", text):
+        num, unit = match.groups()
+        inds.add(Decimal(num) * _IND_MULTIPLIERS.get(unit, Decimal("1")))
+    for match_code in re.finditer(r"(?<![a-z0-9])(\d+)(u|µ|\u03bc|m|n)h?(\d+)(?![a-z0-9])", text):
+        whole, unit_char, frac = match_code.groups()
+        num_str = f"{whole}.{frac}"
+        unit = "uh" if unit_char in ("u", "µ", "\u03bc") else f"{unit_char}h"
+        if unit in _IND_MULTIPLIERS:
+            inds.add(Decimal(num_str) * _IND_MULTIPLIERS[unit])
+    return frozenset(inds)
+
+
 def _extract_inductance(text: str) -> Decimal | None:
-    # Pattern 1: standard number + unit (e.g. 10uh, 4.7uh, 100nh, 1mh)
-    match = re.search(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(nh|uh|µh|mh|h)(?![a-z0-9])", text)
+    match = re.search(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(nh|uh|µh|\u03bch|mh|h)(?![a-z0-9])", text)
     if match:
         num, unit = match.groups()
         return Decimal(num) * _IND_MULTIPLIERS.get(unit, Decimal("1"))
-    # Pattern 2: R-code style like 4u7 -> 4.7 uH, 2m2 -> 2.2 mH
-    match_code = re.search(r"(?<![a-z0-9])(\d+)(u|µ|m|n)h?(\d+)(?![a-z0-9])", text)
+    match_code = re.search(r"(?<![a-z0-9])(\d+)(u|µ|\u03bc|m|n)h?(\d+)(?![a-z0-9])", text)
     if match_code:
         whole, unit_char, frac = match_code.groups()
         num_str = f"{whole}.{frac}"
-        unit = f"{unit_char}h"
+        unit = "uh" if unit_char in ("u", "µ", "\u03bc") else f"{unit_char}h"
         if unit in _IND_MULTIPLIERS:
             return Decimal(num_str) * _IND_MULTIPLIERS[unit]
     return None
 
 
+def _extract_voltages(text: str) -> frozenset[Decimal]:
+    volts: set[Decimal] = set()
+    for match_vcode in re.finditer(r"(?<![a-z0-9])(\d+)v(\d+)(?![a-z0-9])", text):
+        whole, frac = match_vcode.groups()
+        volts.add(Decimal(f"{whole}.{frac}"))
+
+    for m in re.finditer(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(?:v|volt|vdc)(?!\.?reg)(?!\.?\d)(?![a-z0-9])", text):
+        val = Decimal(m.group(1))
+        if 1950 <= val <= 2050 or val > 1000:
+            continue
+        volts.add(val)
+    return frozenset(volts)
+
+
 def _extract_voltage(text: str) -> Decimal | None:
-    # Matches: 50v, 50 v, 50volt, 6.3v, 6v3, 3v3
     match_vcode = re.search(r"(?<![a-z0-9])(\d+)v(\d+)(?![a-z0-9])", text)
     if match_vcode:
         whole, frac = match_vcode.groups()
@@ -191,23 +283,34 @@ def _extract_voltage(text: str) -> Decimal | None:
 
     for m in re.finditer(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(?:v|volt|vdc)(?!\.?reg)(?!\.?\d)(?![a-z0-9])", text):
         val = Decimal(m.group(1))
-        # Exclude years (1950-2050) and unrealistic voltages (> 1000V)
         if 1950 <= val <= 2050 or val > 1000:
             continue
         return val
     return None
 
 
+def _extract_tolerances(text: str) -> frozenset[Decimal]:
+    tols: set[Decimal] = set()
+    for match_suff in re.finditer(r"(?<![a-z0-9])(?:[±\+\/-]*\s*)(\d+(?:\.\d+)?)\s*%", text):
+        val = Decimal(match_suff.group(1))
+        if val <= 50:
+            tols.add(val)
+
+    for match_pref in re.finditer(r"%\s*(\d+(?:\.\d+)?)(?![a-z0-9])", text):
+        val = Decimal(match_pref.group(1))
+        if val <= 50:
+            tols.add(val)
+
+    return frozenset(tols)
+
+
 def _extract_tolerance(text: str) -> Decimal | None:
-    # Matches: 1%, %1, +/-1%, ±1%, 5%, 10%
-    # Pattern 1: number followed by % (e.g. 1%, 5%, +/-1%)
     match_suff = re.search(r"(?<![a-z0-9])(?:[±\+\/-]*\s*)(\d+(?:\.\d+)?)\s*%", text)
     if match_suff:
         val = Decimal(match_suff.group(1))
         if val <= 50:
             return val
 
-    # Pattern 2: % followed by number (e.g. %1, %5)
     match_pref = re.search(r"%\s*(\d+(?:\.\d+)?)(?![a-z0-9])", text)
     if match_pref:
         val = Decimal(match_pref.group(1))
@@ -217,21 +320,41 @@ def _extract_tolerance(text: str) -> Decimal | None:
     return None
 
 
+def _extract_mountings(text: str) -> frozenset[str]:
+    mounts: set[str] = set()
+    clean = " " + text + " "
+    if re.search(r"(?<![a-z0-9])(smd|smt|surface\s*mount)(?![a-z0-9])", clean, re.I):
+        mounts.add("SMD")
+    if re.search(r"(?<![a-z0-9])(th|tht|through\s*hole|dip)(?![a-z0-9])", clean, re.I):
+        mounts.add("TH")
+    if not mounts:
+        single = normalize_mounting(text)
+        if single:
+            mounts.add(single)
+    return frozenset(mounts)
+
+
 def _extract_mounting(text: str) -> str | None:
     return normalize_mounting(text)
 
 
+def _extract_packages(text: str) -> frozenset[str]:
+    pkgs: set[str] = set()
+    for match in re.finditer(r"\b(0201|0402|0603|0805|1206|1210|2010|2512|SOT-?23|SOD-?123|TO-?220)\b", text, re.I):
+        pkgs.add(match.group(1).upper().replace("-", ""))
+    return frozenset(pkgs)
+
+
 def _extract_package(text: str) -> str | None:
-    # Common packages: 0201, 0402, 0603, 0805, 1206, 1210, 2010, 2512, SOT-23, SOD-123, etc.
     match = re.search(r"\b(0201|0402|0603|0805|1206|1210|2010|2512|SOT-?23|SOD-?123|TO-?220)\b", text, re.I)
     if match:
         return match.group(1).upper().replace("-", "")
     return None
 
 
-def compare_descriptions(customer_text: str, erp_text: str) -> list[str]:
+def compare_descriptions(customer_text: str, erp_text: str, mpn_matched: bool = False) -> list[str]:
     """Compare customer and ERP descriptions semantically.
-    
+
     Returns a list of issue descriptions if there are genuine contradictions.
     Returns [] if they are compatible or equivalent.
     """
@@ -249,58 +372,92 @@ def compare_descriptions(customer_text: str, erp_text: str) -> list[str]:
     if cust_clean == erp_clean:
         return []
 
-    cust_specs = parse_specs(customer_text)
-    erp_specs = parse_specs(erp_text)
+    cust_specs = parse_specs_set(customer_text)
+    erp_specs = parse_specs_set(erp_text)
 
     contradictions: list[str] = []
 
-    # Check Capacitance
-    if cust_specs.capacitance_farad is not None and erp_specs.capacitance_farad is not None:
-        if cust_specs.capacitance_farad != erp_specs.capacitance_farad:
-            ratio = max(cust_specs.capacitance_farad, erp_specs.capacitance_farad) / min(cust_specs.capacitance_farad, erp_specs.capacitance_farad)
-            ratio_note = f", {int(ratio)} kat fark!" if ratio >= 10 else ""
-            contradictions.append(
-                f"Açıklama Çelişkisi (Kritik Değer: Kapasite farklı{ratio_note} - Müşteri {_format_cap(cust_specs.capacitance_farad)}, ERP {_format_cap(erp_specs.capacitance_farad)})"
+    # 1. Check Capacitance
+    if cust_specs.capacitances and erp_specs.capacitances:
+        if not (cust_specs.capacitances & erp_specs.capacitances):
+            best_pair = min(
+                ((c, e) for c in cust_specs.capacitances for e in erp_specs.capacitances),
+                key=lambda p: max(p[0], p[1]) / min(p[0], p[1]),
             )
+            ratio = max(best_pair[0], best_pair[1]) / min(best_pair[0], best_pair[1])
+            if not mpn_matched or ratio >= 10:
+                ratio_note = f", {int(ratio)} kat fark!" if ratio >= 10 else ""
+                contradictions.append(
+                    f"Açıklama Çelişkisi (Kritik Değer: Kapasite farklı{ratio_note} - Müşteri {_format_cap(best_pair[0])}, ERP {_format_cap(best_pair[1])})"
+                )
 
-    # Check Resistance
-    if cust_specs.resistance_ohm is not None and erp_specs.resistance_ohm is not None:
-        if cust_specs.resistance_ohm != erp_specs.resistance_ohm:
-            ratio = max(cust_specs.resistance_ohm, erp_specs.resistance_ohm) / min(cust_specs.resistance_ohm, erp_specs.resistance_ohm)
-            ratio_note = f", {int(ratio)} kat fark!" if ratio >= 10 else ""
-            contradictions.append(
-                f"Açıklama Çelişkisi (Kritik Değer: Direnç farklı{ratio_note} - Müşteri {_format_res(cust_specs.resistance_ohm)}, ERP {_format_res(erp_specs.resistance_ohm)})"
+    # 2. Check Resistance
+    if cust_specs.resistances and erp_specs.resistances:
+        if not (cust_specs.resistances & erp_specs.resistances):
+            best_pair = min(
+                ((r, e) for r in cust_specs.resistances for e in erp_specs.resistances),
+                key=lambda p: max(p[0], p[1]) / min(p[0], p[1]),
             )
+            ratio = max(best_pair[0], best_pair[1]) / min(best_pair[0], best_pair[1])
+            if not mpn_matched or ratio >= 10:
+                ratio_note = f", {int(ratio)} kat fark!" if ratio >= 10 else ""
+                contradictions.append(
+                    f"Açıklama Çelişkisi (Kritik Değer: Direnç farklı{ratio_note} - Müşteri {_format_res(best_pair[0])}, ERP {_format_res(best_pair[1])})"
+                )
 
-    # Check Voltage
-    if cust_specs.voltage_volt is not None and erp_specs.voltage_volt is not None:
-        if cust_specs.voltage_volt != erp_specs.voltage_volt:
-            contradictions.append(
-                f"Açıklama Çelişkisi (Voltaj farklı: Müşteri {cust_specs.voltage_volt}V, ERP {erp_specs.voltage_volt}V)"
+    # 3. Check Voltage
+    if cust_specs.voltages and erp_specs.voltages:
+        if not (cust_specs.voltages & erp_specs.voltages):
+            is_clamp_or_protection = bool(
+                re.search(
+                    r"\b(clamp|clamping|standoff|tvs|transil|varistor|esd|surge|protection|zener|zen|diode|vrwm|vbr)\b",
+                    cust_clean + " " + erp_clean,
+                )
             )
+            is_capacitor = bool(cust_specs.capacitances or erp_specs.capacitances)
 
-    # Check Tolerance
-    if cust_specs.tolerance_pct is not None and erp_specs.tolerance_pct is not None:
-        if cust_specs.tolerance_pct != erp_specs.tolerance_pct:
-            contradictions.append(
-                f"Açıklama Çelişkisi (Tolerans farklı: Müşteri %{cust_specs.tolerance_pct}, ERP %{erp_specs.tolerance_pct})"
-            )
+            # When MPN is verified identical, skip secondary clamp/breakdown voltage ratings on non-capacitors
+            skip_voltage = mpn_matched and (is_clamp_or_protection or not is_capacitor)
+            if not skip_voltage:
+                best_pair = min(
+                    ((v, e) for v in cust_specs.voltages for e in erp_specs.voltages),
+                    key=lambda p: abs(p[0] - p[1]),
+                )
+                contradictions.append(
+                    f"Açıklama Çelişkisi (Voltaj farklı: Müşteri {best_pair[0]}V, ERP {best_pair[1]}V)"
+                )
 
-    # Check Package
-    if cust_specs.package is not None and erp_specs.package is not None:
-        if cust_specs.package != erp_specs.package:
-            contradictions.append(
-                f"Açıklama Çelişkisi (Kılıf/Paket farklı: Müşteri {cust_specs.package}, ERP {erp_specs.package} - SMT dizgide pad'e oturmaz!)"
-            )
+    # 4. Check Tolerance
+    if cust_specs.tolerances and erp_specs.tolerances:
+        if not (cust_specs.tolerances & erp_specs.tolerances):
+            if not mpn_matched:
+                best_pair = min(
+                    ((t, e) for t in cust_specs.tolerances for e in erp_specs.tolerances),
+                    key=lambda p: abs(p[0] - p[1]),
+                )
+                contradictions.append(
+                    f"Açıklama Çelişkisi (Tolerans farklı: Müşteri %{best_pair[0]}, ERP %{best_pair[1]})"
+                )
+
+    # 5. Check Package
+    if cust_specs.packages and erp_specs.packages:
+        if not (cust_specs.packages & erp_specs.packages):
+            if not mpn_matched:
+                best_c_pkg = next(iter(cust_specs.packages))
+                best_e_pkg = next(iter(erp_specs.packages))
+                contradictions.append(
+                    f"Açıklama Çelişkisi (Kılıf/Paket farklı: Müşteri {best_c_pkg}, ERP {best_e_pkg} - SMT dizgide pad'e oturmaz!)"
+                )
 
     if contradictions:
         return contradictions
 
     # If any specific electrical spec was verified to match, we consider it compatible!
     has_matching_spec = (
-        (cust_specs.capacitance_farad is not None and cust_specs.capacitance_farad == erp_specs.capacitance_farad)
-        or (cust_specs.resistance_ohm is not None and cust_specs.resistance_ohm == erp_specs.resistance_ohm)
-        or (cust_specs.voltage_volt is not None and cust_specs.voltage_volt == erp_specs.voltage_volt)
+        bool(cust_specs.capacitances & erp_specs.capacitances)
+        or bool(cust_specs.resistances & erp_specs.resistances)
+        or bool(cust_specs.voltages & erp_specs.voltages)
+        or bool(cust_specs.inductances & erp_specs.inductances)
     )
     if has_matching_spec:
         return []

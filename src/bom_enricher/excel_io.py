@@ -327,6 +327,8 @@ def _explicit_code_like(value: Any) -> bool:
     return True
 
 
+is_valid_part_number = _explicit_code_like
+
 
 def expand_ref_range(token: str) -> list[str]:
     """Expand designator ranges like 'R1-R5', 'R1..R5', or 'C10-C14' into ['R1', 'R2', 'R3', 'R4', 'R5']."""
