@@ -1149,3 +1149,50 @@ def test_multi_row_annotation(tmp_path):
     assert ind_row["Durum"] == "HATA"
 
 
+def test_cross_component_refdes_reconciliation_and_near_miss(tmp_path):
+    """Verify cross-component reference reconciliation and near-miss designator typo detection.
+
+    When an ERP item merges two different customer components (e.g. Amber LED + Yellow LED),
+    the excess references in the merged row should be linked to the missing customer row,
+    pinpointing exact designator typos like T2R_LED1 (Customer) vs T2R_LED2 (ERP).
+    """
+    import pandas as pd
+    from bom_enricher.comparison import compare_workbooks
+
+    cust_df = pd.DataFrame({
+        "Part Number": ["LA_G6SP_AMBER", "LY_G6SP_YELLOW"],
+        "Description": ["Amber LED 1206", "Yellow LED 1206"],
+        "Reference": [
+            "ST1L_LED1, ST1L_LED2, ST1R_LED1, ST1R_LED2",
+            "T1L_LED1, T1R_LED1, T2L_LED1, T2R_LED1",
+        ],
+        "Quantity": [4, 4],
+    })
+    cust_path = tmp_path / "cust_cross.xlsx"
+    cust_df.to_excel(cust_path, index=False)
+
+    erp_df = pd.DataFrame({
+        "Part Number": ["LA_G6SP_AMBER"],
+        "Description": ["Amber LED 1206 SMD"],
+        "Reference": ["ST1L_LED1, ST1L_LED2, ST1R_LED1, ST1R_LED2, T1L_LED1, T1R_LED1, T2L_LED1, T2R_LED2"],
+        "Qty": [8],
+        "Mounting": ["SMD"],
+    })
+    erp_path = tmp_path / "erp_cross.xlsx"
+    erp_df.to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+
+    amber_row = next(r for r in res.rows if r.get("Part Number") == "LA_G6SP_AMBER")
+    yellow_row = next(r for r in res.rows if r.get("Part Number") == "LY_G6SP_YELLOW")
+
+    # 1. Amber row should flag excess refs and pinpoint they belong to LY_G6SP_YELLOW
+    assert "LY_G6SP_YELLOW" in amber_row["Hata/Uyarı Durumu"]
+    assert "T2R_LED1" in amber_row["Hata/Uyarı Durumu"] and "T2R_LED2" in amber_row["Hata/Uyarı Durumu"]
+
+    # 2. Yellow row should note that its references were placed under LA_G6SP_AMBER with the typo pinpointed
+    assert "LA_G6SP_AMBER" in yellow_row["Hata/Uyarı Durumu"]
+    assert "T2R_LED1" in yellow_row["Hata/Uyarı Durumu"] and "T2R_LED2" in yellow_row["Hata/Uyarı Durumu"]
+
+
+

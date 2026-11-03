@@ -312,6 +312,47 @@ def _ref_base_component(ref: str) -> tuple[str, str, str]:
     return prefix.strip().upper(), base, comp_type
 
 
+def _find_ref_near_misses(c_refs: set[str], e_refs: set[str]) -> list[tuple[str, str, str]]:
+    """Identify pairs of customer and ERP reference tokens that differ only by index or prefix."""
+    near_misses: list[tuple[str, str, str]] = []
+    e_pool = set(e_refs)
+    for c in sorted(c_refs):
+        cp, cb, ct = _ref_base_component(c)
+        m_c = re.match(r"^([A-Za-z]+)(\d+.*)$", cb)
+        best_match = None
+        best_score = 0
+        for e in sorted(e_pool):
+            ep, eb, et = _ref_base_component(e)
+            m_e = re.match(r"^([A-Za-z]+)(\d+.*)$", eb)
+            # Case 1: Same board prefix and same component type (e.g. T2R_LED1 vs T2R_LED2)
+            if cp == ep and ct == et and ct:
+                if cp:
+                    score = 100
+                    if m_c and m_e and m_c.group(1) == m_e.group(1):
+                        score += 50
+                    if score > best_score:
+                        best_score = score
+                        best_match = (e, "kart ön eki ve malzeme tipi aynı, dizgi indeksi farklı")
+                else:
+                    if m_c and m_e and m_c.group(1) == m_e.group(1):
+                        score = 50
+                        if score > best_score:
+                            best_score = score
+                            best_match = (e, "malzeme tipi aynı, dizgi indeksi farklı")
+            # Case 2: Same base ref, different prefix (e.g. T2L_LED1 vs T2R_LED1)
+            elif cb == eb and cb and cp != ep:
+                score = 40
+                if score > best_score:
+                    best_score = score
+                    best_match = (e, "dizgi no aynı, kart ön eki farklı")
+
+        if best_match and best_score >= 40:
+            matched_e, reason = best_match
+            e_pool.remove(matched_e)
+            near_misses.append((c, matched_e, reason))
+    return near_misses
+
+
 def _should_pair_refs(crefs: set[str], erefs: set[str]) -> bool:
     """Determine whether two sets of reference designators should be paired."""
     if not crefs or not erefs:
@@ -715,6 +756,120 @@ def _check_erp_consumable_or_pcb(record: PartRecord) -> tuple[bool, str]:
         return True, "Dummy / Dolgu Kalemi (ERP üretim reçetesi yer tutucu malzeme)"
 
     return False, ""
+
+
+def _reconcile_cross_component_references(report: list[dict[str, str]]) -> None:
+    """Identify and reconcile ERP rows that merged references from missing customer components."""
+    donor_entries: list[dict[str, object]] = []
+    for r in report:
+        e_ref_str = r.get("ERP Referans") or ""
+        c_ref_str = r.get("Müşteri Referans") or ""
+        if not e_ref_str:
+            continue
+        e_refs = _split_refs(e_ref_str)
+        c_refs = _split_refs(c_ref_str)
+        excess = e_refs - c_refs
+        if excess:
+            donor_entries.append({
+                "row": r,
+                "available_excess": set(excess),
+                "e_pn": r.get("Part Number") or r.get("ERP Part Number") or "ERP Malzemesi",
+            })
+
+    if not donor_entries:
+        return
+
+    # Find customer rows with missing references
+    receiver_entries: list[dict[str, object]] = []
+    for r in report:
+        c_ref_str = r.get("Müşteri Referans") or ""
+        e_ref_str = r.get("ERP Referans") or ""
+        if not c_ref_str:
+            continue
+        c_refs = _split_refs(c_ref_str)
+        e_refs = _split_refs(e_ref_str)
+        missing = c_refs - e_refs
+        if missing:
+            receiver_entries.append({
+                "row": r,
+                "missing_refs": set(missing),
+                "c_pn": r.get("Part Number") or r.get("Müşteri Part Number") or "Müşteri Malzemesi",
+                "is_missing_in_erp": not bool(r.get("ERP Part Number")),
+            })
+
+    # Prioritize rows completely missing in ERP, then by number of missing refs descending
+    receiver_entries.sort(key=lambda x: (not x["is_missing_in_erp"], -len(x["missing_refs"])))
+
+    for rec in receiver_entries:
+        missing = rec["missing_refs"]
+        best_donor = None
+        best_overlap: set[str] = set()
+        best_near_misses: list[tuple[str, str, str]] = []
+        best_score = 0.0
+
+        for donor in donor_entries:
+            avail = donor["available_excess"]
+            if not avail:
+                continue
+            overlap = missing & avail
+            unmatched_c = missing - overlap
+            unmatched_e = avail - overlap
+            nm = _find_ref_near_misses(unmatched_c, unmatched_e)
+            total_matched = len(overlap) + len(nm)
+
+            # Require significant match: at least 2 refs, or 1 ref if total missing is 1
+            if total_matched >= 2 or (total_matched >= 1 and total_matched == len(missing)):
+                score = total_matched * 100 + (total_matched / max(len(missing), 1)) * 10
+                if score > best_score:
+                    best_score = score
+                    best_donor = donor
+                    best_overlap = overlap
+                    best_near_misses = nm
+
+        if best_donor and best_score > 0:
+            consumed_e = best_overlap | {e for _, e, _ in best_near_misses}
+            best_donor["available_excess"] -= consumed_e
+
+            d_pn = str(best_donor["e_pn"])
+            r_pn = str(rec["c_pn"])
+
+            all_matched_c = sorted(best_overlap | {c for c, _, _ in best_near_misses})
+            if len(all_matched_c) <= 12:
+                sample_c = ", ".join(all_matched_c)
+            else:
+                sample_c = ", ".join(all_matched_c[:8]) + f" (+{len(all_matched_c)-8} adet)"
+
+            donor_note = (
+                f"Çapraz Referans Tespiti: ERP reçetesinde fazla görünen {len(consumed_e)} adet referans "
+                f"({sample_c}), müşteri listesindeki '{r_pn}' malzemesine aittir."
+            )
+            rec_note = (
+                f"Çapraz Referans Tespiti: Müşteri listesindeki bu malzemenin dizgi referansları "
+                f"({sample_c}), ERP reçetesinde '{d_pn}' malzemesi altına yazılmıştır."
+            )
+
+            typo_note = ""
+            if best_near_misses:
+                typo_pairs = ", ".join(f"{c} (Müşteri) vs {e} (ERP)" for c, e, _ in best_near_misses)
+                typo_note = f"Dizgi/İndeks Yazım Farkı: {typo_pairs} (ERP reçetesine sehven farklı girilmiş)."
+
+            # Update donor row (preserve Clean Cell Rule for UYGUN rows)
+            d_row = best_donor["row"]
+            if d_row.get("Durum") != "UYGUN":
+                d_issues = [d_row["Hata/Uyarı Durumu"]] if d_row.get("Hata/Uyarı Durumu") else []
+                d_issues.append(donor_note)
+                if typo_note:
+                    d_issues.append(typo_note)
+                d_row["Hata/Uyarı Durumu"] = "; ".join(dict.fromkeys(d_issues))
+
+            # Update receiver row (preserve Clean Cell Rule for UYGUN rows)
+            r_row = rec["row"]
+            if r_row.get("Durum") != "UYGUN":
+                r_issues = [r_row["Hata/Uyarı Durumu"]] if r_row.get("Hata/Uyarı Durumu") else []
+                r_issues.append(rec_note)
+                if typo_note:
+                    r_issues.append(typo_note)
+                r_row["Hata/Uyarı Durumu"] = "; ".join(dict.fromkeys(r_issues))
 
 
 def compare_workbooks(
@@ -1201,6 +1356,10 @@ def compare_workbooks(
                     issues.append(
                         f"Dizgi/Referans farkı ({diff_summary}Müşteri: {c_disp}, ERP: {e_disp})"
                     )
+                    intra_nm = _find_ref_near_misses(set(c_only), set(e_only))
+                    if intra_nm:
+                        intra_typos = ", ".join(f"{c} (Müşteri) vs {e} (ERP)" for c, e, _ in intra_nm)
+                        issues.append(f"Dizgi/İndeks Yazım Farkı: {intra_typos}")
 
             # 4. Müşteri Montaj vs ERP Montaj
             if customer_mounting and erp_mounting:
@@ -1275,6 +1434,8 @@ def compare_workbooks(
             "ERP Referans": erp_reference,
             "Hata/Uyarı Durumu": issue_str,
         })
+
+    _reconcile_cross_component_references(report)
 
     if output_path:
         write_comparison_report(report, output_path)
