@@ -352,6 +352,14 @@ def _extract_package(text: str) -> str | None:
     return None
 
 
+def _calc_ratio(a: Decimal, b: Decimal) -> Decimal:
+    """Calculate ratio between two electrical values with zero-guard."""
+    min_val = min(a, b)
+    if min_val <= Decimal("0"):
+        return Decimal("Infinity")
+    return max(a, b) / min_val
+
+
 def compare_descriptions(customer_text: str, erp_text: str, mpn_matched: bool = False) -> list[str]:
     """Compare customer and ERP descriptions semantically.
 
@@ -382,11 +390,16 @@ def compare_descriptions(customer_text: str, erp_text: str, mpn_matched: bool = 
         if not (cust_specs.capacitances & erp_specs.capacitances):
             best_pair = min(
                 ((c, e) for c in cust_specs.capacitances for e in erp_specs.capacitances),
-                key=lambda p: max(p[0], p[1]) / min(p[0], p[1]),
+                key=lambda p: _calc_ratio(p[0], p[1]),
             )
-            ratio = max(best_pair[0], best_pair[1]) / min(best_pair[0], best_pair[1])
+            ratio = _calc_ratio(best_pair[0], best_pair[1])
             if not mpn_matched or ratio >= 10:
-                ratio_note = f", {int(ratio)} kat fark!" if ratio >= 10 else ""
+                if ratio.is_infinite():
+                    ratio_note = ", sıfır vs değerli kapasite farkı"
+                elif ratio >= 10:
+                    ratio_note = f", {int(ratio)} kat fark!"
+                else:
+                    ratio_note = ""
                 contradictions.append(
                     f"Açıklama Çelişkisi (Kritik Değer: Kapasite farklı{ratio_note} - Müşteri {_format_cap(best_pair[0])}, ERP {_format_cap(best_pair[1])})"
                 )
@@ -396,11 +409,16 @@ def compare_descriptions(customer_text: str, erp_text: str, mpn_matched: bool = 
         if not (cust_specs.resistances & erp_specs.resistances):
             best_pair = min(
                 ((r, e) for r in cust_specs.resistances for e in erp_specs.resistances),
-                key=lambda p: max(p[0], p[1]) / min(p[0], p[1]),
+                key=lambda p: _calc_ratio(p[0], p[1]),
             )
-            ratio = max(best_pair[0], best_pair[1]) / min(best_pair[0], best_pair[1])
+            ratio = _calc_ratio(best_pair[0], best_pair[1])
             if not mpn_matched or ratio >= 10:
-                ratio_note = f", {int(ratio)} kat fark!" if ratio >= 10 else ""
+                if ratio.is_infinite():
+                    ratio_note = ", 0R vs değerli direnç farkı"
+                elif ratio >= 10:
+                    ratio_note = f", {int(ratio)} kat fark!"
+                else:
+                    ratio_note = ""
                 contradictions.append(
                     f"Açıklama Çelişkisi (Kritik Değer: Direnç farklı{ratio_note} - Müşteri {_format_res(best_pair[0])}, ERP {_format_res(best_pair[1])})"
                 )
@@ -449,26 +467,7 @@ def compare_descriptions(customer_text: str, erp_text: str, mpn_matched: bool = 
                     f"Açıklama Çelişkisi (Kılıf/Paket farklı: Müşteri {best_c_pkg}, ERP {best_e_pkg} - SMT dizgide pad'e oturmaz!)"
                 )
 
-    if contradictions:
-        return contradictions
-
-    # If any specific electrical spec was verified to match, we consider it compatible!
-    has_matching_spec = (
-        bool(cust_specs.capacitances & erp_specs.capacitances)
-        or bool(cust_specs.resistances & erp_specs.resistances)
-        or bool(cust_specs.voltages & erp_specs.voltages)
-        or bool(cust_specs.inductances & erp_specs.inductances)
-    )
-    if has_matching_spec:
-        return []
-
-    # If customer text is a subset of tokens in ERP text
-    cust_tokens = set(re.findall(r"[a-z0-9]+", cust_clean))
-    erp_tokens = set(re.findall(r"[a-z0-9]+", erp_clean))
-    if cust_tokens and cust_tokens.issubset(erp_tokens):
-        return []
-
-    return []
+    return contradictions
 
 
 def _format_cap(farad: Decimal) -> str:

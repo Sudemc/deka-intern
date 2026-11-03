@@ -95,6 +95,17 @@ def test_mpn_matched_shield_tolerance_variation():
     assert issues_matched == [], f"Expected shield to suppress tolerance difference, got: {issues_matched}"
 
 
+def test_zero_ohm_resistor_comparison():
+    # 0R vs 0R should be fully compatible
+    issues_same = compare_descriptions("Resistor 0R 0805", "Resistor 0R 0805")
+    assert issues_same == []
+
+    # 0R vs 10R should flag a contradiction without DivisionByZero
+    issues_diff = compare_descriptions("Resistor 0R 0805", "Resistor 10R 0805")
+    assert any("Direnç farklı" in issue for issue in issues_diff)
+    assert any("0R vs değerli direnç farkı" in issue for issue in issues_diff)
+
+
 def test_exposed_helper_functions():
     assert callable(split_multi_code)
     assert callable(is_valid_part_number)
