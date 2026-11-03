@@ -17,6 +17,7 @@ from .excel_io import (
     _auto_layout,
     _select_customer_sheet,
     clean_part_number,
+    expand_ref_range,
     find_customer_bom_sheets,
     read_customer_bom,
     split_references,
@@ -277,6 +278,8 @@ split_multi_code = _split_multi_code
 def _normalize_ref_token(token: str) -> str:
     """Normalize delimiter in designator token like TR1.C1 or TR1-C1 to TR1_C1."""
     tok = token.strip().upper()
+    if len(expand_ref_range(tok)) > 1:
+        return tok
     parts = re.split(r"[_\.\-]", tok, maxsplit=1)
     if len(parts) == 2 and 2 <= len(parts[0]) <= 10 and re.match(r"^[A-Z]+\d+", parts[1]):
         return f"{parts[0]}_{parts[1]}"
@@ -303,7 +306,11 @@ def _ref_base_component(ref: str) -> tuple[str, str, str]:
     """Return (board_prefix, base_ref, comp_type) from a designator token."""
     norm = _normalize_ref_token(ref)
     if "_" in norm:
-        prefix, base = norm.split("_", 1)
+        rparts = norm.rsplit("_", 1)
+        if re.match(r"^[A-Z]+\d+[A-Z]?$", rparts[1]):
+            prefix, base = rparts[0], rparts[1]
+        else:
+            prefix, base = norm.split("_", 1)
     else:
         prefix, base = "", norm
     base = base.strip().upper()
@@ -389,9 +396,14 @@ def _extract_erp_prefixes(erp_records: list[PartRecord]) -> tuple[set[str], dict
         seen_in_rec: set[str] = set()
         for ref in _split_refs(rec.reference):
             if "_" in ref:
-                parts = ref.split("_", 1)
-                prefix = parts[0].strip().upper()
-                base = parts[1].strip().upper()
+                rparts = ref.rsplit("_", 1)
+                if re.match(r"^[A-Z]+\d+", rparts[1].strip().upper()):
+                    prefix = rparts[0].strip().upper()
+                    base = rparts[1].strip().upper()
+                else:
+                    parts = ref.split("_", 1)
+                    prefix = parts[0].strip().upper()
+                    base = parts[1].strip().upper()
                 # A PCB board/sub-panel prefix must be at least 2 characters (single letters like J, C, R, D
                 # are schematic component class identifiers, e.g. J_LCD1, D_LED1, not board prefixes).
                 if 2 <= len(prefix) <= 10 and re.match(r"^[A-Z]+\d+", base):
@@ -555,11 +567,12 @@ def _qualify_customer_references(
             )
         )
 
-        if key in satellite_pairs and not already_qualified:
+        if key in satellite_pairs:
             l_pfx, r_pfx = satellite_pairs[key]
             clean_tokens = [r for r in rec_refs if "_" not in r]
+            prefixed_tokens = [r for r in rec_refs if "_" in r]
             if clean_tokens:
-                expanded = [f"{l_pfx}_{t}" for t in clean_tokens] + [f"{r_pfx}_{t}" for t in clean_tokens]
+                expanded = [f"{l_pfx}_{t}" for t in clean_tokens] + [f"{r_pfx}_{t}" for t in clean_tokens] + prefixed_tokens
                 new_ref = ", ".join(expanded)
                 new_qty = rec.qty
                 if rec.qty:
@@ -593,12 +606,12 @@ def _qualify_customer_references(
 
         pfx = resolved_prefixes.get(key)
         is_unmapped = bool(unmapped_keys and key in unmapped_keys and not already_qualified)
-        if not pfx or not rec.reference.strip() or already_qualified:
+        if not rec.reference.strip():
             updated.append(PartRecord(
                 part_number=rec.part_number,
                 description=rec.description,
                 mounting=rec.mounting,
-                reference=_normalize_ref_string(rec.reference),
+                reference="",
                 material_type=rec.material_type,
                 qty=rec.qty,
                 manufacturer=rec.manufacturer,
@@ -617,26 +630,19 @@ def _qualify_customer_references(
             continue
 
         clean_ref = re.sub(r"\b([A-Za-z0-9]+_)\s+([A-Za-z0-9]+)\b", r"\1\2", rec.reference)
-        raw_tokens = re.split(r"([,;|\s/]+)", clean_ref)
-        new_tokens: list[str] = []
-        erp_bases = erp_refs_by_prefix.get(pfx, set())
-        for token in raw_tokens:
-            stripped = _normalize_ref_token(token.strip().upper())
-            if stripped and re.match(r"^[A-Z]+\d+", stripped):
-                if not stripped.startswith(f"{pfx}_") and "_" not in stripped:
+        ref_tokens = split_references(clean_ref)
+        if ref_tokens:
+            new_tokens: list[str] = []
+            for token in ref_tokens:
+                stripped = _normalize_ref_token(token)
+                if pfx and not stripped.startswith(f"{pfx}_") and not any(stripped.startswith(f"{ep}_") for ep in erp_prefixes) and "_" not in stripped:
                     new_tokens.append(f"{pfx}_{stripped}")
                 else:
                     new_tokens.append(stripped)
-            elif stripped and re.match(r"^[A-Za-z0-9]+_[A-Za-z]+\d+", stripped):
-                new_tokens.append(stripped)
-            elif token in (",", ";", "|", "/", " "):
-                new_tokens.append(token)
-            elif not stripped or stripped.endswith("_"):
-                continue
-            else:
-                new_tokens.append(token)
+            new_ref = ", ".join(new_tokens)
+        else:
+            new_ref = _normalize_ref_string(rec.reference)
 
-        new_ref = "".join(new_tokens)
         updated.append(PartRecord(
             part_number=rec.part_number,
             description=rec.description,
@@ -650,7 +656,7 @@ def _qualify_customer_references(
             source_file=rec.source_file,
             source_sheet=rec.source_sheet,
             source_breakdown=rec.source_breakdown,
-            unmapped_prefix=False,
+            unmapped_prefix=is_unmapped if not pfx else False,
             all_codes=rec.all_codes,
             code_labels=rec.code_labels,
             status=rec.status,
@@ -1291,18 +1297,20 @@ def compare_workbooks(
             # 2. Müşteri Qty vs Referans Adedi
             has_cust_ref_err = any("Müşteri Qty ile Referans sayısı uyumsuz" in err for err in (customer_record.row_errors if customer_record else ()))
             if not has_cust_ref_err and customer_record and customer_record.reference and customer_qty:
+                c_split = _split_refs(customer_record.reference)
                 ref_tokens = [r.strip() for r in re.split(r"[,;|\s/]+", customer_record.reference) if r.strip()]
                 valid_refs = [
                     r for r in ref_tokens
                     if re.match(r"^(?:[A-Za-z0-9]+_)?[A-Za-z][A-Za-z0-9_]*$", r)
                 ]
-                if valid_refs:
+                ref_count = len(c_split) if c_split else len(valid_refs)
+                if ref_count > 0:
                     try:
                         c_qty_val = float(customer_qty)
-                        if c_qty_val != len(valid_refs) and c_qty_val != len(ref_tokens):
+                        if c_qty_val != ref_count and c_qty_val != len(valid_refs) and c_qty_val != len(ref_tokens):
                             prefix = f"Satır {customer_record.source_row}: " if customer_record.source_row else ""
                             issues.append(
-                                f"{prefix}Müşteri Qty ile Referans sayısı uyumsuz (Qty: {customer_qty}, Ref: {len(valid_refs)})"
+                                f"{prefix}Müşteri Qty ile Referans sayısı uyumsuz (Qty: {customer_qty}, Ref: {ref_count})"
                             )
                     except ValueError:
                         pass
@@ -1310,18 +1318,20 @@ def compare_workbooks(
             # 2b. ERP Qty vs Referans Adedi
             has_erp_ref_err = any("ERP Qty ile Referans sayısı uyumsuz" in err for err in (erp_record.row_errors if erp_record else ()))
             if not has_erp_ref_err and erp_record and erp_record.reference and erp_qty:
+                e_split = _split_refs(erp_record.reference)
                 e_ref_tokens = [r.strip() for r in re.split(r"[,;|\s/]+", erp_record.reference) if r.strip()]
                 valid_e_refs = [
                     r for r in e_ref_tokens
                     if re.match(r"^(?:[A-Za-z0-9]+_)?[A-Za-z][A-Za-z0-9_]*$", r)
                 ]
-                if valid_e_refs:
+                e_ref_count = len(e_split) if e_split else len(valid_e_refs)
+                if e_ref_count > 0:
                     try:
                         e_qty_val = float(erp_qty)
-                        if e_qty_val != len(valid_e_refs) and e_qty_val != len(e_ref_tokens):
+                        if e_qty_val != e_ref_count and e_qty_val != len(valid_e_refs) and e_qty_val != len(e_ref_tokens):
                             prefix = f"Satır {erp_record.source_row}: " if erp_record.source_row else ""
                             issues.append(
-                                f"{prefix}ERP Qty ile Referans sayısı uyumsuz (ERP Qty: {erp_qty}, ERP Ref: {len(valid_e_refs)} adet)"
+                                f"{prefix}ERP Qty ile Referans sayısı uyumsuz (ERP Qty: {erp_qty}, ERP Ref: {e_ref_count} adet)"
                             )
                     except ValueError:
                         pass
@@ -2280,63 +2290,8 @@ def _contains_phrase(text: str, phrase: str) -> bool:
     return False
 
 
-def _infer_material_type(record: PartRecord, rulebook: RuleBook) -> str | None:
-    explicit = _normalize_label(record.material_type)
-    if explicit in rulebook.by_type_attribute:
-        return explicit
-
-    ref_clean = _normalize_label(record.reference)
-    if ref_clean in rulebook.by_type_attribute:
-        return ref_clean
-
-    desc_clean = record.description.casefold()
-    ref_lower = record.reference.casefold()
-
-    if "lehim" in ref_lower or "lehim" in desc_clean:
-        if "sarf" in rulebook.by_type_attribute:
-            return "sarf"
-
-    if "stm32" in desc_clean or "stm32" in record.part_number.casefold():
-        if "mcu" in rulebook.by_type_attribute:
-            return "mcu"
-
-    if "voltage regulator" in desc_clean or "regulator" in desc_clean:
-        if "icr" in rulebook.by_type_attribute:
-            return "icr"
-
-    if "humidity sensor" in desc_clean or "shtc3" in desc_clean:
-        if "isl" in rulebook.by_type_attribute:
-            return "isl"
-
-    if "makaron" in desc_clean or "makaron" in ref_lower:
-        if "sarf" in rulebook.by_type_attribute:
-            return "sarf"
-
-    if "display board" in desc_clean or "displayboard" in desc_clean or "display board" in ref_lower:
-        if "ymml" in rulebook.by_type_attribute:
-            return "ymml"
-        if "pcb" in rulebook.by_type_attribute:
-            return "pcb"
-
-    if "coil:" in desc_clean or "relay" in desc_clean or "röle" in desc_clean or "role" in desc_clean:
-        if "rel" in rulebook.by_type_attribute:
-            return "rel"
-
-    if "opto" in desc_clean or "ltv-" in desc_clean or "isp817" in desc_clean or "pc817" in desc_clean:
-        if "opt" in rulebook.by_type_attribute:
-            return "opt"
-
-    if "konnektör" in desc_clean or "connector" in desc_clean or "terminal block" in desc_clean or "modular jack" in desc_clean:
-        if "con" in rulebook.by_type_attribute:
-            return "con"
-
-    if "ac/dc converter" in desc_clean or "ac/dc" in desc_clean or "tny" in desc_clean or "tny" in record.part_number.casefold():
-        if "icr" in rulebook.by_type_attribute:
-            return "icr"
-
-    if "bridge" in desc_clean or "köprü" in desc_clean or "sdip-4l" in desc_clean:
-        if "dio" in rulebook.by_type_attribute:
-            return "dio"
+def _infer_material_type(record: PartRecord, rulebook: RuleBook | None) -> str | None:
+    by_type = rulebook.by_type_attribute if rulebook is not None else None
 
     # Part/Ref designator prefixes give a deterministic class for common BOM items.
     reference_map = {
@@ -2351,32 +2306,94 @@ def _infer_material_type(record: PartRecord, rulebook: RuleBook) -> str | None:
         "p": "con", "rl": "rel", "k": "rel", "hs": "con", "mk": "sarf",
         "br": "dio", "csn": "cap", "rsn": "res",
     }
+
+    explicit = _normalize_label(record.material_type)
+    if explicit and (explicit in by_type if by_type is not None else True):
+        return explicit
+
+    ref_clean = _normalize_label(record.reference)
+    if ref_clean and (ref_clean in by_type if by_type is not None else ref_clean in reference_map.values()):
+        return ref_clean
+
+    desc_clean = record.description.casefold()
+    ref_lower = record.reference.casefold()
+
+    if "lehim" in ref_lower or "lehim" in desc_clean:
+        if by_type is None or "sarf" in by_type:
+            return "sarf"
+
+    if "stm32" in desc_clean or "stm32" in record.part_number.casefold():
+        if by_type is None or "mcu" in by_type:
+            return "mcu"
+
+    if "voltage regulator" in desc_clean or "regulator" in desc_clean:
+        if by_type is None or "icr" in by_type:
+            return "icr"
+
+    if "humidity sensor" in desc_clean or "shtc3" in desc_clean:
+        if by_type is None or "isl" in by_type:
+            return "isl"
+
+    if "makaron" in desc_clean or "makaron" in ref_lower:
+        if by_type is None or "sarf" in by_type:
+            return "sarf"
+
+    if "display board" in desc_clean or "displayboard" in desc_clean or "display board" in ref_lower:
+        if by_type is not None and "ymml" in by_type:
+            return "ymml"
+        if by_type is None or "pcb" in by_type:
+            return "pcb"
+
+    if "coil:" in desc_clean or "relay" in desc_clean or "röle" in desc_clean or "role" in desc_clean:
+        if by_type is None or "rel" in by_type:
+            return "rel"
+
+    if "opto" in desc_clean or "ltv-" in desc_clean or "isp817" in desc_clean or "pc817" in desc_clean:
+        if by_type is None or "opt" in by_type:
+            return "opt"
+
+    if "konnektör" in desc_clean or "connector" in desc_clean or "terminal block" in desc_clean or "modular jack" in desc_clean:
+        if by_type is None or "con" in by_type:
+            return "con"
+
+    if "ac/dc converter" in desc_clean or "ac/dc" in desc_clean or "tny" in desc_clean or "tny" in record.part_number.casefold():
+        if by_type is None or "icr" in by_type:
+            return "icr"
+
+    if "bridge" in desc_clean or "köprü" in desc_clean or "sdip-4l" in desc_clean:
+        if by_type is None or "dio" in by_type:
+            return "dio"
+
     inferred: set[str] = set()
     for segment in re.split(r"[,;|]", record.reference.upper()):
-        match = re.match(r"\s*([A-Za-z0-9_]+)", segment)
-        if match:
-            raw_token = match.group(1).casefold()
-            # Try exact prefix match first
-            candidate = reference_map.get(raw_token)
-            if not candidate:
-                # Strip trailing digits or underscores
-                alpha_only = re.sub(r"[\d_].*$", "", raw_token)
-                candidate = reference_map.get(alpha_only)
-            if not candidate:
-                if raw_token.startswith("r") and not raw_token.startswith(("rl", "rv", "rp", "rt")):
-                    candidate = "res"
-                elif raw_token.startswith("c") and not raw_token.startswith(("cbl",)):
-                    candidate = "cap"
-                elif raw_token.startswith("d") or raw_token.startswith("br"):
-                    candidate = "dio"
-                elif raw_token.startswith("l"):
-                    candidate = "ind"
-                elif raw_token.startswith("j") or raw_token.startswith("p"):
-                    candidate = "con"
-            if candidate and candidate in rulebook.by_type_attribute:
-                inferred.add(candidate)
+        seg_clean = segment.strip()
+        if not seg_clean:
+            continue
+        _, base_ref, comp_type = _ref_base_component(seg_clean)
+        if not comp_type and not base_ref:
+            continue
+        ct = comp_type.casefold() if comp_type else ""
+        candidate = reference_map.get(ct)
+        if not candidate and base_ref:
+            candidate = reference_map.get(base_ref.casefold())
+        if not candidate and ct:
+            if ct.startswith("r") and not ct.startswith(("rl", "rv", "rp", "rt")):
+                candidate = "res"
+            elif ct.startswith("c") and not ct.startswith(("cbl", "csn")):
+                candidate = "cap"
+            elif ct.startswith("d") or ct.startswith("br") or ct.startswith("zd"):
+                candidate = "dio"
+            elif ct.startswith("l"):
+                candidate = "ind"
+            elif ct.startswith("j") or ct.startswith("p"):
+                candidate = "con"
+        if candidate and (by_type is None or candidate in by_type):
+            inferred.add(candidate)
     if len(inferred) == 1:
         return next(iter(inferred))
+
+    if rulebook is None:
+        return None
 
     # Ambiguous reference designators (for example Q3) are resolved only by a
     # unique type-specific Value/Type term present in the ERP description.

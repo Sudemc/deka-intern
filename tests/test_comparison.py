@@ -1195,4 +1195,34 @@ def test_cross_component_refdes_reconciliation_and_near_miss(tmp_path):
     assert "T2R_LED1" in yellow_row["Hata/Uyarı Durumu"] and "T2R_LED2" in yellow_row["Hata/Uyarı Durumu"]
 
 
+def test_range_designators_with_board_prefix_and_spaces(tmp_path):
+    cust_file = tmp_path / "TR1_BOM.xlsx"
+    erp_file = tmp_path / "ERP.xlsx"
+    _write_book(cust_file, "TR1", ["Part Number", "Value", "RefDes", "Qty"], [
+        ["MPN-RES1", "10k", "R1 - R5", 5],
+        ["MPN-CAP1", "100nF", "C10..C12", 3],
+        ["MPN-LED1", "Red LED", "LED1~LED3", 3],
+    ])
+    _write_book(erp_file, "ERP", ["Part Number", "Description", "Reference", "Qty", "Mounting"], [
+        ["MPN-RES1", "10k SMD", "TR1_R1, TR1_R2, TR1_R3, TR1_R4, TR1_R5", 5, "SMD"],
+        ["MPN-CAP1", "100nF SMD", "TR1_C10, TR1_C11, TR1_C12", 3, "SMD"],
+        ["MPN-LED1", "Red LED SMD", "TR1_LED1, TR1_LED2, TR1_LED3", 3, "SMD"],
+    ])
+    res = compare_workbooks(cust_file, erp_file)
+    for row in res.rows:
+        assert row["Durum"] == "UYGUN", f"Unexpected issue on {row['Part Number']}: {row['Hata/Uyarı Durumu']}"
+        assert row["Hata/Uyarı Durumu"] == ""
+
+
+def test_multi_underscore_prefix_base_extraction_and_material_inference():
+    from bom_enricher.comparison import _ref_base_component, _infer_material_type, PartRecord
+    assert _ref_base_component("FOG_L_D1") == ("FOG_L", "D1", "D")
+    assert _ref_base_component("ST_LH_R12") == ("ST_LH", "R12", "R")
+    rec_cap = PartRecord(part_number="X", description="100nF", mounting="SMD", reference="REV1_C10", material_type="", qty="1")
+    rec_res = PartRecord(part_number="Y", description="10K", mounting="SMD", reference="DRL1_R5", material_type="", qty="1")
+    assert _infer_material_type(rec_cap, None) == "cap"
+    assert _infer_material_type(rec_res, None) == "res"
+
+
+
 

@@ -335,23 +335,39 @@ def _explicit_code_like(value: Any) -> bool:
 
 is_valid_part_number = _explicit_code_like
 
+_RANGE_PATTERN = re.compile(
+    r"^([A-Za-z0-9_]*?[A-Za-z]+)(_?)(\d+)\s*(?:\.{2,3}|~|-|–|—)\s*([A-Za-z0-9_]*?[A-Za-z]+)?(_?)(\d+)$"
+)
+_RANGE_SPACE_RE = re.compile(
+    r"\b([A-Za-z0-9_]*[A-Za-z]+\d+)\s*(\.{2,3}|~|-|–|—)\s*([A-Za-z0-9_]*[A-Za-z]*\d+)\b"
+)
+
 
 def expand_ref_range(token: str) -> list[str]:
-    """Expand designator ranges like 'R1-R5', 'R1..R5', or 'C10-C14' into ['R1', 'R2', 'R3', 'R4', 'R5']."""
+    """Expand designator ranges like 'R1-R5', 'R1..R5', 'TR1_C10..C15' into ['R1', 'R2', ...]."""
     raw = token.strip()
-    match = re.match(r"^([A-Za-z0-9_]*[A-Za-z]+)(\d+)\s*(?:[-~]|\.{2,3})\s*([A-Za-z0-9_]*[A-Za-z]+)?(\d+)$", raw)
+    match = _RANGE_PATTERN.match(raw)
     if not match:
         return [raw]
-    p1, n1_s, p2, n2_s = match.groups()
-    if p2 and p1.upper() != p2.upper():
-        return [raw]
+    p1, sep1, n1_s, p2, sep2, n2_s = match.groups()
+    if p2:
+        p1_u = p1.upper()
+        p2_u = p2.upper()
+        if p1_u == p2_u:
+            pass
+        elif "_" in p1 and "_" not in p2 and p1.split("_")[-1].upper() == p2_u:
+            pass
+        else:
+            return [raw]
     try:
         n1, n2 = int(n1_s), int(n2_s)
     except ValueError:
         return [raw]
     if n1 > n2 or n2 - n1 > 500:
         return [raw]
-    prefix = p1
+    prefix = f"{p1}{sep1}"
+    if n1_s.startswith("0") and len(n1_s) > 1 and len(n1_s) == len(n2_s):
+        return [f"{prefix}{str(i).zfill(len(n1_s))}" for i in range(n1, n2 + 1)]
     return [f"{prefix}{i}" for i in range(n1, n2 + 1)]
 
 
@@ -400,7 +416,8 @@ def extract_embedded_part_numbers(s: str) -> list[str]:
 def validate_reference_tokens(refs: list[str] | str) -> list[str]:
     """Detect malformed reference designators (e.g. missing component class letter like '1')."""
     if isinstance(refs, str):
-        refs = [t.strip() for t in re.split(r"[,;|\s/]+", refs) if t.strip()]
+        s_norm = _RANGE_SPACE_RE.sub(r"\1\2\3", refs)
+        refs = [t.strip() for t in re.split(r"[,;|\s/]+", s_norm) if t.strip()]
     if not refs:
         return []
 
@@ -409,16 +426,19 @@ def validate_reference_tokens(refs: list[str] | str) -> list[str]:
         tok_clean = tok.strip(" -_:,;()[]")
         if not tok_clean:
             continue
-        if tok_clean.upper() == "PCB":
-            continue
-        if tok_clean.isdigit() or not any(c.isalpha() for c in tok_clean):
-            warnings.append(
-                f"Malformed reference designator '{tok_clean}': missing component class letter"
-            )
-        elif not DESIGNATOR_REGEX.match(tok_clean):
-            warnings.append(
-                f"Malformed reference designator '{tok_clean}': invalid designator format"
-            )
+        expanded = expand_ref_range(tok_clean)
+        for exp in expanded:
+            exp_clean = exp.strip(" -_:,;()[]")
+            if not exp_clean or exp_clean.upper() == "PCB":
+                continue
+            if exp_clean.isdigit() or not any(c.isalpha() for c in exp_clean):
+                warnings.append(
+                    f"Malformed reference designator '{exp_clean}': missing component class letter"
+                )
+            elif not DESIGNATOR_REGEX.match(exp_clean):
+                warnings.append(
+                    f"Malformed reference designator '{exp_clean}': invalid designator format"
+                )
     return warnings
 
 
@@ -426,12 +446,13 @@ def split_references(s: str) -> list[str]:
     """Split reference designator string (supporting commas, spaces, semicolons, and ranges)."""
     if not s or not isinstance(s, str):
         return []
-    cleaned = re.sub(r"\([^\)]*\)|\[[^\]]*\]", " ", s)
+    s_norm = _RANGE_SPACE_RE.sub(r"\1\2\3", s)
+    cleaned = re.sub(r"\([^\)]*\)|\[[^\]]*\]", " ", s_norm)
     tokens_cand = [t.strip(" -_:,;()[]") for t in re.split(r"[,;|\s/]+", cleaned) if t.strip()]
     if any(_is_ref_like(t) for t in tokens_cand):
         target_s = cleaned
     else:
-        target_s = s
+        target_s = s_norm
     raw_tokens = [t.strip() for t in re.split(r"[,;|\s/]+", target_s) if t.strip()]
     refs: list[str] = []
     for tok in raw_tokens:

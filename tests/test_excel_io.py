@@ -588,3 +588,21 @@ def test_non_destructive_part_number_validation():
     assert _explicit_code_like("Müşteriden gelecek parçalar monte edilecek") is False
     assert _explicit_code_like("YERINE") is False
 
+
+def test_expand_ref_range_patterns():
+    from bom_enricher.excel_io import expand_ref_range, split_references
+
+    assert expand_ref_range("TR1_C10..C15") == [
+        "TR1_C10", "TR1_C11", "TR1_C12", "TR1_C13", "TR1_C14", "TR1_C15"
+    ]
+    assert expand_ref_range("TR1_C10-15") == [
+        "TR1_C10", "TR1_C11", "TR1_C12", "TR1_C13", "TR1_C14", "TR1_C15"
+    ]
+    assert expand_ref_range("R1-R5") == ["R1", "R2", "R3", "R4", "R5"]
+    assert expand_ref_range("LED1~LED4") == ["LED1", "LED2", "LED3", "LED4"]
+
+    assert split_references("TR1_C10 .. C12, R1 - R3, LED1 ~ LED3") == [
+        "TR1_C10", "TR1_C11", "TR1_C12", "R1", "R2", "R3", "LED1", "LED2", "LED3"
+    ]
+
+
