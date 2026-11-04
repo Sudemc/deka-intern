@@ -1,0 +1,19 @@
+# DEKA Elektronik — BOM Karşılaştırma & Datasheet Analiz Motoru
+# Temel BOM Karşılaştırma Bağımlılıkları (Portal Entegrasyonu)
+pandas>=2.0
+openpyxl>=3.1
+fastapi>=0.110,<1
+uvicorn>=0.27,<1
+python-multipart>=0.0.9,<1
+
+# Datasheet PDF Analizi & Opsiyonel Yerel LLM Bağımlılıkları
+requests>=2.31
+pypdf>=4.0
+pdfplumber>=0.11
+pypdfium2>=4.0
+pillow>=10.0
+
+# Test & Geliştirme Bağımlılıkları
+pytest>=8.0
+httpx>=0.27,<1
+reportlab>=4.0

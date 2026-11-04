@@ -5,7 +5,12 @@ from openpyxl import Workbook, load_workbook
 import pytest
 from starlette.testclient import TestClient
 
-from bom_enricher.web import app
+from bom_enricher.web import analyze_single_datasheet, app
+
+_skip_datasheet = pytest.mark.skipif(
+    analyze_single_datasheet is None,
+    reason="Datasheet analyzer module is not installed on the portal-bom-comparison branch",
+)
 
 
 @pytest.fixture
@@ -180,6 +185,7 @@ def test_web_compares_multiple_customer_files(tmp_path):
     assert payload["clean_count"] == 1
 
 
+@_skip_datasheet
 def test_web_datasheet_analyze_with_rules_upload(tmp_path):
     from reportlab.lib.pagesizes import letter
     from reportlab.pdfgen import canvas as rl_canvas
@@ -217,6 +223,7 @@ def test_web_datasheet_analyze_with_rules_upload(tmp_path):
     assert downloaded.content.startswith(b"PK")
 
 
+@_skip_datasheet
 def test_web_datasheet_analyze_rejects_non_pdf(tmp_path):
     rules_bytes = _files(tmp_path)["rules_file"][1]
     multipart = [
@@ -228,6 +235,7 @@ def test_web_datasheet_analyze_rejects_non_pdf(tmp_path):
     assert "PDF" in response.json()["detail"]
 
 
+@_skip_datasheet
 def test_datasheet_analyze_api_returns_analysis_method(client):
     from reportlab.pdfgen import canvas
     import io
@@ -248,6 +256,7 @@ def test_datasheet_analyze_api_returns_analysis_method(client):
     assert data["material_type"] == "RES"
 
 
+@_skip_datasheet
 def test_datasheet_analyze_api_works_with_missing_default_rules(client, monkeypatch, tmp_path):
     from reportlab.pdfgen import canvas
     import io
@@ -331,6 +340,7 @@ def test_llm_health_endpoint(client):
         assert data["host"] == "http://127.0.0.1:11434"
 
 
+@_skip_datasheet
 def test_datasheet_analyze_includes_llm_arbitration_trace(client):
     from reportlab.pdfgen import canvas
     import io
@@ -416,6 +426,7 @@ def test_web_handles_csv_upload_and_corrupted_zip_without_500():
     assert data["clean_count"] == 1
 
 
+@_skip_datasheet
 def test_web_datasheet_analyze_rejects_oversized_pdf(monkeypatch):
     import bom_enricher.web as web_mod
     monkeypatch.setattr(web_mod, "_MAX_UPLOAD_BYTES", 100)

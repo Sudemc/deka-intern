@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bom-enricher"
-version = "0.1.0"
-description = "Local BOM validation and ERP workbook preparation"
+version = "1.0.0"
+description = "DEKA Elektronik Offline BOM Comparison & Datasheet Intelligence Engine"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "pandas",
-    "openpyxl",
-    "requests",
+    "pandas>=2.0",
+    "openpyxl>=3.1",
+    "requests>=2.31",
     "fastapi>=0.110,<1",
     "uvicorn>=0.27,<1",
     "python-multipart>=0.0.9,<1",
@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "httpx>=0.27,<1", "reportlab>=4.0"]
+dev = ["pytest>=8.0", "httpx>=0.27,<1", "reportlab>=4.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -35,4 +35,4 @@ markers = [
 ]
 
 [tool.setuptools.package-data]
-bom_enricher = ["static/*.html"]
+bom_enricher = ["static/*"]

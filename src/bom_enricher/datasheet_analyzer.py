@@ -21,8 +21,6 @@ from bom_enricher.comparison import (
     RuleEntry,
     _normalize_label,
     _normalize_attribute,
-    _entry_text,
-    _contains_phrase,
     load_rulebook,
 )
 from bom_enricher.pdf_renderer import select_and_render_pages
@@ -33,9 +31,7 @@ from bom_enricher.semantic_parser import (
     _extract_inductance,
     _extract_voltage,
     _extract_tolerance,
-    _extract_mounting,
     _extract_package,
-    normalize_mounting,
     _format_cap,
     _format_res,
     _format_ind,
