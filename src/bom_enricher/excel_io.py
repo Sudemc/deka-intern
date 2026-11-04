@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import re
 from typing import Any
@@ -12,6 +13,137 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from bom_enricher.models import CustomerBomRow, PartNumberCandidate
+
+
+_QTY_UNITS = {
+    "adet", "pcs", "pieces", "pc", "ea", "tane", "ad", "unit", "units", "pk", "pack",
+}
+
+_QTY_RE = re.compile(
+    r"(?i)^\s*([+-]?(?:\d+(?:[.,]\d+)*|[.,]\d+))\s*([a-zA-ZçğıöşüÇĞİÖŞÜ.]*)\s*$"
+)
+
+
+def parse_numeric_qty(raw: object) -> float | None:
+    """Parse numeric quantities supporting commas, decimals, and unit suffixes into float."""
+    if raw is None or pd.isna(raw) or isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        try:
+            val = float(raw)
+            return None if math.isnan(val) else val
+        except (ValueError, OverflowError):
+            return None
+
+    s = str(raw).strip()
+    if not s or s.lower() in {"nan", "none", "null", "-", "--"}:
+        return None
+
+    m = _QTY_RE.match(s)
+    if not m:
+        return None
+
+    num_part, unit_part = m.group(1), m.group(2)
+    unit_clean = unit_part.strip(".").lower()
+    if unit_clean and unit_clean not in _QTY_UNITS:
+        return None
+
+    if "," in num_part and "." in num_part:
+        if num_part.rfind(",") > num_part.rfind("."):
+            num_part = num_part.replace(".", "").replace(",", ".")
+        else:
+            num_part = num_part.replace(",", "")
+    elif "," in num_part:
+        num_part = num_part.replace(",", ".")
+
+    try:
+        val = float(num_part)
+        return None if math.isnan(val) else val
+    except (ValueError, OverflowError):
+        return None
+
+
+def format_qty_value(val: float) -> str:
+    """Format quantity float into clean string without trailing zeroes (e.g. 12.0 -> '12', 0.05 -> '0.05')."""
+    if isinstance(val, int):
+        return str(val)
+    if isinstance(val, float):
+        if val.is_integer():
+            return str(int(val))
+        return f"{val:.6f}".rstrip("0").rstrip(".")
+    try:
+        fval = float(val)
+        if fval.is_integer():
+            return str(int(fval))
+        return f"{fval:.6f}".rstrip("0").rstrip(".")
+    except (ValueError, TypeError):
+        return str(val)
+
+
+_DNP_TAGS = (
+    "(DNP)", "[DNP]", "(NM)", "[NM]", "(NC)", "[NC]",
+    "NOT MOUNTED", "DO NOT POPULATE", "NOT POPULATED",
+    "DİZİLMEZ", "DIZILMEZ", "DİZİLMEYECEK", "DIZILMEYECEK",
+    "NO FIT", "NO POP", "NO POPULATE",
+    "MONTAJ DIŞI", "MONTAJ DISI", "MONTAJ YOK",
+)
+
+_EXACT_DNP_WORDS = {
+    "DNP", "NP", "N.P.", "D.N.P.", "NM", "N.M.", "NC", "N.C.",
+    "NOT MOUNTED", "DO NOT POPULATE", "NOT POPULATED",
+    "DİZİLMEZ", "DIZILMEZ", "DİZİLMEYECEK", "DIZILMEYECEK",
+    "NO FIT", "NO POP", "NO POPULATE", "MONTAJ DIŞI", "MONTAJ DISI", "MONTAJ YOK",
+    "PROCESS: NM", "PROCESS:NM", "PROCESS : NM", "PROSES: NM", "PROSES:NM",
+}
+
+
+def is_dnp_row(
+    part_number: str = "",
+    description: str = "",
+    mounting: str = "",
+    status: str = "",
+    reference: str = "",
+    qty: object = "",
+) -> tuple[bool, str]:
+    """Detect DNP / Non-Mounted / Do-Not-Populate items across fields and explicit Qty == 0."""
+    pn_s = str(part_number or "").strip()
+    desc_s = str(description or "").strip()
+    mount_s = str(mounting or "").strip()
+    stat_s = str(status or "").strip()
+    ref_s = str(reference or "").strip()
+
+    # 1. Qty == 0 check
+    pq = parse_numeric_qty(qty)
+    if pq is not None and pq == 0.0:
+        return True, "Montaj Dışı / Dizilmez (Miktar: 0)"
+
+    # 2. Status column
+    stat_u = stat_s.upper()
+    if (
+        stat_u in _EXACT_DNP_WORDS
+        or any(tag in stat_u for tag in _DNP_TAGS)
+        or bool(re.search(r"\bNM\b", stat_u))
+    ):
+        return True, f"Montaj Dışı / Dizilmez ({stat_s})"
+
+    # 3. Mounting column
+    mount_u = mount_s.upper()
+    if mount_u in {"DNP", "NP", "NM", "NC"} or mount_u in _EXACT_DNP_WORDS or any(tag in mount_u for tag in _DNP_TAGS):
+        return True, f"Montaj Dışı / Dizilmez (Montaj: {mount_s})"
+
+    # 4. Description, Reference, Part Number fields
+    for field_name, field_val in (("Açıklama", desc_s), ("Referans", ref_s), ("Part Number", pn_s)):
+        val_u = field_val.upper()
+        if not val_u:
+            continue
+        if val_u in _EXACT_DNP_WORDS:
+            return True, f"Montaj Dışı / Dizilmez ({field_val})"
+        for tag in _DNP_TAGS:
+            if tag in val_u:
+                return True, f"Montaj Dışı / Dizilmez ({field_val})"
+
+    return False, ""
+
 
 
 @dataclass(frozen=True)
@@ -116,6 +248,10 @@ _HEADER_ALIASES = {
         "montaj durumu", "dizgi durumu", "montajdurumu", "dizgidurumu",
         "process", "proses", "islem", "islem tipi", "process type",
     },
+    "material_type": {
+        "material type", "materialtype", "malzeme tipi", "malzemetipi",
+        "component type", "componenttype", "part type", "parttype", "tip", "type",
+    },
 }
 _DATE_PATTERN = re.compile(r"^\d{1,4}[./\-]\d{1,2}[./\-]\d{1,4}$")
 
@@ -144,8 +280,7 @@ def _is_integer_sequence(values: list[Any]) -> bool:
     return nums[0] in (0, 1) and all(nums[i + 1] == nums[i] + 1 for i in range(len(nums) - 1))
 
 
-_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-]{3,63}$")
-_EXPLICIT_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-]{1,63}$")
+_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+()\-*#:,~=\[\]%@;+]{3,63}$")
 _REFERENCE_PATTERN = re.compile(
     r"(?i)^(?:(?:R|C|L|D|Q|U|J|FB|LS|LED|TP|SW)\s*\d+[A-Z]?)(?:\s*,\s*(?:(?:R|C|L|D|Q|U|J|FB|LS|LED|TP|SW)\s*\d+[A-Z]?))*$"
 )
@@ -176,24 +311,59 @@ def _header_field(value: Any) -> str | None:
     return None
 
 
+_PLACEHOLDER_PNS = {
+    "C", "R", "L", "D", "Q", "U", "J", "FB", "T", "Y", "X", "P", "F", "K", "M", "CN", "IC",
+    "DUMMY", "NONE", "EMPTY", "TBD", "NA", "N/A", "DNP", "NP", "NC", "NO POPULATE",
+    "-", "--", "---", ".", "/", "NAN", "NULL", "YOK"
+}
+
+DESIGNATOR_REGEX = re.compile(
+    r"^(?:[A-Za-z0-9_]{1,10}[_.\-])?[A-Za-z]{1,5}\d{1,4}[A-Za-z]?(?:[_\-][A-Za-z0-9]+)?$"
+)
+
+_DESIGNATOR_NOISE_WORDS = {
+    "ALTERNATIF", "EKLEME", "EKLE", "EKLETI", "EKLENECEK", "EKLECEK", "EKELENCEK",
+    "EKLEMEK", "DIK", "YATIK", "MONTE", "EDILECEK", "EDILDI", "MUSTERIDEN",
+    "MUSTERI", "GELECEK", "TAKILACAK", "VERILECEK", "BAGLANTI", "NOT", "NOTE",
+    "SEE", "LOOK", "BAK", "BAKINIZ", "REVIZYON", "REV", "DNP", "NC", "NA", "N/A",
+    "NONE", "EMPTY", "TBD", "RIGHT-ANGLE", "VERTICAL", "HORIZONTAL", "SMD", "TH",
+    "THT", "COLOR", "BIN", "TABLE", "OPTIK", "OPTIC", "LED", "LAMP", "YERINE", "YOK",
+}
+
+
+def _is_noise_or_value(tok: str) -> bool:
+    """Check if token is a component value, package code, or natural language noise."""
+    t_clean = tok.strip(" -_:,;()[]").upper()
+    if not t_clean or t_clean == "PCB":
+        return False
+    if t_clean in _DESIGNATOR_NOISE_WORDS or t_clean in _PLACEHOLDER_PNS:
+        return True
+    if _ELECTRICAL_VALUE_PATTERN.match(t_clean):
+        return True
+    if re.fullmatch(r"^\d+(?:[.,]\d+)?[A-Z]+$", t_clean):
+        return True
+    if re.fullmatch(r"^(?:0[1-9]\d{2}|[1-9]\d{3}|[RCL]0[1-9]\d{2})$", t_clean):
+        return True
+    return False
+
+
 def _is_ref_like(val: Any) -> bool:
     s = _string_value(val).strip()
     if not s or _header_field(s) is not None:
         return False
-    first = re.split(r"[,;\s]+", s)[0].strip("\"' ")
-    return bool(re.match(
-        r"^(?:[A-Za-z0-9]+[_\-])?(?:R|C|L|D|Q|U|IC|J|CN|P|TP|SW|F|FB|T|LED|BT|Y|X|K|VR|ZD|TR|TH|MOV|TS|BRK|CON|DST|FL|B|M|O|ACS)\d+[A-Za-z]?(?:[_\-].*)?$",
-        first,
-        re.IGNORECASE,
-    ))
-
-
-
-_PLACEHOLDER_PNS = {
-    "C", "R", "L", "D", "Q", "U", "J", "FB", "T", "Y", "X", "P", "F", "K", "M", "CN", "IC",
-    "DUMMY", "NONE", "EMPTY", "TBD", "NA", "N/A", "DNP", "NP", "NC", "NO POPULATE",
-    "-", "--", "---", ".", "/", "NAN", "NULL"
-}
+    if s.upper() == "PCB":
+        return True
+    first = re.split(r"[,;\s]+", s)[0].strip(" \"' ")
+    if not first:
+        return False
+    if first.upper() == "PCB":
+        return True
+    first_clean = expand_ref_range(first)[0].strip(" -_:,;()[]")
+    if not first_clean:
+        return False
+    if _is_noise_or_value(first_clean):
+        return False
+    return bool(DESIGNATOR_REGEX.match(first_clean))
 
 
 def _code_like(value: Any) -> bool:
@@ -211,18 +381,24 @@ def _code_like(value: Any) -> bool:
 
 def clean_part_number(s: str) -> str:
     """Clean auxiliary notes from part numbers (e.g. bin codes or mounting orientation notes)."""
+    if s is None:
+        return ""
+    s = str(s).strip()
     if not s:
         return ""
     # If pattern is 'PREFIX (MPN)' where PREFIX is a project/company name and INNER is an MPN (e.g. 'DELTA-V (IXTT140P10T)')
-    m_cust = re.match(r"^([A-Za-z0-9_\-\s]+?)\s*\(([A-Za-z0-9._/+()\-*#]+)\)$", s)
+    m_cust = re.match(r"^([A-Za-z0-9_\-\s]+?)\s*\((.+)\)$", s)
     if m_cust:
         pref, inner = m_cust.group(1).strip(), m_cust.group(2).strip()
         if not any(c.isdigit() for c in re.sub(r"[-_]v\d*", "", pref, flags=re.I)) and any(c.isdigit() for c in inner):
-            return inner
-    cleaned = re.sub(r"\s*\([^)/]*\)", "", s)
-    cleaned = re.sub(r"\s+-\s+(?:Right-Angle|Vertical|Horizontal|Dik|Yatık|SMD|TH).*$", "", cleaned, flags=re.IGNORECASE)
+            if len(inner) >= 5 and _code_like(inner):
+                return inner
+    cleaned = re.sub(r"\s+-\s+(?:Right-Angle|Vertical|Horizontal|Dik|Yatık|SMD|TH).*$", "", s, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+\d+-\d+\s+color\)?.*$", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"(?i)\s+BIN(?:\s*TABLE\d*|\s*:\s*[A-Za-z0-9_\-]+|\s+[A-Za-z0-9_\-]+)?.*$", "", cleaned)
+    # Strip unattached parenthetical notes (must be preceded by whitespace, not attached like TLP293(BL-TPL,E))
+    # Do not strip if paren contains '/' (e.g. packaging variant like (C/D))
+    cleaned = re.sub(r"\s+(?:\([^)/]*\)\s*)+$", "", cleaned)
     return cleaned.strip()
 
 
@@ -232,63 +408,185 @@ _NOTE_PREFIX_PATTERN = re.compile(
 
 
 def _explicit_code_like(value: Any) -> bool:
-    """Reject prose/footer text even when it lands under a named code column."""
+    """Reject prose/footer text even when it lands under a named code column.
+
+    Non-destructive validation: preserves all genuine MPNs containing electronic packaging
+    punctuation and symbols (#, (, ), ,, /, :, ~, =, [, ], %, @, ;, +, -, _, ., *),
+    rejecting only explicit placeholders, dates, short integers, and prose notes.
+    """
     raw_candidate = _string_value(value).strip()
     if not raw_candidate or len(raw_candidate) > 128:
         return False
     if _REFERENCE_PATTERN.fullmatch(raw_candidate) or _is_date_like(raw_candidate):
         return False
-    candidate = clean_part_number(raw_candidate)
-    if not candidate or _NOTE_PREFIX_PATTERN.search(candidate) or _is_date_like(candidate):
+    if raw_candidate.upper() in _PLACEHOLDER_PNS:
         return False
+
+    candidate = clean_part_number(raw_candidate)
+    if not candidate or _is_date_like(candidate):
+        return False
+    if candidate.upper() in _PLACEHOLDER_PNS:
+        return False
+
+    # Single character or no alphanumeric content
+    if len(candidate) < 2 or re.fullmatch(r"^[A-Za-z]$", candidate) or not any(c.isalnum() for c in candidate):
+        return False
+
+    # Pure integers <= 3 digits (e.g. row numbers like 1, 12, 123)
     if re.fullmatch(r"^\d{1,3}$", candidate):
         return False
-    if len(candidate) < 2 or candidate.upper() in _PLACEHOLDER_PNS:
+
+    # Common prose / note prefixes or revision markers
+    if _NOTE_PREFIX_PATTERN.search(candidate) or re.match(r"(?i)^rev(?:izyon)?\.?\s*\d+", candidate):
         return False
-    if re.fullmatch(r"^[A-Za-z]$", candidate) or re.fullmatch(r"^[^A-Za-z0-9]+$", candidate):
-        return False
-    if re.match(r"(?i)^rev(?:izyon)?\.?\s*\d+", candidate):
-        return False
+
+    # Section / assembly keywords
     if any(kw in candidate.lower() for kw in ("module", "section", "assembly", "kart bilesen", "kart bileşen")):
         return False
+
+    # Designator noise words
+    cand_upper = candidate.upper().strip(" -_:,;()[]")
+    if cand_upper in _DESIGNATOR_NOISE_WORDS:
+        return False
+
+    # Multi-word prose notes check
     tokens = candidate.split()
     if len(tokens) > 4:
         return False
-    for token in tokens:
-        if not re.fullmatch(r"[A-Za-z0-9._/+()\-*,#]+", token) or not any(c.isalnum() for c in token):
-            return False
+    # If all tokens are designator noise words
+    if all(t.upper().strip(" -_:,;()[]") in _DESIGNATOR_NOISE_WORDS for t in tokens if t.strip(" -_:,;()[]")):
+        return False
+    # Multi-word candidate without any digits is natural language prose
     if len(tokens) > 1 and not any(character.isdigit() for character in candidate):
         return False
+    # Very long candidate without any digits is natural language prose
     if not any(character.isdigit() for character in candidate) and len(candidate) > 20:
         return False
+
     return True
 
 
+is_valid_part_number = _explicit_code_like
+
+_RANGE_PATTERN = re.compile(
+    r"^([A-Za-z0-9_]*?[A-Za-z]+)(_?)(\d+)\s*(?:\.{2,3}|~|-|–|—)\s*([A-Za-z0-9_]*?[A-Za-z]+)?(_?)(\d+)$"
+)
+_RANGE_SPACE_RE = re.compile(
+    r"\b([A-Za-z0-9_]*[A-Za-z]+\d+)\s*(\.{2,3}|~|-|–|—)\s*([A-Za-z0-9_]*[A-Za-z]*\d+)\b"
+)
+
 
 def expand_ref_range(token: str) -> list[str]:
-    """Expand designator ranges like 'R1-R5', 'R1..R5', or 'C10-C14' into ['R1', 'R2', 'R3', 'R4', 'R5']."""
+    """Expand designator ranges like 'R1-R5', 'R1..R5', 'TR1_C10..C15' into ['R1', 'R2', ...]."""
     raw = token.strip()
-    match = re.match(r"^([A-Za-z0-9_]*[A-Za-z]+)(\d+)\s*(?:[-~]|\.{2,3})\s*([A-Za-z0-9_]*[A-Za-z]+)?(\d+)$", raw)
+    match = _RANGE_PATTERN.match(raw)
     if not match:
         return [raw]
-    p1, n1_s, p2, n2_s = match.groups()
-    if p2 and p1.upper() != p2.upper():
-        return [raw]
+    p1, sep1, n1_s, p2, sep2, n2_s = match.groups()
+    if p2:
+        p1_u = p1.upper()
+        p2_u = p2.upper()
+        if p1_u == p2_u:
+            pass
+        elif "_" in p1 and "_" not in p2 and p1.split("_")[-1].upper() == p2_u:
+            pass
+        else:
+            return [raw]
     try:
         n1, n2 = int(n1_s), int(n2_s)
     except ValueError:
         return [raw]
     if n1 > n2 or n2 - n1 > 500:
         return [raw]
-    prefix = p1
+    prefix = f"{p1}{sep1}"
+    if n1_s.startswith("0") and len(n1_s) > 1 and len(n1_s) == len(n2_s):
+        return [f"{prefix}{str(i).zfill(len(n1_s))}" for i in range(n1, n2 + 1)]
     return [f"{prefix}{i}" for i in range(n1, n2 + 1)]
+
+
+def extract_embedded_part_numbers(s: str) -> list[str]:
+    """Extract embedded part numbers from parenthetical notes or auxiliary comments."""
+    if not s or not isinstance(s, str):
+        return []
+
+    candidates: list[str] = []
+
+    def _is_valid_mpn_token(token: str) -> bool:
+        t = token.strip(" \"',;:()[]")
+        if len(t) < 4 or t.upper() in _PLACEHOLDER_PNS or t.upper() in _DESIGNATOR_NOISE_WORDS:
+            return False
+        if not (any(c.isalpha() for c in t) and any(c.isdigit() for c in t)):
+            return False
+        if _is_noise_or_value(t):
+            return False
+        if re.fullmatch(r"^[A-Za-z]{1,2}\d{1,3}[A-Za-z]?$", t):
+            return False
+        return True
+
+    paren_contents = re.findall(r"\(([^)]+)\)|\[([^\]]+)\]", s)
+    for p_tuple in paren_contents:
+        content = p_tuple[0] if p_tuple[0] else p_tuple[1]
+        tokens = [t.strip(" \"',;:()[]") for t in re.split(r"[,;|\s/]+", content) if t.strip()]
+        for tok in tokens:
+            if _is_valid_mpn_token(tok) and tok not in candidates:
+                candidates.append(tok)
+
+    if candidates:
+        return candidates
+
+    kw_matches = re.findall(
+        r"(?i)(?:alt(?:ernatif)?|yerine|pn|mpn|muadil)[:\s]+([A-Za-z0-9._/+()\-*#]+)", s
+    )
+    for kw_val in kw_matches:
+        tokens = [t.strip(" \"',;:()[]") for t in re.split(r"[,;|\s/]+", kw_val) if t.strip()]
+        for tok in tokens:
+            if _is_valid_mpn_token(tok) and tok not in candidates:
+                candidates.append(tok)
+
+    return candidates
+
+
+def validate_reference_tokens(refs: list[str] | str) -> list[str]:
+    """Detect malformed reference designators (e.g. missing component class letter like '1')."""
+    if isinstance(refs, str):
+        s_norm = _RANGE_SPACE_RE.sub(r"\1\2\3", refs)
+        refs = [t.strip() for t in re.split(r"[,;|\s/]+", s_norm) if t.strip()]
+    if not refs:
+        return []
+
+    warnings: list[str] = []
+    for tok in refs:
+        tok_clean = tok.strip(" -_:,;()[]")
+        if not tok_clean:
+            continue
+        expanded = expand_ref_range(tok_clean)
+        for exp in expanded:
+            exp_clean = exp.strip(" -_:,;()[]")
+            if not exp_clean or exp_clean.upper() == "PCB":
+                continue
+            if exp_clean.isdigit() or not any(c.isalpha() for c in exp_clean):
+                warnings.append(
+                    f"Malformed reference designator '{exp_clean}': missing component class letter"
+                )
+            elif not DESIGNATOR_REGEX.match(exp_clean):
+                warnings.append(
+                    f"Malformed reference designator '{exp_clean}': invalid designator format"
+                )
+    return warnings
 
 
 def split_references(s: str) -> list[str]:
     """Split reference designator string (supporting commas, spaces, semicolons, and ranges)."""
-    if not s:
+    if not s or not isinstance(s, str):
         return []
-    raw_tokens = [t.strip() for t in re.split(r"[,;|\s/]+", s) if t.strip()]
+    s_norm = _RANGE_SPACE_RE.sub(r"\1\2\3", s)
+    cleaned = re.sub(r"\([^\)]*\)|\[[^\]]*\]", " ", s_norm)
+    tokens_cand = [t.strip(" -_:,;()[]") for t in re.split(r"[,;|\s/]+", cleaned) if t.strip()]
+    if any(_is_ref_like(t) for t in tokens_cand):
+        target_s = cleaned
+    else:
+        target_s = s_norm
+    raw_tokens = [t.strip() for t in re.split(r"[,;|\s/]+", target_s) if t.strip()]
     refs: list[str] = []
     for tok in raw_tokens:
         tok_clean = tok.strip(" -_:,;()[]")
@@ -299,10 +597,9 @@ def split_references(s: str) -> list[str]:
             r_clean = r.strip(" -_:,;()[]")
             if not r_clean or r_clean in refs:
                 continue
-            # Keep PCB or valid reference tokens with digits
-            if r_clean.upper() == "PCB" or _is_ref_like(r_clean):
+            if r_clean.upper() == "PCB":
                 refs.append(r_clean)
-            elif any(c.isdigit() for c in r_clean) and len(r_clean) <= 20:
+            elif not _is_noise_or_value(r_clean) and DESIGNATOR_REGEX.match(r_clean):
                 refs.append(r_clean)
     return refs
 
@@ -427,6 +724,17 @@ def _resolve_table_layout(
             found.setdefault("item", []).extend(demoted)
         else:
             found["part"] = [sorted_by_ref[0]]
+
+    # Filter out integer sequence columns from 'part'
+    if "part" in found:
+        valid_part_cols = []
+        for col_idx in found["part"]:
+            col_vals = [r[col_idx] for r in sample_data_rows if col_idx < len(r) and r[col_idx] is not None]
+            if _is_integer_sequence(col_vals):
+                found.setdefault("item", []).append(col_idx)
+            else:
+                valid_part_cols.append(col_idx)
+        found["part"] = valid_part_cols
 
     # If 'part' contains 0 references but high MPN codes, reassign to 'part_number'
     if "part" in found:
@@ -698,6 +1006,7 @@ def read_customer_bom(
     path: Path,
     sheet_name: str | int | None = None,
     mapping: ColumnMapping | None = None,
+    is_erp: bool = False,
 ) -> list[CustomerBomRow]:
     """Read customer BOM rows while validating raw worksheet headers first."""
 
@@ -713,17 +1022,26 @@ def read_customer_bom(
         rows: list[CustomerBomRow] = []
         for dataframe_index, values in enumerate(dataframe.itertuples(index=False, name=None)):
             get_value = lambda field: values[columns[field]] if field in columns and isinstance(columns[field], int) else None
-            part_number = clean_part_number(_string_value(get_value("part_number")).strip())
+            raw_pn = _string_value(get_value("part_number")).strip()
+            part_number = clean_part_number(raw_pn)
             if _is_date_like(part_number) or not _explicit_code_like(part_number):
                 part_number = ""
             candidates: list[PartNumberCandidate] = []
             if part_number:
                 candidates.append(PartNumberCandidate(part_number, mapping.part_number))
+            for emb in extract_embedded_part_numbers(raw_pn):
+                if emb not in [c.value for c in candidates] and _code_like(emb):
+                    candidates.append(PartNumberCandidate(emb, f"{mapping.part_number} (embedded)"))
             part = get_value("part")
             qty = get_value("qty")
             value = _string_value(get_value("value")).strip()
             manufacturer = _string_value(get_value("manufacturer")).strip()
             part_str = _string_value(part).strip()
+            status = _string_value(get_value("status")).strip() if "status" in columns else ""
+            mounting = _string_value(get_value("mounting")).strip() if "mounting" in columns else ""
+            is_dnp, _ = is_dnp_row(part_number, value, mounting, status, part_str, qty)
+            if is_dnp and (not status or status.upper() not in _EXACT_DNP_WORDS):
+                status = "DNP"
             if (qty is None or str(qty).strip() == "" or str(qty).lower() == "nan") and part_str:
                 refs = split_references(part_str)
                 if refs:
@@ -735,13 +1053,13 @@ def read_customer_bom(
                     value=value,
                     part_number=part_number,
                     manufacturer=manufacturer,
-                    mounting="",
+                    mounting=mounting,
                     package="",
                     product_code_candidates=tuple(candidates),
                     source_row=dataframe_index + 2,
                     source_sheet=str(resolved_sheet),
                     source_file=workbook_path.name,
-                    status="",
+                    status=status,
                 )
             )
         return rows
@@ -790,12 +1108,16 @@ def read_customer_bom(
         if not row_str_lower:
             continue
         if any(kw in row_str_lower for kw in _METADATA_ROW_KEYWORDS):
-            if not any(_is_ref_like(v) for v in values if v is not None):
+            ref_col = cols.get("part")
+            ref_val = values[ref_col] if ref_col is not None and isinstance(ref_col, int) and ref_col < len(values) else None
+            ref_str = _string_value(ref_val).strip()
+            if not ref_str or not _is_ref_like(ref_str):
                 continue
 
         get_value = lambda field: values[cols[field]] if field in cols and isinstance(cols[field], int) and cols[field] < len(values) else None
 
-        part_number = clean_part_number(_string_value(get_value("part_number")).strip())
+        raw_pn = _string_value(get_value("part_number")).strip()
+        part_number = clean_part_number(raw_pn)
         if _is_date_like(part_number) or not _explicit_code_like(part_number):
             part_number = ""
 
@@ -803,7 +1125,8 @@ def read_customer_bom(
         for column_index in code_cols:
             if column_index >= len(values):
                 continue
-            cand_val = clean_part_number(_string_value(values[column_index]).strip())
+            raw_col_val = _string_value(values[column_index]).strip()
+            cand_val = clean_part_number(raw_col_val)
             if not cand_val or _is_date_like(cand_val):
                 continue
             source_header = raw_hdrs[column_index] if column_index < len(raw_hdrs) else None
@@ -817,6 +1140,9 @@ def read_customer_bom(
             hdr_name = _string_value(source_header).strip() or f"Column {column_index + 1}"
             if cand_val not in [c.value for c in candidates]:
                 candidates.append(PartNumberCandidate(cand_val, hdr_name))
+            for emb in extract_embedded_part_numbers(raw_col_val):
+                if emb not in [c.value for c in candidates] and _code_like(emb):
+                    candidates.append(PartNumberCandidate(emb, f"{hdr_name} (embedded)"))
 
         if part_number and not candidates:
             pn_col = cols.get("part_number", -1) if isinstance(cols.get("part_number"), int) else -1
@@ -860,20 +1186,35 @@ def read_customer_bom(
         manufacturer = get_value("manufacturer")
         mounting = get_value("mounting")
         status = get_value("status")
+        material_type = get_value("material_type")
 
         part_str = _string_value(part).strip()
+        is_dnp, _ = is_dnp_row(
+            part_number, combined_value, _string_value(mounting).strip(),
+            _string_value(status).strip(), part_str, qty
+        )
+        status_str = _string_value(status).strip()
+        if is_dnp and (not status_str or status_str.upper() not in _EXACT_DNP_WORDS):
+            status_str = "DNP"
+
+        if part_str:
+            for emb in extract_embedded_part_numbers(part_str):
+                if _explicit_code_like(emb) and not any(c.value == emb for c in candidates):
+                    candidates.append(PartNumberCandidate(emb, "Embedded Ref Note"))
         if (qty is None or str(qty).strip() == "" or str(qty).lower() == "nan") and part_str:
             refs = split_references(part_str)
             if refs:
                 qty = len(refs)
         elif part_str and qty is not None:
             try:
-                raw_qty_num = int(float(str(qty).strip()))
-                refs = split_references(part_str)
-                if refs and len(refs) == 2 * raw_qty_num:
-                    is_paired, _ = pair_lr_references(refs)
-                    if is_paired:
-                        qty = len(refs)
+                parsed_q = parse_numeric_qty(qty)
+                if parsed_q is not None and parsed_q.is_integer():
+                    raw_qty_num = int(parsed_q)
+                    refs = split_references(part_str)
+                    if refs and len(refs) == 2 * raw_qty_num:
+                        is_paired, _ = pair_lr_references(refs)
+                        if is_paired:
+                            qty = len(refs)
             except (ValueError, TypeError):
                 pass
 
@@ -882,15 +1223,22 @@ def read_customer_bom(
         has_pn = bool(part_number or candidates)
         has_qty_val = bool(has_qty and combined_value and len(combined_value) > 3)
 
-        # Every genuine BOM component must have either reference designators or a quantity
-        if not (has_ref or has_qty):
-            continue
+        if is_erp:
+            if not has_pn:
+                continue
+        else:
+            if any(kw in row_str_lower for kw in _METADATA_ROW_KEYWORDS) and not has_ref:
+                continue
 
-        if not (has_ref or has_pn or has_qty_val):
-            continue
+            # Every genuine BOM component must have either reference designators or a quantity
+            if not (has_ref or has_qty):
+                continue
 
-        if _header_field(part_str) is not None and not has_pn:
-            continue
+            if not (has_ref or has_pn or has_qty_val):
+                continue
+
+            if _header_field(part_str) is not None and not has_pn:
+                continue
 
         rows.append(
             CustomerBomRow(
@@ -905,7 +1253,8 @@ def read_customer_bom(
                 source_row=row_idx + 1,
                 source_sheet=str(resolved_sheet),
                 source_file=workbook_path.name,
-                status=_string_value(status).strip(),
+                status=status_str,
+                material_type=_string_value(material_type).strip(),
             )
         )
 
@@ -923,41 +1272,88 @@ def read_customer_bom(
         columns = detected
         for dataframe_index, values in enumerate(dataframe.itertuples(index=False, name=None)):
             get_value = lambda field: values[columns[field]] if field in columns and isinstance(columns[field], int) else None
-            part_number = clean_part_number(_string_value(get_value("part_number")).strip())
+            raw_pn = _string_value(get_value("part_number")).strip()
+            part_number = clean_part_number(raw_pn)
             if _is_date_like(part_number) or not _explicit_code_like(part_number):
                 part_number = ""
             candidates = []
             for column_index in code_columns:
                 if column_index >= len(values):
                     continue
-                cand_val = clean_part_number(_string_value(values[column_index]).strip())
+                raw_col_val = _string_value(values[column_index]).strip()
+                cand_val = clean_part_number(raw_col_val)
                 if not cand_val or _is_date_like(cand_val) or not _code_like(cand_val):
                     continue
                 src_hdr = raw_headers[column_index] if column_index < len(raw_headers) else f"Column {column_index + 1}"
                 candidates.append(PartNumberCandidate(cand_val, _string_value(src_hdr).strip()))
+                for emb in extract_embedded_part_numbers(raw_col_val):
+                    if emb not in [c.value for c in candidates] and _code_like(emb):
+                        candidates.append(PartNumberCandidate(emb, f"{_string_value(src_hdr).strip()} (embedded)"))
             if part_number and not candidates:
                 candidates.append(PartNumberCandidate(part_number, "Part Number"))
+            if not part_number and candidates:
+                part_number = candidates[0].value
+
+            if is_erp and not (part_number or candidates):
+                continue
+
             part = get_value("part")
             qty = get_value("qty")
             part_str = _string_value(part).strip()
+            val_str = _string_value(get_value("value")).strip()
+            mount_str = _string_value(get_value("mounting")).strip()
+            stat_str = _string_value(get_value("status")).strip()
+
+            is_dnp, _ = is_dnp_row(part_number, val_str, mount_str, stat_str, part_str, qty)
+            if is_dnp and (not stat_str or (stat_str.upper() not in _EXACT_DNP_WORDS and not bool(re.search(r"\bNM\b", stat_str.upper())))):
+                stat_str = "DNP"
+
+            if part_str:
+                for emb in extract_embedded_part_numbers(part_str):
+                    if _explicit_code_like(emb) and not any(c.value == emb for c in candidates):
+                        candidates.append(PartNumberCandidate(emb, "Embedded Ref Note"))
             if (qty is None or str(qty).strip() == "" or str(qty).lower() == "nan") and part_str:
                 refs = split_references(part_str)
                 if refs:
                     qty = len(refs)
+
+            has_ref = bool(part_str and _is_ref_like(part_str))
+            has_pn = bool(part_number or candidates)
+            has_qty = bool(qty is not None and str(qty).strip() and str(qty).lower() != "nan")
+            has_qty_val = bool(has_qty and val_str and len(val_str) > 3)
+
+            if is_erp:
+                if not has_pn:
+                    continue
+            else:
+                row_str_lower = " ".join(str(v).lower() for v in values if v is not None and str(v).strip())
+                if any(kw in row_str_lower for kw in _METADATA_ROW_KEYWORDS) and not has_ref:
+                    continue
+
+                if not has_pn and not has_ref:
+                    continue
+
+                if not (has_pn or has_ref or has_qty_val):
+                    continue
+
+                if _header_field(part_str) is not None and not has_pn:
+                    continue
+
             rows.append(
                 CustomerBomRow(
                     part=part_str,
                     qty=qty,
-                    value=_string_value(get_value("value")).strip(),
+                    value=val_str,
                     part_number=part_number,
                     manufacturer=_string_value(get_value("manufacturer")).strip(),
-                    mounting=_string_value(get_value("mounting")).strip(),
+                    mounting=mount_str,
                     package=_string_value(get_value("package")).strip(),
                     product_code_candidates=tuple(candidates),
                     source_row=header_row + dataframe_index + 2,
                     source_sheet=str(resolved_sheet),
                     source_file=workbook_path.name,
-                    status=_string_value(get_value("status")).strip(),
+                    status=stat_str,
+                    material_type=_string_value(get_value("material_type")).strip(),
                 )
             )
 
@@ -967,8 +1363,18 @@ def read_customer_bom(
 _IGNORED_SHEET_KEYWORDS = {
     "bin", "revision", "revizyon", "history", "cover", "kapak", "tarihce", "tarihçe",
     "doc", "dokuman", "özeti", "ozeti", "summary", "kickoff", "spec", "specification",
-    "gerber", "readme", "data", "lookup", "dropdown", "secim", "seçim", "parametre",
+    "gerber", "readme", "lookup", "dropdown", "secim", "seçim", "parametre",
 }
+
+
+def _is_ignored_sheet_name(title: str) -> bool:
+    title_lower = title.casefold()
+    tokens = set(re.split(r"[^a-z0-9çğıöşü]+", title_lower))
+    if ("pcb" in tokens or "bom" in tokens or "dizgi" in tokens) and not (
+        tokens & {"spec", "specification", "gerber", "readme", "history", "tarihce", "tarihçe", "revision", "revizyon", "cover", "kapak"}
+    ):
+        return False
+    return bool(tokens & _IGNORED_SHEET_KEYWORDS)
 
 
 def find_customer_bom_sheets(path: Path) -> list[str]:
@@ -977,14 +1383,15 @@ def find_customer_bom_sheets(path: Path) -> list[str]:
     try:
         bom_sheets: list[str] = []
         for worksheet in workbook.worksheets:
-            title_lower = worksheet.title.casefold()
-            if any(kw in title_lower for kw in _IGNORED_SHEET_KEYWORDS):
+            if _is_ignored_sheet_name(worksheet.title):
                 continue
             sample_rows = list(
                 worksheet.iter_rows(min_row=1, max_row=30, values_only=True)
             )
             sheet_score = 0
             for values in sample_rows:
+                if not _is_bom_header_row(values):
+                    continue
                 fields = {
                     field
                     for value in values
@@ -1002,7 +1409,7 @@ def find_customer_bom_sheets(path: Path) -> list[str]:
         if not bom_sheets:
             valid_sheets = [
                 ws for ws in workbook.worksheets
-                if not any(kw in ws.title.casefold() for kw in _IGNORED_SHEET_KEYWORDS)
+                if not _is_ignored_sheet_name(ws.title)
             ]
             if not valid_sheets:
                 return []
@@ -1026,13 +1433,14 @@ def _select_customer_sheet(path: Path) -> str:
         best_sheet = workbook.sheetnames[0]
         best_score = -1
         for worksheet in workbook.worksheets:
-            title_lower = worksheet.title.casefold()
-            if any(kw in title_lower for kw in _IGNORED_SHEET_KEYWORDS):
+            if _is_ignored_sheet_name(worksheet.title):
                 continue
             sample_rows = list(
                 worksheet.iter_rows(min_row=1, max_row=30, values_only=True)
             )
             for row_index, values in enumerate(sample_rows):
+                if not _is_bom_header_row(values):
+                    continue
                 fields = {
                     field
                     for value in values
@@ -1040,14 +1448,47 @@ def _select_customer_sheet(path: Path) -> str:
                 }
                 if not fields:
                     continue
-                # A real BOM header contains several table fields. An explicit
-                # manufacturer-code heading gets extra weight over cover metadata.
                 score = len(fields)
                 score += 8 if "part_number" in fields else 0
                 score += 2 if {"part", "qty", "value"}.issubset(fields) else 0
                 if score > best_score:
-                    best_sheet, best_score = worksheet.title, score
+                    best_score = score
+                    best_sheet = worksheet.title
+        if best_score < 0:
+            for worksheet in workbook.worksheets:
+                if _is_ignored_sheet_name(worksheet.title):
+                    continue
+                sample_rows = list(
+                    worksheet.iter_rows(min_row=1, max_row=30, values_only=True)
+                )
+                for values in sample_rows:
+                    fields = {
+                        field
+                        for value in values
+                        if (field := _header_field(value)) is not None
+                    }
+                    if not fields:
+                        continue
+                    score = len(fields)
+                    score += 8 if "part_number" in fields else 0
+                    if score > best_score:
+                        best_score = score
+                        best_sheet = worksheet.title
         return best_sheet
     finally:
         workbook.close()
 
+
+
+def read_bom_table(
+    path: Path,
+    sheet_name: str | int | None = None,
+    mapping: ColumnMapping | None = None,
+    is_erp: bool = False,
+) -> list[CustomerBomRow]:
+    return read_customer_bom(path, sheet_name=sheet_name, mapping=mapping, is_erp=is_erp)
+
+
+def read_bom_workbook(path: Path | list[Path] | str | list[str], kind: str = "customer"):
+    from bom_enricher.comparison import read_bom_workbook as _read_bom_workbook
+    return _read_bom_workbook(path, kind=kind)

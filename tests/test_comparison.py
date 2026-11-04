@@ -1019,3 +1019,313 @@ def test_delta_v_orta_altium_bom_comparison(tmp_path):
     assert pcb_row["Durum"] == "UYARI"
     assert "Ham PCB" in pcb_row["Hata/Uyarı Durumu"]
 
+
+
+def test_split_multi_code_preserves_special_characters_and_packaging_variants():
+    from bom_enricher.comparison import _split_multi_code
+
+    # Space separated codes
+    res1 = _split_multi_code("ADR4525WBRZ-R7 ADR4525ARZ")
+    assert "ADR4525WBRZ-R7" in res1
+    assert "ADR4525ARZ" in res1
+
+    # Company code and MPN in parens
+    res2 = _split_multi_code("H010101005006 (MBR0540T1G)")
+    assert "H010101005006" in res2
+    assert "MBR0540T1G" in res2
+
+    # Packaging code with comma
+    res3 = _split_multi_code("PESD5V0S5UD,115")
+    assert "PESD5V0S5UD,115" in res3
+    assert "PESD5V0S5UD" in res3
+
+    # Linear Tech / ADI #TRPBF packaging code
+    res4 = _split_multi_code("LT3092ITS8#TRPBF")
+    assert "LT3092ITS8#TRPBF" in res4
+    assert "LT3092ITS8" in res4
+
+    # Packaging variant with attached parens and comma
+    res5 = _split_multi_code("TLP293(BL-TPL,E)")
+    assert "TLP293(BL-TPL,E)" in res5
+    assert "TLP293" in res5
+
+    # Slash variant packaging inside parens
+    res6 = _split_multi_code("CL10B104KB8NNN(C/D)")
+    assert "CL10B104KB8NNN(C/D)" in res6
+    assert "CL10B104KB8NNNC" in res6
+    assert "CL10B104KB8NNND" in res6
+
+
+def test_erp_table_profiling(tmp_path):
+    import pandas as pd
+    from bom_enricher.comparison import compare_workbooks, load_records
+
+    # 1. ERP file with 'Parça' as sequential integers 1..N, 'REFERANS' as designators,
+    # and both 'DTSİS KODU' and 'ÜRETİCİ KODU'
+    erp_df = pd.DataFrame({
+        "Parça": [1, 2],
+        "DTSİS KODU": ["H010101005006", "H020202008001"],
+        "ÜRETİCİ KODU": ["MBR0540T1G", "STM32F103C8T6"],
+        "TANIM": ["SCHOTTKY DIODE SOD123", "MCU LQFP48 72MHz"],
+        "REFERANS": ["D13, D15", "U1"],
+        "ADET": [2, 1],
+    })
+    erp_path = tmp_path / "erp_profile.xlsx"
+    erp_df.to_excel(erp_path, index=False)
+
+    erp_records = load_records(erp_path, kind="erp")
+    assert len(erp_records) == 2
+
+    # Verify 'REFERANS' was mapped to reference, NOT 'Parça' (integers 1..N)
+    assert erp_records[0].reference == "D13, D15"
+    assert erp_records[0].reference != "1"
+    assert erp_records[1].reference == "U1"
+
+    # Verify both 'DTSİS KODU' and 'ÜRETİCİ KODU' captured in all_codes
+    assert "H010101005006" in erp_records[0].all_codes
+    assert "MBR0540T1G" in erp_records[0].all_codes
+    assert "H020202008001" in erp_records[1].all_codes
+    assert "STM32F103C8T6" in erp_records[1].all_codes
+
+    # 2. Customer row with bare number '1' as designator generates malformed designator warning
+    cust_df = pd.DataFrame({
+        "Designator": ["D13, D15", "1"],
+        "Part Number": ["MBR0540T1G", "STM32F103C8T6"],
+        "Description": ["SCHOTTKY DIODE SOD123", "MCU LQFP48 72MHz"],
+        "Qty": [2, 1],
+    })
+    cust_path = tmp_path / "cust_profile.xlsx"
+    cust_df.to_excel(cust_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+    # Find STM32 row
+    stm_row = next(r for r in res.rows if "STM32F103C8T6" in r.get("Part Number", "") or "STM32F103C8T6" in r.get("ERP Part Number", ""))
+    issue_text = stm_row["Hata/Uyarı Durumu"]
+    assert "Malformed reference designator" in issue_text or "missing component class letter" in issue_text
+
+
+def test_multi_row_annotation(tmp_path):
+    from openpyxl import Workbook
+    from bom_enricher.comparison import compare_workbooks
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "BOM"
+    ws.append(["Part Number", "Description", "Designator", "Quantity"])  # Row 1
+    ws.append(["BLM21PG221SN1D", "Ferrite Bead 0805", "L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12", 12])  # Row 2
+    for i in range(3, 18):
+        ws.append([f"RES-{i:03d}", f"{i}k Resistor", f"R{i}", 1])
+    ws.append(["BLM21PG221SN1D", "Ferrite Bead 0805", "L13, L14", 2])  # Row 18
+    for i in range(19, 21):
+        ws.append([f"CAP-{i:03d}", f"{i}uF Capacitor", f"C{i}", 1])
+    ws.append(["IND-001", "Choke Inductor", "L2, L3, L4, L5, L6, L8, L9", 6])  # Row 21
+    cust_path = tmp_path / "customer_bom.xlsx"
+    wb.save(cust_path)
+    wb.close()
+
+    wb_erp = Workbook()
+    ws_erp = wb_erp.active
+    ws_erp.title = "ERP"
+    ws_erp.append(["Part Number", "Description", "Designator", "Quantity", "TH/SMD"])
+    ws_erp.append(["BLM21PG221SN1D", "Ferrite Bead 0805 SMD", "L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14", 14, "SMD"])
+    ws_erp.append(["IND-001", "Choke Inductor SMD", "L2, L3, L4, L5, L6, L8, L9", 6, "SMD"])
+    for i in range(3, 18):
+        ws_erp.append([f"RES-{i:03d}", f"{i}k Resistor SMD", f"R{i}", 1, "SMD"])
+    for i in range(19, 21):
+        ws_erp.append([f"CAP-{i:03d}", f"{i}uF Capacitor SMD", f"C{i}", 1, "SMD"])
+    erp_path = tmp_path / "erp_bom.xlsx"
+    wb_erp.save(erp_path)
+    wb_erp.close()
+
+    res = compare_workbooks(cust_path, erp_path)
+
+    blm_row = next(r for r in res.rows if r.get("Part Number") == "BLM21PG221SN1D")
+    assert blm_row["Kaynak Kart / BOM"] == "Satır 2 (12 adet) + Satır 18 (2 adet)"
+    assert blm_row["Müşteri Qty"] == "14"
+    assert blm_row["Durum"] == "UYGUN"
+
+    ind_row = next(r for r in res.rows if r.get("Part Number") == "IND-001")
+    assert "Satır 21: Müşteri Qty ile Referans sayısı uyumsuz (Qty: 6, Ref: 7)" in ind_row["Hata/Uyarı Durumu"]
+    assert ind_row["Durum"] == "HATA"
+
+
+def test_cross_component_refdes_reconciliation_and_near_miss(tmp_path):
+    """Verify cross-component reference reconciliation and near-miss designator typo detection.
+
+    When an ERP item merges two different customer components (e.g. Amber LED + Yellow LED),
+    the excess references in the merged row should be linked to the missing customer row,
+    pinpointing exact designator typos like T2R_LED1 (Customer) vs T2R_LED2 (ERP).
+    """
+    import pandas as pd
+    from bom_enricher.comparison import compare_workbooks
+
+    cust_df = pd.DataFrame({
+        "Part Number": ["LA_G6SP_AMBER", "LY_G6SP_YELLOW"],
+        "Description": ["Amber LED 1206", "Yellow LED 1206"],
+        "Reference": [
+            "ST1L_LED1, ST1L_LED2, ST1R_LED1, ST1R_LED2",
+            "T1L_LED1, T1R_LED1, T2L_LED1, T2R_LED1",
+        ],
+        "Quantity": [4, 4],
+    })
+    cust_path = tmp_path / "cust_cross.xlsx"
+    cust_df.to_excel(cust_path, index=False)
+
+    erp_df = pd.DataFrame({
+        "Part Number": ["LA_G6SP_AMBER"],
+        "Description": ["Amber LED 1206 SMD"],
+        "Reference": ["ST1L_LED1, ST1L_LED2, ST1R_LED1, ST1R_LED2, T1L_LED1, T1R_LED1, T2L_LED1, T2R_LED2"],
+        "Qty": [8],
+        "Mounting": ["SMD"],
+    })
+    erp_path = tmp_path / "erp_cross.xlsx"
+    erp_df.to_excel(erp_path, index=False)
+
+    res = compare_workbooks(cust_path, erp_path)
+
+    amber_row = next(r for r in res.rows if r.get("Part Number") == "LA_G6SP_AMBER")
+    yellow_row = next(r for r in res.rows if r.get("Part Number") == "LY_G6SP_YELLOW")
+
+    # 1. Amber row should flag excess refs and pinpoint they belong to LY_G6SP_YELLOW
+    assert "LY_G6SP_YELLOW" in amber_row["Hata/Uyarı Durumu"]
+    assert "T2R_LED1" in amber_row["Hata/Uyarı Durumu"] and "T2R_LED2" in amber_row["Hata/Uyarı Durumu"]
+
+    # 2. Yellow row should note that its references were placed under LA_G6SP_AMBER with the typo pinpointed
+    assert "LA_G6SP_AMBER" in yellow_row["Hata/Uyarı Durumu"]
+    assert "T2R_LED1" in yellow_row["Hata/Uyarı Durumu"] and "T2R_LED2" in yellow_row["Hata/Uyarı Durumu"]
+
+
+def test_range_designators_with_board_prefix_and_spaces(tmp_path):
+    cust_file = tmp_path / "TR1_BOM.xlsx"
+    erp_file = tmp_path / "ERP.xlsx"
+    _write_book(cust_file, "TR1", ["Part Number", "Value", "RefDes", "Qty"], [
+        ["MPN-RES1", "10k", "R1 - R5", 5],
+        ["MPN-CAP1", "100nF", "C10..C12", 3],
+        ["MPN-LED1", "Red LED", "LED1~LED3", 3],
+    ])
+    _write_book(erp_file, "ERP", ["Part Number", "Description", "Reference", "Qty", "Mounting"], [
+        ["MPN-RES1", "10k SMD", "TR1_R1, TR1_R2, TR1_R3, TR1_R4, TR1_R5", 5, "SMD"],
+        ["MPN-CAP1", "100nF SMD", "TR1_C10, TR1_C11, TR1_C12", 3, "SMD"],
+        ["MPN-LED1", "Red LED SMD", "TR1_LED1, TR1_LED2, TR1_LED3", 3, "SMD"],
+    ])
+    res = compare_workbooks(cust_file, erp_file)
+    for row in res.rows:
+        assert row["Durum"] == "UYGUN", f"Unexpected issue on {row['Part Number']}: {row['Hata/Uyarı Durumu']}"
+        assert row["Hata/Uyarı Durumu"] == ""
+
+
+def test_multi_underscore_prefix_base_extraction_and_material_inference():
+    from bom_enricher.comparison import _ref_base_component, _infer_material_type, PartRecord
+    assert _ref_base_component("FOG_L_D1") == ("FOG_L", "D1", "D")
+    assert _ref_base_component("ST_LH_R12") == ("ST_LH", "R12", "R")
+    rec_cap = PartRecord(part_number="X", description="100nF", mounting="SMD", reference="REV1_C10", material_type="", qty="1")
+    rec_res = PartRecord(part_number="Y", description="10K", mounting="SMD", reference="DRL1_R5", material_type="", qty="1")
+    assert _infer_material_type(rec_cap, None) == "cap"
+    assert _infer_material_type(rec_res, None) == "res"
+
+
+def test_comma_decimal_and_unit_quantities_and_fractional_preservation(tmp_path):
+    cust_file = tmp_path / "cust_qty.xlsx"
+    erp_file = tmp_path / "erp_qty.xlsx"
+    _write_book(cust_file, "BOM", ["Part Number", "Value", "RefDes", "Qty"], [
+        ["MPN-1", "10k", "R1, R2, R3, R4", "4,0 ADET"],
+        ["MPN-TAPE", "Kapton Tape", "TAPE1", "0,25"],
+    ])
+    _write_book(erp_file, "ERP", ["Part Number", "Description", "Reference", "Qty", "Mounting"], [
+        ["MPN-1", "10k SMD", "R1, R2, R3, R4", "4 PCS", "SMD"],
+        ["MPN-TAPE", "Kapton Tape", "TAPE1", "0.25", "SMD"],
+    ])
+    res = compare_workbooks(cust_file, erp_file)
+    for r in res.rows:
+        assert r["Durum"] == "UYGUN", f"Row {r['Part Number']} failed: {r['Hata/Uyarı Durumu']}"
+
+
+def test_dnp_row_with_valid_mpn_not_merged_into_active_or_flagged_as_error(tmp_path):
+    cust_file = tmp_path / "cust_dnp.xlsx"
+    erp_file = tmp_path / "erp_dnp.xlsx"
+    _write_book(cust_file, "BOM", ["Part Number", "Value", "RefDes", "Qty"], [
+        ["RC0402FR-0710KL", "10K 0402", "R1, R2", 2],
+        ["RC0402FR-0710KL", "10K 0402 (DNP)", "R3 (DNP)", 1],
+        ["CL05B104KO5NNNC", "100nF (NOT MOUNTED)", "C99", 1],
+    ])
+    _write_book(erp_file, "ERP", ["Part Number", "Description", "Reference", "Qty", "Mounting"], [
+        ["RC0402FR-0710KL", "10K 0402 SMD", "R1, R2", 2, "SMD"],
+    ])
+    res = compare_workbooks(cust_file, erp_file)
+    active_row = next(r for r in res.rows if r["ERP Part Number"] == "RC0402FR-0710KL")
+    assert active_row["Durum"] == "UYGUN"
+    assert active_row["Hata/Uyarı Durumu"] == ""
+    dnp_rows = [r for r in res.rows if r["ERP Part Number"] == ""]
+    assert all(r["Durum"] == "UYARI" and "Montaj Dışı" in r["Hata/Uyarı Durumu"] for r in dnp_rows)
+
+
+def test_multi_sheet_ignores_cover_page_with_project_code_and_keeps_cabin_pcb(tmp_path):
+    from openpyxl import Workbook
+    from bom_enricher.excel_io import find_customer_bom_sheets
+    wb_path = tmp_path / "multi.xlsx"
+    wb = Workbook()
+    ws_cover = wb.active
+    ws_cover.title = "Genel Bilgi"
+    ws_cover.append(["Proje Kodu", "PRJ-2026-01"])
+    ws_cover.append(["Revizyon", "1.0"])
+    ws_bom = wb.create_sheet("CABIN_PCB")
+    ws_bom.append(["Part Number", "Description", "Designator", "Quantity"])
+    ws_bom.append(["RC0402FR-0710KL", "10K", "R1", 1])
+    ws_data = wb.create_sheet("DATA_PCB")
+    ws_data.append(["Part Number", "Description", "Designator", "Quantity"])
+    ws_data.append(["RC0402FR-07100RL", "100R", "R2", 1])
+    ws_spec = wb.create_sheet("PCB Specification File")
+    ws_spec.append(["Board Thickness", "1.6mm"])
+    wb.save(wb_path)
+    wb.close()
+    assert find_customer_bom_sheets(wb_path) == ["CABIN_PCB", "DATA_PCB"]
+
+
+def test_led_and_sw_refdes_pairing_and_inverse_erp_row_split(tmp_path):
+    cust_file = tmp_path / "cust_split.xlsx"
+    erp_file = tmp_path / "erp_split.xlsx"
+    _write_book(cust_file, "BOM", ["Part Number", "Value", "RefDes", "Qty"], [
+        ["LA-G6SP / LS-G6SP", "Amber LED", "LED1, LED2, LED3, LED4", 4],
+        ["CAP-100N-A", "100nF 50V 0402", "C1, C2, C3, C4", 4],
+    ])
+    _write_book(erp_file, "ERP", ["Part Number", "Description", "Reference", "Qty", "Mounting"], [
+        ["LS-G6SP", "Amber LED SMD", "LED1, LED2, LED3, LED4", 4, "SMD"],
+        ["CAP-100N-A", "100nF 50V 0402 SMD", "C1, C2", 2, "SMD"],
+        ["CAP-100N-B", "100nF 50V 0402 SMD", "C3, C4", 2, "SMD"],
+    ])
+    res = compare_workbooks(cust_file, erp_file)
+    led_row = next(r for r in res.rows if "LS-G6SP" in r["ERP Part Number"])
+    assert led_row["Durum"] == "UYGUN"
+    assert led_row["Hata/Uyarı Durumu"] == ""
+    cap_row = next(r for r in res.rows if "CAP-100N" in r["Part Number"])
+    assert cap_row["Durum"] in ("UYGUN", "UYARI")
+    assert "Miktar Uyuşmazlığı" not in cap_row["Hata/Uyarı Durumu"]
+
+
+def test_clean_part_number_preserves_short_non_mpn_parentheticals():
+    from bom_enricher.excel_io import clean_part_number
+    assert clean_part_number("FUSE (5A)") == "FUSE"
+    assert clean_part_number("HEADER (2X5)") == "HEADER"
+    # Genuine embedded MPN should be extracted
+    assert clean_part_number("DELTA-V (IXTT140P10T)") == "IXTT140P10T"
+
+
+def test_should_pair_refs_multi_letter_designators():
+    from bom_enricher.comparison import _should_pair_refs
+    assert _should_pair_refs({"LED1", "LED2"}, {"LED1", "LED2", "LED3"}) is True
+    assert _should_pair_refs({"SW1"}, {"SW1", "SW2"}) is True
+    assert _should_pair_refs({"FB1", "FB2"}, {"FB1"}) is True
+
+
+def test_find_ref_near_misses_single_ref_strict_index_diff():
+    from bom_enricher.comparison import _find_ref_near_misses
+    # Index difference <= 2 and matching board prefix
+    nm1 = _find_ref_near_misses({"LED1"}, {"LED2"})
+    assert len(nm1) == 1
+    # Index difference > 2 should NOT match
+    nm2 = _find_ref_near_misses({"LED1"}, {"LED10"})
+    assert len(nm2) == 0
+    # Different board prefix should NOT match for single-ref
+    nm3 = _find_ref_near_misses({"LED1"}, {"T2R_LED1"})
+    assert len(nm3) == 0
+

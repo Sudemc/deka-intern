@@ -6,6 +6,10 @@ import pytest
 from starlette.testclient import TestClient
 
 from bom_enricher.web import app
+import bom_enricher.web as web_mod
+
+_datasheet_available = getattr(web_mod, "analyze_single_datasheet", None) is not None
+_skip_datasheet = pytest.mark.skipif(not _datasheet_available, reason="Datasheet module not included in lightweight portal BOM comparison branch")
 
 
 @pytest.fixture
@@ -22,17 +26,33 @@ def _request(method, url, **kwargs):
     return asyncio.run(send())
 
 
-def _workbook_bytes(tmp_path, filename, sheet_name, headers, rows):
-    path = tmp_path / filename
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = sheet_name
-    sheet.append(headers)
-    for row in rows:
-        sheet.append(row)
-    workbook.save(path)
-    workbook.close()
-    return path.read_bytes()
+def _workbook_bytes(*args):
+    import io
+    if len(args) == 3:
+        sheet_name, headers, rows = args
+        wb = Workbook()
+        ws = wb.active
+        ws.title = sheet_name
+        ws.append(headers)
+        for row in rows:
+            ws.append(row)
+        buf = io.BytesIO()
+        wb.save(buf)
+        wb.close()
+        return buf.getvalue()
+    elif len(args) == 5:
+        tmp_path, filename, sheet_name, headers, rows = args
+        path = tmp_path / filename
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = sheet_name
+        sheet.append(headers)
+        for row in rows:
+            sheet.append(row)
+        workbook.save(path)
+        workbook.close()
+        return path.read_bytes()
+    raise ValueError(f"Unexpected number of arguments to _workbook_bytes: {len(args)}")
 
 
 def _files(tmp_path):
@@ -102,7 +122,7 @@ def test_web_compares_three_files_and_returns_report_download(tmp_path):
 
 def test_web_rejects_non_xlsx_upload(tmp_path):
     files = _files(tmp_path)
-    files["customer_file"] = ("parts.csv", b"part,description", "text/csv")
+    files["customer_file"] = ("parts.txt", b"part,description", "text/plain")
 
     response = _request("POST", "/api/compare", files=files)
 
@@ -164,7 +184,101 @@ def test_web_compares_multiple_customer_files(tmp_path):
     assert payload["clean_count"] == 1
 
 
+@_skip_datasheet
+def test_web_datasheet_analyze_with_rules_upload(tmp_path):
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas as rl_canvas
+    import io
 
+    # Create synthetic PDF
+    buf = io.BytesIO()
+    c = rl_canvas.Canvas(buf, pagesize=letter)
+    c.drawString(100, 750, "SAMSUNG ELECTRONICS MULTILAYER CAPACITOR")
+    c.drawString(100, 730, "Part Number: CL21B104KBCNNNC")
+    c.drawString(100, 710, "SMD 0805 100nF 50V X7R 10%")
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    rules_bytes = _files(tmp_path)["rules_file"][1]
+
+    multipart = [
+        ("datasheet_files", ("CL21B104KBCNNNC.pdf", pdf_bytes, "application/pdf")),
+        ("rules_file", ("Malzeme_Tipleri.xlsx", rules_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+    ]
+
+    response = _request("POST", "/api/datasheet-analyze", files=multipart)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["count"] == 1
+    analysis = data["analyses"][0]
+    assert analysis["part_number"] == "CL21B104KBCNNNC"
+    assert analysis["material_type"] == "CAP"
+    assert analysis["inferred_mounting"] == "SMD"
+    assert "0805 Package" in analysis["suggested_description"]
+
+    # Download report
+    downloaded = _request("GET", data["download_url"])
+    assert downloaded.status_code == 200
+    assert downloaded.content.startswith(b"PK")
+
+
+@_skip_datasheet
+def test_web_datasheet_analyze_rejects_non_pdf(tmp_path):
+    rules_bytes = _files(tmp_path)["rules_file"][1]
+    multipart = [
+        ("datasheet_files", ("document.txt", b"plain text", "text/plain")),
+        ("rules_file", ("Malzeme_Tipleri.xlsx", rules_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+    ]
+    response = _request("POST", "/api/datasheet-analyze", files=multipart)
+    assert response.status_code == 400
+    assert "PDF" in response.json()["detail"]
+
+
+@_skip_datasheet
+def test_datasheet_analyze_api_returns_analysis_method(client):
+    from reportlab.pdfgen import canvas
+    import io
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "Test Resistor 10k 0805")
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    response = client.post(
+        "/api/datasheet-analyze",
+        files={"file": ("test.pdf", pdf_bytes, "application/pdf")},
+        data={"part_number": "RC0805FR-0710KL", "material_type": "RES"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "analysis_method" in data
+    assert data["material_type"] == "RES"
+
+
+@_skip_datasheet
+def test_datasheet_analyze_api_works_with_missing_default_rules(client, monkeypatch, tmp_path):
+    from reportlab.pdfgen import canvas
+    import io
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "Test Resistor 10k 0805")
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    monkeypatch.setattr("bom_enricher.web.DEFAULT_RULES_PATH", tmp_path / "nonexistent_rules.xlsx")
+
+    response = client.post(
+        "/api/datasheet-analyze",
+        files={"file": ("test.pdf", pdf_bytes, "application/pdf")},
+        data={"part_number": "   RC0805FR-0710KL   ", "material_type": "   "}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "analysis_method" in data
+    assert data["analysis_method"] == "fast_path"
+    assert data["material_type"] == "RES"
+ 
+ 
 def test_web_compares_dnp_items_and_returns_info_count(tmp_path):
     cust_bytes = _workbook_bytes(
         tmp_path, "cust_dnp.xlsx", "BOM",
@@ -191,6 +305,179 @@ def test_web_compares_dnp_items_and_returns_info_count(tmp_path):
     assert data["info_count"] == 1
     assert data["warning_count"] == 0
     assert data["error_count"] == 0
+
+
+def test_llm_health_endpoint(client):
+    from unittest.mock import MagicMock, patch
+
+    # Test online
+    with patch("bom_enricher.web.VisionLLMClient") as mock_vlm_cls:
+        mock_instance = MagicMock()
+        mock_instance.is_available.return_value = True
+        mock_vlm_cls.return_value = mock_instance
+
+        resp = client.get("/api/health/llm")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "online"
+        assert data["text_model"] == "llama3.2:3b"
+        assert data["vision_model"] == "moondream:latest"
+        assert data["host"] == "http://127.0.0.1:11434"
+
+    # Test offline
+    with patch("bom_enricher.web.VisionLLMClient") as mock_vlm_cls:
+        mock_instance = MagicMock()
+        mock_instance.is_available.return_value = False
+        mock_vlm_cls.return_value = mock_instance
+
+        resp = client.get("/api/health/llm")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "offline"
+        assert data["text_model"] == "llama3.2:3b"
+        assert data["vision_model"] == "moondream:latest"
+        assert data["host"] == "http://127.0.0.1:11434"
+
+
+@_skip_datasheet
+def test_datasheet_analyze_includes_llm_arbitration_trace(client):
+    from reportlab.pdfgen import canvas
+    import io
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "Header Connector Male 2.54mm 10-pin")
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    response = client.post(
+        "/api/datasheet-analyze",
+        files={"file": ("connector.pdf", pdf_bytes, "application/pdf")},
+        data={"part_number": "CONN-HEADER-10P", "material_type": "CON"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "analyses" in data
+    assert len(data["analyses"]) >= 1
+    item = data["analyses"][0]
+    assert "llm_status" in item
+    assert "llm_trace" in item
+    assert "llm_specs" in item
+    assert "regex_specs" in item
+    assert isinstance(item["llm_trace"], list)
+    assert isinstance(item["llm_specs"], dict)
+    assert isinstance(item["regex_specs"], dict)
+
+
+def test_index_html_contains_llm_accordion_template():
+    page = _request("GET", "/")
+    assert page.status_code == 200
+    assert "llm-trace-accordion" in page.text
+    assert "Yapay Zeka (LLM) & Karar Geçmişi" in page.text
+    assert "llm-trace-summary" in page.text
+    assert "🟢 LLM Aktif (Doğrulandı)" in page.text
+    assert "🔵 Standby (Kural Motoru Yeterli)" in page.text
+    assert "⏱️ Zaman Aşımı" in page.text
+    assert "🟡 Ollama Kapalı (Deterministik Mod)" in page.text
+    assert "(Tıklayarak inceleyin)" in page.text
+    assert "llm-trace-content" in page.text
+    assert "llm-table" in page.text
+    assert "Regex Değeri" in page.text
+    assert "LLM Değeri" in page.text
+    assert "Nihai Değer" in page.text
+    assert "Kaynak" in page.text
+    assert "Açıklama" in page.text
+    assert "Regex Parametreleri" in page.text
+    assert "LLM Parametreleri" in page.text
+
+
+def test_index_html_renders_reference_columns_and_metric_filters():
+    page = _request("GET", "/")
+    assert page.status_code == 200
+    assert "Kaynak Kart / BOM" in page.text
+    assert "Müşteri Referans" in page.text
+    assert "ERP Referans" in page.text
+    assert 'data-status-filter="ALL"' in page.text
+    assert 'data-status-filter="HATA"' in page.text
+    assert 'data-status-filter="UYARI"' in page.text
+    assert 'data-status-filter="INFO"' in page.text
+    assert 'data-status-filter="UYGUN"' in page.text
+    assert 'onclick="removePdf(' not in page.text
+    assert 'onclick="copyText(' not in page.text
+
+
+
+def test_web_handles_csv_upload_and_corrupted_zip_without_500():
+    client = TestClient(app)
+    csv_cust = b"Part Number,Description,Reference,Qty\nRC0402FR-0710KL,10K,R1,1\n"
+    erp_bytes = _workbook_bytes("ERP", ["Part Number", "Description", "Reference", "Qty", "Mounting"], [
+        ["RC0402FR-0710KL", "10K SMD", "R1", 1, "SMD"],
+    ])
+    resp = client.post(
+        "/api/compare",
+        files=[
+            ("customer_files", ("cust.csv", csv_cust, "text/csv")),
+            ("erp_file", ("erp.xlsx", erp_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+        ],
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["clean_count"] == 1
+
+
+@_skip_datasheet
+def test_web_datasheet_analyze_rejects_oversized_pdf(monkeypatch):
+    import bom_enricher.web as web_mod
+    monkeypatch.setattr(web_mod, "_MAX_UPLOAD_BYTES", 100)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/datasheet-analyze",
+        files=[("pdf_files", ("big.pdf", b"%PDF-1.4 " + b"0" * 200, "application/pdf"))],
+    )
+    assert resp.status_code == 413
+
+
+def test_web_rejects_ole2_encrypted_or_legacy_file():
+    client = TestClient(app)
+    ole2_bytes = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 100
+    erp_bytes = _workbook_bytes("ERP", ["Part Number", "Description", "Reference", "Qty", "Mounting"], [
+        ["RC0402FR-0710KL", "10K SMD", "R1", 1, "SMD"],
+    ])
+    resp = client.post(
+        "/api/compare",
+        files=[
+            ("customer_files", ("legacy.xlsx", ole2_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+            ("erp_file", ("erp.xlsx", erp_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+        ],
+    )
+    assert resp.status_code == 422
+    assert "eski Excel (.xls)" in resp.json()["detail"] or "şifre" in resp.json()["detail"]
+
+
+def test_web_preserves_subfolder_prefix_on_duplicate_filenames():
+    client = TestClient(app)
+    cust1 = _workbook_bytes("BOM", ["Part Number", "Value", "Part", "Qty"], [
+        ["RC0402FR-0710KL", "10K", "C1, C2", 2]
+    ])
+    cust2 = _workbook_bytes("BOM", ["Part Number", "Value", "Part", "Qty"], [
+        ["RC0402FR-0710KL", "10K", "C3, C4", 2]
+    ])
+    erp_bytes = _workbook_bytes("ERP", ["Part Number", "Description", "Part", "Qty", "TH/SMD"], [
+        ["RC0402FR-0710KL", "10K", "SUB1_C1, SUB1_C2, SUB2_C3, SUB2_C4", 4, "SMD"]
+    ])
+    resp = client.post(
+        "/api/compare",
+        files=[
+            ("customer_files", ("sub1/BOM.xlsx", cust1, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+            ("customer_files", ("sub2/BOM.xlsx", cust2, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+            ("erp_file", ("erp.xlsx", erp_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+        ],
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_part_count"] == 1
+    assert data["clean_count"] == 1
+
 
 
 

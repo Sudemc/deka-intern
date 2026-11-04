@@ -508,3 +508,144 @@ def test_delta_v_and_altium_patterns():
     assert _explicit_code_like("BT151S-500R,118") is True
     assert _explicit_code_like("TLP293(BL-TPL,E") is True
 
+
+
+def test_split_references_universal_grammar_and_notes():
+    from bom_enricher.excel_io import (
+        split_references,
+        extract_embedded_part_numbers,
+        validate_reference_tokens,
+    )
+
+    # 1. Embedded alternative MPN note stripped from references
+    assert split_references("U11 alternatif eklenecek (ADR4525ARZ)") == ["U11"]
+
+    # 2. Mounting note and package code stripped from references
+    assert split_references("R1, R2 - dik monte edilecek (0805)") == ["R1", "R2"]
+
+    # 3. Clean IEEE multi-inductor list preserved
+    assert split_references("L2, L3, L4, L5, L6, L8, L9") == [
+        "L2", "L3", "L4", "L5", "L6", "L8", "L9"
+    ]
+
+    # 4. Also reject MPNs and values even without parens
+    assert split_references("U11 alternatif eklenecek ADR4525ARZ") == ["U11"]
+    assert split_references("R1, R2 0805 100nF 25V") == ["R1", "R2"]
+
+    # 5. Embedded part number extraction
+    assert extract_embedded_part_numbers("U11 alternatif eklenecek (ADR4525ARZ)") == ["ADR4525ARZ"]
+    assert extract_embedded_part_numbers("R1, R2 - dik monte edilecek (0805)") == []
+
+    # 6. Malformed designator detection: '1' tagged as malformed (missing component class letter)
+    warnings = validate_reference_tokens(["1"])
+    assert len(warnings) == 1
+    assert "1" in warnings[0]
+    assert "missing component class letter" in warnings[0].lower()
+
+    # Valid tokens produce no warnings
+    assert validate_reference_tokens(["R1", "C2", "U11", "PCB"]) == []
+
+
+def test_non_destructive_part_number_validation():
+    from bom_enricher.excel_io import clean_part_number, _explicit_code_like
+
+    # 1. MPNs with '#' and complex packaging preserved
+    assert clean_part_number("LT3092ITS8#TRPBF") == "LT3092ITS8#TRPBF"
+    assert clean_part_number("LT6015IS5#TRMPBF") == "LT6015IS5#TRMPBF"
+    assert clean_part_number("TLP293(BL-TPL,E") == "TLP293(BL-TPL,E"
+    assert clean_part_number("TLP293(BL-TPL,E)") == "TLP293(BL-TPL,E)"
+    assert clean_part_number("ACS780LLRTR-100U-T") == "ACS780LLRTR-100U-T"
+    assert clean_part_number("MUSBK15230") == "MUSBK15230"
+    assert clean_part_number("ABM8AAIG-25.000MHZ-V2R-T3") == "ABM8AAIG-25.000MHZ-V2R-T3"
+    assert clean_part_number("PESD5V0S5UD,115") == "PESD5V0S5UD,115"
+    assert clean_part_number("DELTA-V (IXTT140P10T)") == "IXTT140P10T"
+    assert clean_part_number("LA G6SP.02 (8E-5F)(2-4 color)") == "LA G6SP.02"
+
+    # 2. _explicit_code_like accepts MPNs with electronic packaging punctuation
+    assert _explicit_code_like("LT3092ITS8#TRPBF") is True
+    assert _explicit_code_like("LT6015IS5#TRMPBF") is True
+    assert _explicit_code_like("TLP293(BL-TPL,E") is True
+    assert _explicit_code_like("TLP293(BL-TPL,E)") is True
+    assert _explicit_code_like("ACS780LLRTR-100U-T") is True
+    assert _explicit_code_like("MUSBK15230") is True
+    assert _explicit_code_like("ABM8AAIG-25.000MHZ-V2R-T3") is True
+    assert _explicit_code_like("PESD5V0S5UD,115") is True
+    assert _explicit_code_like("MAX232+T") is True
+    assert _explicit_code_like("MC7805BD2T:R") is True
+    assert _explicit_code_like("[4E22000001]") is True
+    assert _explicit_code_like("CHIP~01") is True
+    assert _explicit_code_like("VAL=10K") is True
+
+    # 3. Reject only explicit placeholders, dates, integers, and multi-word prose
+    assert _explicit_code_like("YOK") is False
+    assert _explicit_code_like("DNP") is False
+    assert _explicit_code_like("NONE") is False
+    assert _explicit_code_like("TBD") is False
+    assert _explicit_code_like("-") is False
+    assert _explicit_code_like("2026-10-27") is False
+    assert _explicit_code_like("12") is False
+    assert _explicit_code_like("123") is False
+    assert _explicit_code_like("Müşteriden gelecek parçalar monte edilecek") is False
+    assert _explicit_code_like("YERINE") is False
+
+
+def test_expand_ref_range_patterns():
+    from bom_enricher.excel_io import expand_ref_range, split_references
+
+    assert expand_ref_range("TR1_C10..C15") == [
+        "TR1_C10", "TR1_C11", "TR1_C12", "TR1_C13", "TR1_C14", "TR1_C15"
+    ]
+    assert expand_ref_range("TR1_C10-15") == [
+        "TR1_C10", "TR1_C11", "TR1_C12", "TR1_C13", "TR1_C14", "TR1_C15"
+    ]
+    assert expand_ref_range("R1-R5") == ["R1", "R2", "R3", "R4", "R5"]
+    assert expand_ref_range("LED1~LED4") == ["LED1", "LED2", "LED3", "LED4"]
+
+    assert split_references("TR1_C10 .. C12, R1 - R3, LED1 ~ LED3") == [
+        "TR1_C10", "TR1_C11", "TR1_C12", "R1", "R2", "R3", "LED1", "LED2", "LED3"
+    ]
+
+
+def test_parse_numeric_qty_and_format_qty_value():
+    from bom_enricher.excel_io import parse_numeric_qty, format_qty_value
+    assert parse_numeric_qty("12") == 12.0
+    assert parse_numeric_qty("12.0") == 12.0
+    assert parse_numeric_qty("4,0") == 4.0
+    assert parse_numeric_qty("0,05") == 0.05
+    assert parse_numeric_qty("10 ADET") == 10.0
+    assert parse_numeric_qty("5 PCS") == 5.0
+    assert parse_numeric_qty("2 EA") == 2.0
+    assert parse_numeric_qty("4 adet") == 4.0
+    assert parse_numeric_qty(15) == 15.0
+    assert parse_numeric_qty(2.5) == 2.5
+    assert parse_numeric_qty(True) is None
+    assert parse_numeric_qty(False) is None
+    assert parse_numeric_qty("") is None
+    assert parse_numeric_qty(None) is None
+    assert parse_numeric_qty("NOT_A_NUMBER") is None
+
+    assert format_qty_value(12.0) == "12"
+    assert format_qty_value(0.05) == "0.05"
+    assert format_qty_value(10.5) == "10.5"
+    assert format_qty_value(4.0) == "4"
+
+
+def test_is_dnp_row():
+    from bom_enricher.excel_io import is_dnp_row
+    assert is_dnp_row("RC0402", "10K (DNP)", "", "", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "DNP", "", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "", "NM", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "", "Process: NM", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "", "Process:NM", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "", "Process: SMD", "R1", "1")[0] is False
+    assert is_dnp_row("RC0402", "10K", "", "SMD", "R1", "1")[0] is False
+    assert is_dnp_row("RC0402", "10K", "", "", "R1 (DNP)", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "", "", "R1", "0")[0] is True
+    assert is_dnp_row("RC0402", "10K (NOT MOUNTED)", "", "", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K (DO NOT POPULATE)", "", "", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K DİZİLMEZ", "", "", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K NO FIT", "", "", "R1", "1")[0] is True
+    assert is_dnp_row("RC0402", "10K", "", "", "R1", "1")[0] is False
+
+
+

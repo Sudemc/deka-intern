@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import re
 import unicodedata
@@ -14,10 +14,18 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from .excel_io import (
+    _EXACT_DNP_WORDS,
+    _auto_layout,
+    _select_customer_sheet,
     clean_part_number,
+    expand_ref_range,
     find_customer_bom_sheets,
+    format_qty_value,
+    is_dnp_row,
+    parse_numeric_qty,
     read_customer_bom,
     split_references,
+    validate_reference_tokens,
 )
 from .semantic_parser import compare_descriptions, normalize_code_key, normalize_mounting
 
@@ -83,6 +91,8 @@ class PartRecord:
     all_codes: tuple[str, ...] = ()
     code_labels: dict[str, str] = field(default_factory=dict)
     status: str = ""
+    source_row: int = 0
+    row_errors: tuple[str, ...] = ()
 
 
 
@@ -148,6 +158,54 @@ def expand_parentheses_variants(code: str) -> list[str]:
     return list(dict.fromkeys([code] + results))
 
 
+def _tokenize_multi_code(s: str) -> list[str]:
+    """Split multi-code cell while preserving parentheses and packaging commas."""
+    chars: list[str] = []
+    paren_depth = 0
+    bracket_depth = 0
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c in "([":
+            if c == "(":
+                paren_depth += 1
+            elif c == "[":
+                bracket_depth += 1
+            chars.append(c)
+            i += 1
+        elif c in ")]":
+            if c == ")" and paren_depth > 0:
+                paren_depth -= 1
+            elif c == "]" and bracket_depth > 0:
+                bracket_depth -= 1
+            chars.append(c)
+            i += 1
+        elif paren_depth > 0 or bracket_depth > 0:
+            chars.append(c)
+            i += 1
+        else:
+            if c in ";|\n\r":
+                chars.append(" ")
+                i += 1
+            elif c == ",":
+                # Check for packaging suffix like ',115' or ',118'
+                m = re.match(r"^,\d{2,4}(?=[,\s;|\/]|$)", s[i:])
+                if m:
+                    chars.append(c)
+                    i += 1
+                else:
+                    chars.append(" ")
+                    i += 1
+            elif c == "/" and i > 0 and s[i - 1].isspace() and (i + 1 < n and s[i + 1].isspace()):
+                chars.append(" ")
+                i += 1
+            else:
+                chars.append(c)
+                i += 1
+    return "".join(chars).split()
+
+
 def _split_multi_code(raw: str) -> list[str]:
     """Split an ERP Part Number cell that contains space/comma/slash separated alternative codes.
 
@@ -155,53 +213,77 @@ def _split_multi_code(raw: str) -> list[str]:
     If the cell holds only a single code (e.g. 'BAV99 MDD', 'TE 2324 DPN'),
     it returns the full code (plus any parentheses variants).
     """
-    cleaned_raw = re.sub(r"(?i)\s+BIN(?:\s*TABLE\d*|\s*:\s*[A-Za-z0-9_\-]+|\s+[A-Za-z0-9_\-]+)?.*$", "", raw)
-    cleaned_raw = re.sub(r"\s+-\s+(?:Right-Angle|Vertical|Horizontal|Dik|Yatık|SMD|TH).*$", "", cleaned_raw, flags=re.IGNORECASE)
-    cleaned = re.sub(r"[,;|\n\r]+", " ", cleaned_raw)
-    cleaned = re.sub(r"\s+/\s+", " ", cleaned)
-    tokens = cleaned.split()
+    if raw is None:
+        return []
+    s_raw = str(raw).strip()
+    if not s_raw:
+        return []
 
+    cleaned_raw = re.sub(r"(?i)\s+BIN(?:\s*TABLE\d*|\s*:\s*[A-Za-z0-9_\-]+|\s+[A-Za-z0-9_\-]+)?.*$", "", s_raw)
+    cleaned_raw = re.sub(r"\s+-\s+(?:Right-Angle|Vertical|Horizontal|Dik|Yatık|SMD|TH).*$", "", cleaned_raw, flags=re.IGNORECASE).strip()
+    if not cleaned_raw:
+        return []
+
+    tokens = _tokenize_multi_code(cleaned_raw)
     results: list[str] = []
-    # Search for parenthetical or bracketed codes (e.g. 'DELTA-V (IXTT140P10T)' or '[4E22000001]')
-    for m in re.finditer(r"[\(\[]([A-Za-z0-9._/+()\-]+)[\)\]]", cleaned_raw):
-        inner = m.group(1).strip()
-        if _is_product_code_token(inner):
-            results.extend(expand_parentheses_variants(inner))
 
-    # Strip packaging suffix like ',118' or ',115'
-    m_pkg = re.match(r"^([A-Za-z0-9._/+()\-]+),\d{2,4}$", cleaned_raw)
-    if m_pkg:
-        base_pkg = m_pkg.group(1).strip()
-        if _is_product_code_token(base_pkg):
-            results.extend(expand_parentheses_variants(base_pkg))
-
+    # 1. Process each token in natural left-to-right order
     for t in tokens:
-        m = re.match(r"^([A-Za-z0-9._/+()\-]+)\((.+)\)$", t)
+        m = re.match(r"^([A-Za-z0-9._/+()\-*#]+)\((.+)\)$", t)
         if m:
             outer = m.group(1).strip()
             inner = m.group(2).strip()
+            results.extend(expand_parentheses_variants(t))
             if _is_product_code_token(outer):
                 results.extend(expand_parentheses_variants(outer))
             if _is_product_code_token(inner):
                 results.extend(expand_parentheses_variants(inner))
-            results.append(t)
         else:
             t_clean = t.strip("()[]")
-            if _is_product_code_token(t_clean):
-                results.extend(expand_parentheses_variants(t_clean))
-            elif _is_product_code_token(t):
-                results.extend(expand_parentheses_variants(t))
+            target = t_clean if _is_product_code_token(t_clean) else (t if _is_product_code_token(t) else "")
+            if target:
+                results.extend(expand_parentheses_variants(target))
+                # Packaging suffix like ',115' or ',118'
+                if re.search(r",\d{2,4}$", target):
+                    base_pkg = re.sub(r",\d{2,4}$", "", target)
+                    if _is_product_code_token(base_pkg):
+                        results.extend(expand_parentheses_variants(base_pkg))
+                # Linear Tech / ADI packaging suffix '#TRPBF'
+                if re.search(r"#[A-Za-z0-9_\-]+$", target):
+                    base_hash = re.sub(r"#[A-Za-z0-9_\-]+$", "", target)
+                    if _is_product_code_token(base_hash):
+                        results.extend(expand_parentheses_variants(base_hash))
+
+    # 2. Extract parenthetical or bracketed codes (e.g. 'DELTA-V (IXTT140P10T)' or '[4E22000001]')
+    for m in re.finditer(r"[\(\[]([^()\[\]]+)[\)\]]", cleaned_raw):
+        inner = m.group(1).strip()
+        if _is_product_code_token(inner):
+            results.extend(expand_parentheses_variants(inner))
+            if re.search(r",\d{2,4}$", inner):
+                base_inner = re.sub(r",\d{2,4}$", "", inner)
+                if _is_product_code_token(base_inner):
+                    results.extend(expand_parentheses_variants(base_inner))
+            if re.search(r"#[A-Za-z0-9_\-]+$", inner):
+                base_inner = re.sub(r"#[A-Za-z0-9_\-]+$", "", inner)
+                if _is_product_code_token(base_inner):
+                    results.extend(expand_parentheses_variants(base_inner))
 
     if results:
-        results.append(cleaned_raw.strip())
+        if cleaned_raw not in results:
+            results.append(cleaned_raw)
         return list(dict.fromkeys(results))
 
-    return expand_parentheses_variants(cleaned_raw.strip())
+    return expand_parentheses_variants(cleaned_raw)
+
+
+split_multi_code = _split_multi_code
 
 
 def _normalize_ref_token(token: str) -> str:
     """Normalize delimiter in designator token like TR1.C1 or TR1-C1 to TR1_C1."""
     tok = token.strip().upper()
+    if len(expand_ref_range(tok)) > 1:
+        return tok
     parts = re.split(r"[_\.\-]", tok, maxsplit=1)
     if len(parts) == 2 and 2 <= len(parts[0]) <= 10 and re.match(r"^[A-Z]+\d+", parts[1]):
         return f"{parts[0]}_{parts[1]}"
@@ -228,13 +310,81 @@ def _ref_base_component(ref: str) -> tuple[str, str, str]:
     """Return (board_prefix, base_ref, comp_type) from a designator token."""
     norm = _normalize_ref_token(ref)
     if "_" in norm:
-        prefix, base = norm.split("_", 1)
+        rparts = norm.rsplit("_", 1)
+        if re.match(r"^[A-Z]+\d+[A-Z]?$", rparts[1]):
+            prefix, base = rparts[0], rparts[1]
+        else:
+            prefix, base = norm.split("_", 1)
     else:
         prefix, base = "", norm
     base = base.strip().upper()
     match = re.match(r"^([A-Z]+)\d+", base)
     comp_type = match.group(1) if match else (base[:1] if base else "")
     return prefix.strip().upper(), base, comp_type
+
+
+_PAIRABLE_COMP_TYPES = {
+    "C", "R", "L", "D", "Q", "U", "J", "S", "F",
+    "LED", "LD", "SW", "FB", "IC", "CN", "CON", "P",
+    "X", "Y", "T", "TR", "K", "RL", "B", "BT", "VR",
+    "RV", "ZD", "DZ", "TP", "JP", "TH", "MOV", "LS", "BZ",
+}
+
+
+def _find_ref_near_misses(c_refs: set[str], e_refs: set[str]) -> list[tuple[str, str, str]]:
+    """Identify pairs of customer and ERP reference tokens that differ only by index or prefix."""
+    near_misses: list[tuple[str, str, str]] = []
+    e_pool = set(e_refs)
+    is_single_ref = len(c_refs) == 1
+    for c in sorted(c_refs):
+        cp, cb, ct = _ref_base_component(c)
+        m_c = re.match(r"^([A-Za-z]+)(\d+.*)$", cb)
+        best_match = None
+        best_score = 0
+        for e in sorted(e_pool):
+            ep, eb, et = _ref_base_component(e)
+            m_e = re.match(r"^([A-Za-z]+)(\d+.*)$", eb)
+            if is_single_ref:
+                if cp != ep:
+                    continue
+                m_c_num = re.match(r"^([A-Za-z]+)(\d+)", cb)
+                m_e_num = re.match(r"^([A-Za-z]+)(\d+)", eb)
+                if not (m_c_num and m_e_num and m_c_num.group(1) == m_e_num.group(1)):
+                    continue
+                try:
+                    idx_diff = abs(int(m_c_num.group(2)) - int(m_e_num.group(2)))
+                    if idx_diff > 2:
+                        continue
+                except ValueError:
+                    continue
+
+            # Case 1: Same board prefix and same component type (e.g. T2R_LED1 vs T2R_LED2)
+            if cp == ep and ct == et and ct:
+                if cp:
+                    score = 100
+                    if m_c and m_e and m_c.group(1) == m_e.group(1):
+                        score += 50
+                    if score > best_score:
+                        best_score = score
+                        best_match = (e, "kart ön eki ve malzeme tipi aynı, dizgi indeksi farklı")
+                else:
+                    if m_c and m_e and m_c.group(1) == m_e.group(1):
+                        score = 50
+                        if score > best_score:
+                            best_score = score
+                            best_match = (e, "malzeme tipi aynı, dizgi indeksi farklı")
+            # Case 2: Same base ref, different prefix (e.g. T2L_LED1 vs T2R_LED1)
+            elif not is_single_ref and cb == eb and cb and cp != ep:
+                score = 40
+                if score > best_score:
+                    best_score = score
+                    best_match = (e, "dizgi no aynı, kart ön eki farklı")
+
+        if best_match and best_score >= 40:
+            matched_e, reason = best_match
+            e_pool.remove(matched_e)
+            near_misses.append((c, matched_e, reason))
+    return near_misses
 
 
 def _should_pair_refs(crefs: set[str], erefs: set[str]) -> bool:
@@ -247,7 +397,7 @@ def _should_pair_refs(crefs: set[str], erefs: set[str]) -> bool:
     if overlap:
         c_types = {_ref_base_component(r)[2] for r in crefs if r}
         e_types = {_ref_base_component(r)[2] for r in erefs if r}
-        if len(c_types) == 1 and c_types == e_types and list(c_types)[0] in "CRLDQUJSF":
+        if len(c_types) == 1 and c_types == e_types and list(c_types)[0] in _PAIRABLE_COMP_TYPES:
             if crefs.issubset(erefs) or erefs.issubset(crefs):
                 return True
             if len(overlap) / min(len(crefs), len(erefs)) >= 0.5:
@@ -259,7 +409,7 @@ def _should_pair_refs(crefs: set[str], erefs: set[str]) -> bool:
     if c_bases and e_bases and c_bases == e_bases:
         c_types = {_ref_base_component(r)[2] for r in crefs if r}
         e_types = {_ref_base_component(r)[2] for r in erefs if r}
-        if len(c_types) == 1 and c_types == e_types and list(c_types)[0] in "CRLDQUJSF":
+        if len(c_types) == 1 and c_types == e_types and list(c_types)[0] in _PAIRABLE_COMP_TYPES:
             return True
 
     return False
@@ -273,9 +423,14 @@ def _extract_erp_prefixes(erp_records: list[PartRecord]) -> tuple[set[str], dict
         seen_in_rec: set[str] = set()
         for ref in _split_refs(rec.reference):
             if "_" in ref:
-                parts = ref.split("_", 1)
-                prefix = parts[0].strip().upper()
-                base = parts[1].strip().upper()
+                rparts = ref.rsplit("_", 1)
+                if re.match(r"^[A-Z]+\d+", rparts[1].strip().upper()):
+                    prefix = rparts[0].strip().upper()
+                    base = rparts[1].strip().upper()
+                else:
+                    parts = ref.split("_", 1)
+                    prefix = parts[0].strip().upper()
+                    base = parts[1].strip().upper()
                 # A PCB board/sub-panel prefix must be at least 2 characters (single letters like J, C, R, D
                 # are schematic component class identifiers, e.g. J_LCD1, D_LED1, not board prefixes).
                 if 2 <= len(prefix) <= 10 and re.match(r"^[A-Z]+\d+", base):
@@ -439,18 +594,20 @@ def _qualify_customer_references(
             )
         )
 
-        if key in satellite_pairs and not already_qualified:
+        if key in satellite_pairs:
             l_pfx, r_pfx = satellite_pairs[key]
             clean_tokens = [r for r in rec_refs if "_" not in r]
+            prefixed_tokens = [r for r in rec_refs if "_" in r]
             if clean_tokens:
-                expanded = [f"{l_pfx}_{t}" for t in clean_tokens] + [f"{r_pfx}_{t}" for t in clean_tokens]
+                expanded = [f"{l_pfx}_{t}" for t in clean_tokens] + [f"{r_pfx}_{t}" for t in clean_tokens] + prefixed_tokens
                 new_ref = ", ".join(expanded)
                 new_qty = rec.qty
                 if rec.qty:
-                    try:
-                        new_qty = str(int(float(rec.qty)) * 2)
-                    except (ValueError, TypeError):
-                        new_qty = str(len(expanded))
+                    parsed_q = parse_numeric_qty(rec.qty)
+                    if parsed_q is not None:
+                        new_qty = format_qty_value(parsed_q * 2)
+                    else:
+                        new_qty = rec.qty
                 else:
                     new_qty = str(len(expanded))
                 updated.append(PartRecord(
@@ -470,17 +627,19 @@ def _qualify_customer_references(
                     all_codes=rec.all_codes,
                     code_labels=rec.code_labels,
                     status=rec.status,
+                    source_row=rec.source_row,
+                    row_errors=rec.row_errors,
                 ))
                 continue
 
         pfx = resolved_prefixes.get(key)
         is_unmapped = bool(unmapped_keys and key in unmapped_keys and not already_qualified)
-        if not pfx or not rec.reference.strip() or already_qualified:
+        if not rec.reference.strip():
             updated.append(PartRecord(
                 part_number=rec.part_number,
                 description=rec.description,
                 mounting=rec.mounting,
-                reference=_normalize_ref_string(rec.reference),
+                reference="",
                 material_type=rec.material_type,
                 qty=rec.qty,
                 manufacturer=rec.manufacturer,
@@ -493,30 +652,31 @@ def _qualify_customer_references(
                 all_codes=rec.all_codes,
                 code_labels=rec.code_labels,
                 status=rec.status,
+                source_row=rec.source_row,
+                row_errors=rec.row_errors,
             ))
             continue
 
         clean_ref = re.sub(r"\b([A-Za-z0-9]+_)\s+([A-Za-z0-9]+)\b", r"\1\2", rec.reference)
-        raw_tokens = re.split(r"([,;|\s/]+)", clean_ref)
-        new_tokens: list[str] = []
-        erp_bases = erp_refs_by_prefix.get(pfx, set())
-        for token in raw_tokens:
-            stripped = _normalize_ref_token(token.strip().upper())
-            if stripped and re.match(r"^[A-Z]+\d+", stripped):
-                if not stripped.startswith(f"{pfx}_") and "_" not in stripped:
+        ref_tokens = split_references(clean_ref)
+        if ref_tokens:
+            new_tokens: list[str] = []
+            for token in ref_tokens:
+                stripped = _normalize_ref_token(token)
+                if (
+                    pfx
+                    and re.match(r"^[A-Z]+\d+", stripped)
+                    and not stripped.startswith(f"{pfx}_")
+                    and not any(stripped.startswith(f"{ep}_") for ep in erp_prefixes)
+                    and "_" not in stripped
+                ):
                     new_tokens.append(f"{pfx}_{stripped}")
                 else:
                     new_tokens.append(stripped)
-            elif stripped and re.match(r"^[A-Za-z0-9]+_[A-Za-z]+\d+", stripped):
-                new_tokens.append(stripped)
-            elif token in (",", ";", "|", "/", " "):
-                new_tokens.append(token)
-            elif not stripped or stripped.endswith("_"):
-                continue
-            else:
-                new_tokens.append(token)
+            new_ref = ", ".join(new_tokens)
+        else:
+            new_ref = _normalize_ref_string(rec.reference)
 
-        new_ref = "".join(new_tokens)
         updated.append(PartRecord(
             part_number=rec.part_number,
             description=rec.description,
@@ -530,10 +690,12 @@ def _qualify_customer_references(
             source_file=rec.source_file,
             source_sheet=rec.source_sheet,
             source_breakdown=rec.source_breakdown,
-            unmapped_prefix=False,
+            unmapped_prefix=is_unmapped if not pfx else False,
             all_codes=rec.all_codes,
             code_labels=rec.code_labels,
             status=rec.status,
+            source_row=rec.source_row,
+            row_errors=rec.row_errors,
         ))
     return updated
 
@@ -545,6 +707,17 @@ def _check_certain_non_assembly(record: PartRecord) -> tuple[bool, str]:
     is not intended for board assembly (e.g. explicit DNP/NP, Fiducial optical marks,
     or dummy mechanical accessories without product codes).
     """
+    is_dnp, dnp_reason = is_dnp_row(
+        record.part_number,
+        record.description,
+        record.mounting,
+        record.status,
+        record.reference,
+        record.qty,
+    )
+    if is_dnp:
+        return True, dnp_reason
+
     status_upper = (record.status or "").strip().upper()
     val_upper = (record.description or "").strip().upper()
     ref_upper = (record.reference or "").strip().upper()
@@ -636,6 +809,306 @@ def _check_erp_consumable_or_pcb(record: PartRecord) -> tuple[bool, str]:
     return False, ""
 
 
+def _reconcile_cross_component_references(report: list[dict[str, str]]) -> None:
+    """Identify and reconcile ERP rows that merged references from missing customer components."""
+    donor_entries: list[dict[str, object]] = []
+    for r in report:
+        e_ref_str = r.get("ERP Referans") or ""
+        c_ref_str = r.get("Müşteri Referans") or ""
+        if not e_ref_str:
+            continue
+        e_refs = _split_refs(e_ref_str)
+        c_refs = _split_refs(c_ref_str)
+        excess = e_refs - c_refs
+        if excess:
+            donor_entries.append({
+                "row": r,
+                "available_excess": set(excess),
+                "e_pn": r.get("Part Number") or r.get("ERP Part Number") or "ERP Malzemesi",
+            })
+
+    if not donor_entries:
+        return
+
+    # Find customer rows with missing references
+    receiver_entries: list[dict[str, object]] = []
+    for r in report:
+        c_ref_str = r.get("Müşteri Referans") or ""
+        e_ref_str = r.get("ERP Referans") or ""
+        if not c_ref_str:
+            continue
+        c_refs = _split_refs(c_ref_str)
+        e_refs = _split_refs(e_ref_str)
+        missing = c_refs - e_refs
+        if missing:
+            receiver_entries.append({
+                "row": r,
+                "missing_refs": set(missing),
+                "c_pn": r.get("Part Number") or r.get("Müşteri Part Number") or "Müşteri Malzemesi",
+                "is_missing_in_erp": not bool(r.get("ERP Part Number")),
+            })
+
+    # Prioritize rows completely missing in ERP, then by number of missing refs descending
+    receiver_entries.sort(key=lambda x: (not x["is_missing_in_erp"], -len(x["missing_refs"])))
+
+    for rec in receiver_entries:
+        missing = rec["missing_refs"]
+        best_donor = None
+        best_overlap: set[str] = set()
+        best_near_misses: list[tuple[str, str, str]] = []
+        best_score = 0.0
+
+        for donor in donor_entries:
+            avail = donor["available_excess"]
+            if not avail:
+                continue
+            overlap = missing & avail
+            unmatched_c = missing - overlap
+            unmatched_e = avail - overlap
+            nm = _find_ref_near_misses(unmatched_c, unmatched_e)
+            total_matched = len(overlap) + len(nm)
+
+            # Require significant match: at least 2 refs, or 1 ref if total missing is 1
+            if total_matched >= 2 or (total_matched >= 1 and total_matched == len(missing)):
+                score = total_matched * 100 + (total_matched / max(len(missing), 1)) * 10
+                if score > best_score:
+                    best_score = score
+                    best_donor = donor
+                    best_overlap = overlap
+                    best_near_misses = nm
+
+        if best_donor and best_score > 0:
+            consumed_e = best_overlap | {e for _, e, _ in best_near_misses}
+            best_donor["available_excess"] -= consumed_e
+
+            d_pn = str(best_donor["e_pn"])
+            r_pn = str(rec["c_pn"])
+
+            all_matched_c = sorted(best_overlap | {c for c, _, _ in best_near_misses})
+            if len(all_matched_c) <= 12:
+                sample_c = ", ".join(all_matched_c)
+            else:
+                sample_c = ", ".join(all_matched_c[:8]) + f" (+{len(all_matched_c)-8} adet)"
+
+            donor_note = (
+                f"Çapraz Referans Tespiti: ERP reçetesinde fazla görünen {len(consumed_e)} adet referans "
+                f"({sample_c}), müşteri listesindeki '{r_pn}' malzemesine aittir."
+            )
+            rec_note = (
+                f"Çapraz Referans Tespiti: Müşteri listesindeki bu malzemenin dizgi referansları "
+                f"({sample_c}), ERP reçetesinde '{d_pn}' malzemesi altına yazılmıştır."
+            )
+
+            typo_note = ""
+            if best_near_misses:
+                typo_pairs = ", ".join(f"{c} (Müşteri) vs {e} (ERP)" for c, e, _ in best_near_misses)
+                typo_note = f"Dizgi/İndeks Yazım Farkı: {typo_pairs} (ERP reçetesine sehven farklı girilmiş)."
+
+            # Update donor row (preserve Clean Cell Rule for UYGUN rows)
+            d_row = best_donor["row"]
+            if d_row.get("Durum") != "UYGUN":
+                d_issues = [d_row["Hata/Uyarı Durumu"]] if d_row.get("Hata/Uyarı Durumu") else []
+                d_issues.append(donor_note)
+                if typo_note:
+                    d_issues.append(typo_note)
+                d_row["Hata/Uyarı Durumu"] = "; ".join(dict.fromkeys(d_issues))
+
+            # Update receiver row (preserve Clean Cell Rule for UYGUN rows)
+            r_row = rec["row"]
+            if r_row.get("Durum") != "UYGUN":
+                r_issues = [r_row["Hata/Uyarı Durumu"]] if r_row.get("Hata/Uyarı Durumu") else []
+                r_issues.append(rec_note)
+                if typo_note:
+                    r_issues.append(typo_note)
+                r_row["Hata/Uyarı Durumu"] = "; ".join(dict.fromkeys(r_issues))
+
+
+def _specs_compatible(rec1: PartRecord, rec2: PartRecord) -> bool:
+    """Check if two part records have compatible specs for split aggregation."""
+    # 1. Component type compatibility from references
+    if rec1.reference and rec2.reference:
+        t1 = {_ref_base_component(r)[2] for r in _split_refs(rec1.reference) if r}
+        t2 = {_ref_base_component(r)[2] for r in _split_refs(rec2.reference) if r}
+        if t1 and t2 and not (t1 & t2):
+            return False
+
+    # 2. Mounting compatibility
+    if rec1.mounting and rec2.mounting:
+        m1 = normalize_mounting(rec1.mounting)
+        m2 = normalize_mounting(rec2.mounting)
+        if m1 and m2 and m1 != m2:
+            return False
+
+    # 3. Description compatibility via semantic parser
+    if rec1.description and rec2.description:
+        issues = compare_descriptions(rec1.description, rec2.description, mpn_matched=True)
+        contradictions = [
+            i for i in issues
+            if any(k in i.lower() for k in ("uyumsuz", "fark", "çelişki", "celiski", "different", "mismatch"))
+        ]
+        return len(contradictions) == 0
+
+    # If at least one description is missing, require common part number prefix or same component type
+    p1 = _normalize_code(rec1.part_number)
+    p2 = _normalize_code(rec2.part_number)
+    if p1 and p2:
+        prefix_len = 0
+        for c1, c2 in zip(p1, p2):
+            if c1 == c2:
+                prefix_len += 1
+            else:
+                break
+        if prefix_len >= 5:
+            return True
+
+    if rec1.reference and rec2.reference:
+        t1 = {_ref_base_component(r)[2] for r in _split_refs(rec1.reference) if r}
+        t2 = {_ref_base_component(r)[2] for r in _split_refs(rec2.reference) if r}
+        if t1 and t2 and (t1 & t2):
+            return True
+
+    return False
+
+
+def _remove_erp_siblings(
+    e_rec: PartRecord,
+    unmatched_erp: dict[str, PartRecord],
+    sibling_groups: list[dict[str, object]],
+) -> None:
+    """When an ERP code matches, immediately mark its sibling group as matched and remove clones."""
+    norm_e = _normalize_code(e_rec.part_number)
+    for group in sibling_groups:
+        if norm_e in group["all"]:
+            group["matched"] = True
+            for sc in group["all"]:
+                unmatched_erp.pop(sc, None)
+                unmatched_erp.pop(f"{sc}__NM", None)
+            for k in list(unmatched_erp.keys()):
+                rec = unmatched_erp[k]
+                if _normalize_code(rec.part_number) in group["all"] and (
+                    rec.source_row == e_rec.source_row
+                    or rec.reference == e_rec.reference
+                ):
+                    del unmatched_erp[k]
+
+
+def _reconcile_split_rows(
+    c_matched: PartRecord,
+    e_matched: PartRecord,
+    unmatched_cust: dict[str, PartRecord],
+    unmatched_erp: dict[str, PartRecord],
+    sibling_groups: list[dict[str, object]],
+) -> tuple[PartRecord, PartRecord]:
+    """Support bidirectional row splits (both c_q < e_q and e_q < c_q) when specs and refs align."""
+    if not (c_matched.qty and e_matched.qty and c_matched.reference and e_matched.reference):
+        return c_matched, e_matched
+
+    try:
+        c_q = parse_numeric_qty(c_matched.qty)
+        e_q = parse_numeric_qty(e_matched.qty)
+        if c_q is None or e_q is None:
+            return c_matched, e_matched
+
+        # Case 1: Customer multi-row split (c_q < e_q)
+        if c_q < e_q:
+            erefs = _split_refs(e_matched.reference)
+            crefs = _split_refs(c_matched.reference)
+            missing_refs = erefs - crefs
+            for other_ck, other_c in list(unmatched_cust.items()):
+                if other_ck.endswith("__NM") or not other_c.reference:
+                    continue
+                o_refs = _split_refs(other_c.reference)
+                if o_refs and o_refs.issubset(missing_refs):
+                    e_codes = set(e_matched.all_codes) | set(_split_multi_code(e_matched.part_number))
+                    e_codes_norm = {_normalize_code(c) for c in e_codes if c}
+                    o_codes = set(other_c.all_codes) | ({other_c.part_number} if other_c.part_number else set())
+                    o_codes_norm = {_normalize_code(c) for c in o_codes if c}
+                    code_match = bool(e_codes_norm & o_codes_norm)
+                    specs_match = _specs_compatible(c_matched, other_c) or _specs_compatible(e_matched, other_c)
+                    if code_match or specs_match:
+                        merged_refs = sorted(crefs | o_refs)
+                        other_q = parse_numeric_qty(other_c.qty) if other_c.qty else None
+                        new_c_q = c_q + (other_q if other_q is not None else float(len(o_refs)))
+                        c_matched = PartRecord(
+                            part_number=f"{c_matched.part_number} / {other_c.part_number}" if other_c.part_number and other_c.part_number != c_matched.part_number else c_matched.part_number,
+                            description=c_matched.description,
+                            mounting=c_matched.mounting,
+                            reference=", ".join(merged_refs),
+                            material_type=c_matched.material_type,
+                            qty=format_qty_value(new_c_q),
+                            package=c_matched.package,
+                            manufacturer=f"{c_matched.manufacturer} / {other_c.manufacturer}" if other_c.manufacturer and other_c.manufacturer != c_matched.manufacturer else c_matched.manufacturer,
+                            duplicate=c_matched.duplicate,
+                            source_file=c_matched.source_file,
+                            source_sheet=f"{c_matched.source_sheet}, {other_c.source_sheet}" if other_c.source_sheet != c_matched.source_sheet else c_matched.source_sheet,
+                            source_breakdown=f"{c_matched.source_breakdown}; {other_c.source_breakdown}" if other_c.source_breakdown else c_matched.source_breakdown,
+                            unmapped_prefix=c_matched.unmapped_prefix,
+                            all_codes=tuple(dict.fromkeys(c_matched.all_codes + other_c.all_codes)),
+                            code_labels={**c_matched.code_labels, **other_c.code_labels},
+                            status=c_matched.status,
+                            source_row=c_matched.source_row,
+                            row_errors=c_matched.row_errors + other_c.row_errors,
+                        )
+                        crefs = set(merged_refs)
+                        missing_refs = erefs - crefs
+                        c_q = new_c_q
+                        unmatched_cust.pop(other_ck, None)
+                        if not missing_refs or c_q >= e_q:
+                            break
+
+        # Case 2: ERP multi-row split (e_q < c_q)
+        elif e_q < c_q:
+            crefs = _split_refs(c_matched.reference)
+            erefs = _split_refs(e_matched.reference)
+            missing_refs = crefs - erefs
+            for other_ek, other_e in list(unmatched_erp.items()):
+                if not other_e.reference:
+                    continue
+                oe_refs = _split_refs(other_e.reference)
+                if oe_refs and oe_refs.issubset(missing_refs):
+                    c_codes = set(c_matched.all_codes) | set(_split_multi_code(c_matched.part_number))
+                    c_codes_norm = {_normalize_code(c) for c in c_codes if c}
+                    oe_codes = set(other_e.all_codes) | ({other_e.part_number} if other_e.part_number else set())
+                    oe_codes_norm = {_normalize_code(c) for c in oe_codes if c}
+                    code_match = bool(c_codes_norm & oe_codes_norm)
+                    specs_match = _specs_compatible(c_matched, other_e) or _specs_compatible(e_matched, other_e)
+                    if code_match or specs_match:
+                        merged_refs = sorted(erefs | oe_refs)
+                        other_q = parse_numeric_qty(other_e.qty) if other_e.qty else None
+                        new_e_q = e_q + (other_q if other_q is not None else float(len(oe_refs)))
+                        e_matched = PartRecord(
+                            part_number=f"{e_matched.part_number} / {other_e.part_number}" if other_e.part_number and other_e.part_number != e_matched.part_number else e_matched.part_number,
+                            description=e_matched.description,
+                            mounting=e_matched.mounting,
+                            reference=", ".join(merged_refs),
+                            material_type=e_matched.material_type,
+                            qty=format_qty_value(new_e_q),
+                            package=e_matched.package,
+                            manufacturer=f"{e_matched.manufacturer} / {other_e.manufacturer}" if other_e.manufacturer and other_e.manufacturer != e_matched.manufacturer else e_matched.manufacturer,
+                            duplicate=e_matched.duplicate,
+                            source_file=e_matched.source_file,
+                            source_sheet=f"{e_matched.source_sheet}, {other_e.source_sheet}" if other_e.source_sheet != e_matched.source_sheet else e_matched.source_sheet,
+                            source_breakdown=f"{e_matched.source_breakdown}; {other_e.source_breakdown}" if other_e.source_breakdown else e_matched.source_breakdown,
+                            unmapped_prefix=e_matched.unmapped_prefix,
+                            all_codes=tuple(dict.fromkeys(e_matched.all_codes + other_e.all_codes)),
+                            code_labels={**e_matched.code_labels, **other_e.code_labels},
+                            status=e_matched.status,
+                            source_row=e_matched.source_row,
+                            row_errors=e_matched.row_errors + other_e.row_errors,
+                        )
+                        erefs = set(merged_refs)
+                        missing_refs = crefs - erefs
+                        e_q = new_e_q
+                        unmatched_erp.pop(other_ek, None)
+                        _remove_erp_siblings(other_e, unmatched_erp, sibling_groups)
+                        if not missing_refs or e_q >= c_q:
+                            break
+    except (ValueError, TypeError):
+        pass
+
+    return c_matched, e_matched
+
+
 def compare_workbooks(
     customer_path: Path | list[Path] | str | list[str],
     erp_path: Path | str,
@@ -664,6 +1137,10 @@ def compare_workbooks(
         cleaned_first = clean_part_number(rec.part_number)
         if cleaned_first and cleaned_first not in codes:
             codes.append(cleaned_first)
+        for extra in rec.all_codes:
+            cleaned_extra = clean_part_number(extra)
+            if cleaned_extra and cleaned_extra not in codes:
+                codes.append(cleaned_extra)
         if len(codes) > 1:
             group: set[str] = set()
             for code in codes:
@@ -676,9 +1153,14 @@ def compare_workbooks(
                     qty=rec.qty,
                     manufacturer=rec.manufacturer,
                     package=rec.package,
+                    duplicate=rec.duplicate,
                     source_file=rec.source_file,
                     source_sheet=rec.source_sheet,
                     all_codes=tuple(codes),
+                    code_labels=rec.code_labels,
+                    status=rec.status,
+                    source_row=rec.source_row,
+                    row_errors=rec.row_errors,
                 ))
                 group.add(_normalize_code(code))
             sibling_groups.append({
@@ -698,10 +1180,15 @@ def compare_workbooks(
                 duplicate=rec.duplicate,
                 source_file=rec.source_file,
                 source_sheet=rec.source_sheet,
+                all_codes=rec.all_codes or tuple(codes),
+                code_labels=rec.code_labels,
+                status=rec.status,
+                source_row=rec.source_row,
+                row_errors=rec.row_errors,
             ))
 
-    customer_by_code = _unique_records(customer)
-    erp_by_code = _unique_records(erp)
+    customer_by_code = _unique_records(customer, kind="customer")
+    erp_by_code = _unique_records(erp, kind="erp")
 
     # ── Üç Aşamalı Eşleme (Three-Pass Matching) ──
     # Aşama 1: Normalized Part Number üzerinden birincil eşleme
@@ -736,54 +1223,10 @@ def compare_workbooks(
                         break
             c_matched = unmatched_cust.pop(ck)
             e_matched = unmatched_erp.pop(best_ek)
-
-            # Check if this ERP record aggregates multiple customer rows of alternative MPNs
-            # (e.g. 38 pcs Yageo + 2 pcs Vishay matching an ERP line of 40 pcs)
-            if c_matched.qty and e_matched.qty and e_matched.reference and c_matched.reference:
-                try:
-                    c_q = float(c_matched.qty)
-                    e_q = float(e_matched.qty)
-                    if c_q < e_q:
-                        erefs = _split_refs(e_matched.reference)
-                        crefs = _split_refs(c_matched.reference)
-                        missing_refs = erefs - crefs
-                        for other_ck, other_c in list(unmatched_cust.items()):
-                            if other_ck.endswith("__NM") or not other_c.reference:
-                                continue
-                            o_refs = _split_refs(other_c.reference)
-                            if o_refs and o_refs.issubset(missing_refs):
-                                e_codes = set(e_matched.all_codes) | set(_split_multi_code(e_matched.part_number))
-                                e_codes_norm = {_normalize_code(c) for c in e_codes if c}
-                                o_codes_norm = {_normalize_code(c) for c in other_c.all_codes if c}
-                                if (e_codes_norm & o_codes_norm) or _normalize_code(other_c.part_number) in e_codes_norm:
-                                    merged_refs = sorted(crefs | o_refs)
-                                    new_c_q = c_q + (float(other_c.qty) if other_c.qty else len(o_refs))
-                                    c_matched = PartRecord(
-                                        part_number=f"{c_matched.part_number} / {other_c.part_number}",
-                                        description=c_matched.description,
-                                        mounting=c_matched.mounting,
-                                        reference=", ".join(merged_refs),
-                                        material_type=c_matched.material_type,
-                                        qty=str(int(new_c_q)) if new_c_q.is_integer() else str(new_c_q),
-                                        package=c_matched.package,
-                                        manufacturer=f"{c_matched.manufacturer} / {other_c.manufacturer}" if other_c.manufacturer and other_c.manufacturer != c_matched.manufacturer else c_matched.manufacturer,
-                                        duplicate=c_matched.duplicate,
-                                        source_file=c_matched.source_file,
-                                        source_sheet=f"{c_matched.source_sheet}, {other_c.source_sheet}",
-                                        source_breakdown=f"{c_matched.source_breakdown}; {other_c.source_breakdown}",
-                                        unmapped_prefix=c_matched.unmapped_prefix,
-                                        all_codes=tuple(dict.fromkeys(c_matched.all_codes + other_c.all_codes)),
-                                        code_labels={**c_matched.code_labels, **other_c.code_labels},
-                                        status=c_matched.status,
-                                    )
-                                    crefs = set(merged_refs)
-                                    missing_refs = erefs - crefs
-                                    c_q = new_c_q
-                                    unmatched_cust.pop(other_ck)
-                                    if not missing_refs or c_q >= e_q:
-                                        break
-                except (ValueError, TypeError):
-                    pass
+            _remove_erp_siblings(e_matched, unmatched_erp, sibling_groups)
+            c_matched, e_matched = _reconcile_split_rows(
+                c_matched, e_matched, unmatched_cust, unmatched_erp, sibling_groups
+            )
 
             # Check if this ERP record aggregates an active customer row and an NM customer row
             nm_candidate_keys = [f"{ck}__NM"] + [
@@ -814,6 +1257,8 @@ def compare_workbooks(
                         all_codes=e_matched.all_codes,
                         code_labels=e_matched.code_labels,
                         status=e_matched.status,
+                        source_row=e_matched.source_row,
+                        row_errors=e_matched.row_errors,
                     )
                     remaining_erefs = erefs - crefs
                     e_nm = PartRecord(
@@ -833,6 +1278,8 @@ def compare_workbooks(
                         all_codes=e_matched.all_codes,
                         code_labels=e_matched.code_labels,
                         status=e_matched.status,
+                        source_row=e_matched.source_row,
+                        row_errors=e_matched.row_errors,
                     )
                     matched_pairs.append((c_matched, e_active))
                     matched_pairs.append((c_nm, e_nm))
@@ -845,6 +1292,8 @@ def compare_workbooks(
     # Önce tam eşleşenler (exact match crefs == erefs), ardından kısmi örtüşenler
     for pass_mode in ("exact", "fuzzy"):
         for ck in list(unmatched_cust.keys()):
+            if ck.endswith("__NM") and pass_mode != "exact":
+                continue
             c_rec = unmatched_cust.get(ck)
             if not c_rec:
                 continue
@@ -865,9 +1314,13 @@ def compare_workbooks(
                     match = True
 
                 if match:
-                    matched_pairs.append((c_rec, e_rec))
-                    del unmatched_cust[ck]
-                    del unmatched_erp[ek]
+                    c_matched = unmatched_cust.pop(ck)
+                    e_matched = unmatched_erp.pop(ek)
+                    _remove_erp_siblings(e_matched, unmatched_erp, sibling_groups)
+                    c_matched, e_matched = _reconcile_split_rows(
+                        c_matched, e_matched, unmatched_cust, unmatched_erp, sibling_groups
+                    )
+                    matched_pairs.append((c_matched, e_matched))
                     break
 
     # Aşama 3: Açıklama (Description) ile Eşleme
@@ -880,6 +1333,8 @@ def compare_workbooks(
             continue
         e_desc_norm = _normalize_description(e_rec.description)
         for ck in list(unmatched_cust.keys()):
+            if ck.endswith("__NM"):
+                continue
             c_rec = unmatched_cust.get(ck)
             if not c_rec:
                 continue
@@ -905,7 +1360,7 @@ def compare_workbooks(
         skip = False
         for group in sibling_groups:
             if code_norm in group["all"]:
-                if group["all"] & matched_erp_normalized_codes:
+                if group.get("matched") or (group["all"] & matched_erp_normalized_codes):
                     skip = True
                 elif code_norm != group["primary"]:
                     skip = True
@@ -970,6 +1425,16 @@ def compare_workbooks(
                 customer_mounting = inferred_cust
         issues: list[str] = []
 
+        if customer_record and customer_record.row_errors:
+            issues.extend(customer_record.row_errors)
+        if erp_record and erp_record.row_errors:
+            issues.extend(erp_record.row_errors)
+
+        if customer_record and customer_record.reference:
+            ref_warnings = validate_reference_tokens(customer_record.reference)
+            for w in ref_warnings:
+                issues.append(f"Referans Uyarısı: {w}")
+
         if customer_record is None:
             is_consumable, cons_reason = _check_erp_consumable_or_pcb(erp_record)
             if is_consumable:
@@ -1013,47 +1478,57 @@ def compare_workbooks(
 
             # 1. Qty (Miktar) Kıyaslaması
             if customer_qty and erp_qty:
-                try:
-                    c_num = float(customer_qty)
-                    e_num = float(erp_qty)
-                    if c_num != e_num:
+                c_num = parse_numeric_qty(customer_qty)
+                e_num = parse_numeric_qty(erp_qty)
+                if c_num is not None and e_num is not None:
+                    if abs(c_num - e_num) > 1e-6:
                         issues.append(f"Miktar Uyuşmazlığı (Müşteri: {customer_qty}, ERP: {erp_qty})")
-                except ValueError:
+                else:
                     if customer_qty.strip() != erp_qty.strip():
                         issues.append(f"Miktar Uyuşmazlığı (Müşteri: {customer_qty}, ERP: {erp_qty})")
 
             # 2. Müşteri Qty vs Referans Adedi
-            if customer_record.reference and customer_qty:
+            has_cust_ref_err = any("Müşteri Qty ile Referans sayısı uyumsuz" in err for err in (customer_record.row_errors if customer_record else ()))
+            if not has_cust_ref_err and customer_record and customer_record.reference and customer_qty:
+                c_split = _split_refs(customer_record.reference)
                 ref_tokens = [r.strip() for r in re.split(r"[,;|\s/]+", customer_record.reference) if r.strip()]
                 valid_refs = [
                     r for r in ref_tokens
                     if re.match(r"^(?:[A-Za-z0-9]+_)?[A-Za-z][A-Za-z0-9_]*$", r)
                 ]
-                if valid_refs:
+                ref_count = len(c_split) if c_split else len(valid_refs)
+                if ref_count > 0:
                     try:
-                        c_qty_val = float(customer_qty)
-                        if c_qty_val != len(valid_refs) and c_qty_val != len(ref_tokens):
-                            issues.append(
-                                f"Müşteri Qty ile Referans sayısı uyumsuz (Qty: {customer_qty}, Ref: {len(valid_refs)})"
-                            )
-                    except ValueError:
+                        c_qty_val = parse_numeric_qty(customer_qty)
+                        if c_qty_val is not None and c_qty_val.is_integer():
+                            if c_qty_val != ref_count and c_qty_val != len(valid_refs) and c_qty_val != len(ref_tokens):
+                                prefix = f"Satır {customer_record.source_row}: " if customer_record.source_row else ""
+                                issues.append(
+                                    f"{prefix}Müşteri Qty ile Referans sayısı uyumsuz (Qty: {customer_qty}, Ref: {ref_count})"
+                                )
+                    except (ValueError, TypeError):
                         pass
 
             # 2b. ERP Qty vs Referans Adedi
-            if erp_record.reference and erp_qty:
+            has_erp_ref_err = any("ERP Qty ile Referans sayısı uyumsuz" in err for err in (erp_record.row_errors if erp_record else ()))
+            if not has_erp_ref_err and erp_record and erp_record.reference and erp_qty:
+                e_split = _split_refs(erp_record.reference)
                 e_ref_tokens = [r.strip() for r in re.split(r"[,;|\s/]+", erp_record.reference) if r.strip()]
                 valid_e_refs = [
                     r for r in e_ref_tokens
                     if re.match(r"^(?:[A-Za-z0-9]+_)?[A-Za-z][A-Za-z0-9_]*$", r)
                 ]
-                if valid_e_refs:
+                e_ref_count = len(e_split) if e_split else len(valid_e_refs)
+                if e_ref_count > 0:
                     try:
-                        e_qty_val = float(erp_qty)
-                        if e_qty_val != len(valid_e_refs) and e_qty_val != len(e_ref_tokens):
-                            issues.append(
-                                f"ERP Qty ile Referans sayısı uyumsuz (ERP Qty: {erp_qty}, ERP Ref: {len(valid_e_refs)} adet)"
-                            )
-                    except ValueError:
+                        e_qty_val = parse_numeric_qty(erp_qty)
+                        if e_qty_val is not None and e_qty_val.is_integer():
+                            if e_qty_val != e_ref_count and e_qty_val != len(valid_e_refs) and e_qty_val != len(e_ref_tokens):
+                                prefix = f"Satır {erp_record.source_row}: " if erp_record.source_row else ""
+                                issues.append(
+                                    f"{prefix}ERP Qty ile Referans sayısı uyumsuz (ERP Qty: {erp_qty}, ERP Ref: {e_ref_count} adet)"
+                                )
+                    except (ValueError, TypeError):
                         pass
 
             # 3. Dizgi/Referans Farkı (Müşteri vs ERP)
@@ -1086,6 +1561,10 @@ def compare_workbooks(
                     issues.append(
                         f"Dizgi/Referans farkı ({diff_summary}Müşteri: {c_disp}, ERP: {e_disp})"
                     )
+                    intra_nm = _find_ref_near_misses(set(c_only), set(e_only))
+                    if intra_nm:
+                        intra_typos = ", ".join(f"{c} (Müşteri) vs {e} (ERP)" for c, e, _ in intra_nm)
+                        issues.append(f"Dizgi/İndeks Yazım Farkı: {intra_typos}")
 
             # 4. Müşteri Montaj vs ERP Montaj
             if customer_mounting and erp_mounting:
@@ -1095,7 +1574,7 @@ def compare_workbooks(
                     issues.append(f"Montaj Tipi Çelişkisi (Müşteri: {customer_mounting}, ERP: {erp_mounting})")
 
             # 5. Semantik Açıklama ve Teknik Değer Kıyaslaması
-            issues.extend(compare_descriptions(customer_value, erp_description))
+            issues.extend(compare_descriptions(customer_value, erp_description, mpn_matched=pn_matches))
 
         if erp_record:
             if customer_record and customer_record.material_type and erp_record.material_type:
@@ -1161,13 +1640,15 @@ def compare_workbooks(
             "Hata/Uyarı Durumu": issue_str,
         })
 
+    _reconcile_cross_component_references(report)
+
     if output_path:
         write_comparison_report(report, output_path)
     return ComparisonResult(report, len(matched_pairs))
 
 
-def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[PartRecord]:
-    """Load customer or ERP rows, finding a header row and common header aliases."""
+def read_bom_workbook(path: Path | list[Path] | str | list[str], kind: str = "customer") -> list[PartRecord]:
+    """Load customer or ERP rows using unified data profiling for column detection."""
     if kind not in {"customer", "erp"}:
         raise ValueError("kind must be 'customer' or 'erp'.")
     if kind == "customer":
@@ -1204,6 +1685,12 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
                     for c in candidates:
                         if c not in all_codes_list:
                             all_codes_list.append(c)
+
+                    for c in list(all_codes_list):
+                        for sub_c in _split_multi_code(c):
+                            if sub_c not in all_codes_list:
+                                all_codes_list.append(sub_c)
+
                     all_codes = tuple(clean_part_number(c) for c in all_codes_list if clean_part_number(c))
 
                     if code:
@@ -1215,6 +1702,10 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
                             refs = _split_refs(row.part)
                             if refs:
                                 qty_val = str(len(refs))
+                        row_stat = row.status
+                        is_dnp, _ = is_dnp_row(code, row.value, row.mounting, row.status, row.part, qty_val)
+                        if is_dnp and (not row_stat or row_stat.upper() not in _EXACT_DNP_WORDS):
+                            row_stat = "DNP"
                         all_records.append(PartRecord(
                             part_number=code,
                             description=row.value,
@@ -1227,21 +1718,29 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
                             source_sheet=sheet,
                             all_codes=all_codes,
                             code_labels=code_labels,
-                            status=row.status,
+                            status=row_stat,
+                            material_type=row.material_type,
+                            source_row=row.source_row,
                         ))
                     else:
                         qty_str = _cell_text(row.qty).strip()
                         if qty_str.lower() == "nan":
-                            qty_str = ""
+                            qty_val = ""
                         if not qty_str and row.part:
                             refs = _split_refs(row.part)
                             if refs:
                                 qty_str = str(len(refs))
                         has_qty = bool(qty_str) and any(c.isdigit() for c in qty_str)
                         ref_str = (row.part or "").strip()
-                        circuit_ref_pattern = r"^(?:R|C|L|D|Q|U|IC|J|CN|P|TP|SW|F|FB|T|LED|BT|Y|X|K|VR|ZD|TR|TH|MOV|TS|BRK)\d+"
-                        has_ref = bool(ref_str and re.match(circuit_ref_pattern, ref_str, re.IGNORECASE))
-                        if has_qty or (has_ref and bool((row.value or "").strip())):
+                        circuit_ref_pattern = r"^(?:R|C|L|D|Q|U|IC|J|CN|P|TP|SW|F|FB|T|LED|BT|Y|X|K|VR|ZD|TR|TH|MOV|TS|BRK|ANT|DISPLAY)\d+"
+                        has_ref = bool(ref_str and (re.match(circuit_ref_pattern, ref_str, re.IGNORECASE) or bool(split_references(ref_str))))
+                        val_str = (row.value or "").strip()
+                        has_qty_val = bool(has_qty and len(val_str) > 3)
+                        if has_ref or has_qty_val:
+                            row_stat = row.status
+                            is_dnp, _ = is_dnp_row("", row.value, row.mounting, row.status, row.part, qty_str)
+                            if is_dnp and (not row_stat or row_stat.upper() not in _EXACT_DNP_WORDS):
+                                row_stat = "DNP"
                             all_records.append(PartRecord(
                                 part_number="",
                                 description=row.value,
@@ -1252,7 +1751,9 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
                                 package=row.package,
                                 source_file=file_path.name,
                                 source_sheet=sheet,
-                                status=row.status,
+                                status=row_stat,
+                                material_type=row.material_type,
+                                source_row=row.source_row,
                             ))
         if not all_records:
             first_name = paths[0].name if paths else "Müşteri dosyası"
@@ -1289,6 +1790,8 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
                         all_codes=r.all_codes,
                         code_labels=r.code_labels,
                         status=r.status,
+                        source_row=r.source_row,
+                        row_errors=r.row_errors,
                     ))
                 else:
                     updated_records.append(r)
@@ -1296,43 +1799,84 @@ def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[P
 
         return all_records
 
-    erp_path = Path(path[0]) if isinstance(path, (list, tuple)) else Path(path)
-    frame, headers = _read_table_with_detected_header(erp_path, sheet_name=None)
-    part_col = _find_column(headers, "part_number")
-    description_col = (
-        _find_column(headers, "description") or _find_column(headers, "value")
-    )
-    mounting_col = _find_column(headers, "mounting")
-    reference_col = _find_column(headers, "reference")
-    material_type_col = _find_column(headers, "material_type")
-    qty_col = _find_column(headers, "qty")
-    package_col = _find_column(headers, "package")
-    manufacturer_col = _find_column(headers, "manufacturer")
-    if part_col is None:
-        raise ValueError(f"{erp_path.name}: Part Number / ürün kodu sütunu bulunamadı.")
-    if description_col is None:
-        raise ValueError(f"{erp_path.name}: Description / açıklama sütunu bulunamadı.")
-
+    # kind == "erp"
+    erp_paths = [Path(p) for p in path] if isinstance(path, (list, tuple)) else [Path(path)]
     records: list[PartRecord] = []
-    for _, row in frame.iterrows():
-        code = _cell_text(row.get(part_col))
-        if not code:
-            continue
-        records.append(PartRecord(
-            part_number=code,
-            description=_cell_text(row.get(description_col)),
-            mounting=_cell_text(row.get(mounting_col)) if mounting_col else "",
-            reference=_cell_text(row.get(reference_col)) if reference_col else "",
-            material_type=_cell_text(row.get(material_type_col)) if material_type_col else "",
-            qty=_cell_text(row.get(qty_col)) if qty_col else "",
-            package=_cell_text(row.get(package_col)) if package_col else "",
-            manufacturer=_cell_text(row.get(manufacturer_col)) if manufacturer_col else "",
-            source_file=erp_path.name,
-            source_sheet="",
-        ))
+    for erp_path in erp_paths:
+        bom_sheets = find_customer_bom_sheets(erp_path)
+        if not bom_sheets:
+            bom_sheets = [_select_customer_sheet(erp_path)]
+        for sheet in bom_sheets:
+            erp_rows = read_customer_bom(erp_path, sheet_name=sheet, is_erp=True)
+            for row in erp_rows:
+                code = row.part_number
+                candidates = list(dict.fromkeys(
+                    candidate.value.strip()
+                    for candidate in row.product_code_candidates
+                    if candidate.value.strip()
+                ))
+                code_labels: dict[str, str] = {}
+                for candidate in row.product_code_candidates:
+                    val = candidate.value.strip()
+                    if val and val not in code_labels:
+                        code_labels[val] = candidate.source_column
+
+                if not code:
+                    if len(candidates) == 1:
+                        code = candidates[0]
+                    elif len(candidates) > 1:
+                        mpn_cand = next(
+                            (c for c in candidates if any(k in code_labels.get(c, "").lower() for k in ("üretici", "uretici", "mfr", "manufacturer", "mpn"))),
+                            None
+                        )
+                        code = mpn_cand or candidates[0]
+
+                all_codes_list = [code] if code else []
+                for c in candidates:
+                    if c not in all_codes_list:
+                        all_codes_list.append(c)
+
+                for c in list(all_codes_list):
+                    for sub_c in _split_multi_code(c):
+                        if sub_c not in all_codes_list:
+                            all_codes_list.append(sub_c)
+
+                all_codes = tuple(clean_part_number(c) for c in all_codes_list if clean_part_number(c))
+                if code:
+                    code = clean_part_number(code)
+
+                if not code and not all_codes:
+                    continue
+
+                qty_str = _cell_text(row.qty).strip()
+                if qty_str.lower() == "nan":
+                    qty_str = ""
+
+                records.append(PartRecord(
+                    part_number=code or (all_codes[0] if all_codes else ""),
+                    description=row.value,
+                    mounting=row.mounting,
+                    reference=row.part,
+                    material_type=row.material_type,
+                    qty=qty_str,
+                    package=row.package,
+                    manufacturer=row.manufacturer,
+                    source_file=erp_path.name,
+                    source_sheet=sheet,
+                    all_codes=all_codes,
+                    code_labels=code_labels,
+                    status=row.status,
+                    source_row=row.source_row,
+                ))
+
     if not records:
-        raise ValueError(f"{erp_path.name}: başlık bulundu ancak ürün kodu içeren satır yok.")
+        first_name = erp_paths[0].name if erp_paths else "ERP dosyası"
+        raise ValueError(f"{first_name}: başlık bulundu ancak ürün kodu içeren satır yok.")
     return records
+
+
+def load_records(path: Path | list[Path] | str | list[str], kind: str) -> list[PartRecord]:
+    return read_bom_workbook(path, kind=kind)
 
 
 KNOWN_MANUFACTURERS: tuple[tuple[str, str, str], ...] = (
@@ -1608,16 +2152,36 @@ def write_comparison_report(rows: list[dict[str, str]], output_path: Path) -> No
     workbook.close()
 
 
-def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
+def _unique_records(records: list[PartRecord], kind: str = "customer") -> dict[str, PartRecord]:
     grouped: dict[str, list[PartRecord]] = defaultdict(list)
     no_code_count = 0
-    dnp_statuses = {"NM", "N.M.", "NOT MOUNTED", "DNP", "NO POPULATE", "NC", "DO NOT POPULATE"}
+    dnp_statuses = {
+        "NM", "N.M.", "NOT MOUNTED", "DNP", "NO POPULATE", "NC", "DO NOT POPULATE",
+        "PROCESS: NM", "PROCESS:NM", "PROSES: NM", "PROSES:NM",
+    }
     for record in records:
+        is_dnp, _ = is_dnp_row(
+            record.part_number,
+            record.description,
+            record.mounting,
+            record.status,
+            record.reference,
+            record.qty,
+        )
+        stat_upper = (record.status or "").strip().upper()
+        is_nm = (
+            is_dnp
+            or stat_upper in dnp_statuses
+            or "NOT MOUNTED" in stat_upper
+            or bool(re.search(r"\bNM\b", stat_upper))
+        )
+        if is_nm and (not record.status or (stat_upper not in dnp_statuses and not bool(re.search(r"\bNM\b", stat_upper)))):
+            record = replace(record, status="DNP")
+
         if not record.part_number.strip():
             no_code_count += 1
             grouped[f"__NO_CODE_{no_code_count}__"].append(record)
         else:
-            is_nm = (record.status or "").strip().upper() in dnp_statuses or "NOT MOUNTED" in (record.status or "").upper()
             norm = _normalize_code(record.part_number)
             if is_nm:
                 grouped[f"{norm}__NM"].append(record)
@@ -1632,26 +2196,59 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
         packages = list(dict.fromkeys(item.package for item in group if item.package))
         manufacturers = list(dict.fromkeys(item.manufacturer for item in group if item.manufacturer))
 
-        total_qty = 0
-        has_qty = False
+        # Per-row pre-validation: check Qty == len(refs) before grouping
+        group_row_errors: list[str] = []
+        for item in group:
+            if item.row_errors:
+                for err in item.row_errors:
+                    if err not in group_row_errors:
+                        group_row_errors.append(err)
+            if _check_certain_non_assembly(item)[0]:
+                continue
+            if item.reference and item.qty:
+                ref_tokens = [r.strip() for r in re.split(r"[,;|\s/]+", item.reference) if r.strip()]
+                valid_refs = [
+                    r for r in ref_tokens
+                    if re.match(r"^(?:[A-Za-z0-9]+_)?[A-Za-z][A-Za-z0-9_]*$", r)
+                ]
+                refs = _split_refs(item.reference)
+                ref_count = len(refs) if refs else len(valid_refs)
+                if ref_count > 0:
+                    try:
+                        q_num = parse_numeric_qty(item.qty)
+                        if q_num is not None and q_num.is_integer():
+                            if q_num != ref_count and q_num != len(valid_refs) and q_num != len(ref_tokens):
+                                q_disp = format_qty_value(q_num)
+                                prefix = f"Satır {item.source_row}: " if item.source_row else ""
+                                if kind == "customer":
+                                    err_msg = f"{prefix}Müşteri Qty ile Referans sayısı uyumsuz (Qty: {q_disp}, Ref: {ref_count})"
+                                else:
+                                    err_msg = f"{prefix}ERP Qty ile Referans sayısı uyumsuz (ERP Qty: {q_disp}, ERP Ref: {ref_count} adet)"
+                                if err_msg not in group_row_errors:
+                                    group_row_errors.append(err_msg)
+                    except (ValueError, TypeError):
+                        pass
+
+        total_qty = 0.0
+        has_numeric_qty = False
         non_numeric_qtys = []
         for item in group:
             if item.qty:
-                has_qty = True
-                try:
-                    total_qty += int(float(item.qty))
-                except ValueError:
+                pq = parse_numeric_qty(item.qty)
+                if pq is not None:
+                    has_numeric_qty = True
+                    total_qty += pq
+                else:
                     non_numeric_qtys.append(item.qty)
-        if has_qty:
-            if non_numeric_qtys:
-                qty_str = ", ".join(non_numeric_qtys)
-            else:
-                qty_str = str(total_qty)
+        if has_numeric_qty:
+            qty_str = format_qty_value(total_qty)
+        elif non_numeric_qtys:
+            qty_str = ", ".join(non_numeric_qtys)
         else:
             qty_str = ""
 
         is_duplicate = False
-        if not normalized.startswith("__NO_CODE_") and len(group) > 1:
+        if not normalized.startswith("__NO_CODE_") and not normalized.endswith("__NM") and len(group) > 1:
             has_any_ref = any(bool(item.reference.strip()) for item in group)
             if not has_any_ref:
                 sources = {(item.source_file, item.source_sheet) for item in group}
@@ -1667,22 +2264,52 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
                         break
 
         # Source breakdown and combined references
-        source_counts: dict[str, int] = defaultdict(int)
-        for item in group:
-            if not item.source_file:
-                continue
-            src_label = f"{item.source_file} ({item.source_sheet})" if item.source_sheet else item.source_file
-            try:
-                source_counts[src_label] += int(float(item.qty)) if item.qty else 1
-            except (ValueError, TypeError):
-                source_counts[src_label] += 1
+        def _fmt_q(qty: object) -> str:
+            if qty is None:
+                return "1"
+            qs = str(qty).strip()
+            if not qs:
+                return "1"
+            pq = parse_numeric_qty(qs)
+            if pq is not None:
+                return format_qty_value(pq)
+            return qs
 
-        if len(source_counts) > 1:
-            source_breakdown = ", ".join(f"{src}: {cnt} adet" for src, cnt in source_counts.items())
-        elif len(source_counts) == 1:
-            source_breakdown = list(source_counts.keys())[0]
+        sources_map: dict[str, list[PartRecord]] = defaultdict(list)
+        for item in group:
+            src_label = f"{item.source_file} ({item.source_sheet})" if item.source_sheet else (item.source_file or "")
+            sources_map[src_label].append(item)
+
+        if len(sources_map) <= 1:
+            # Single source file/sheet (or no file)
+            if len(group) > 1 and any(item.source_row for item in group):
+                source_breakdown = " + ".join(
+                    f"Satır {item.source_row} ({_fmt_q(item.qty)} adet)"
+                    if item.source_row else f"({_fmt_q(item.qty)} adet)"
+                    for item in group
+                )
+            elif len(sources_map) == 1 and list(sources_map.keys())[0]:
+                source_breakdown = list(sources_map.keys())[0]
+            else:
+                source_breakdown = ""
         else:
-            source_breakdown = ""
+            # Multiple source files/sheets
+            parts: list[str] = []
+            for src, items in sources_map.items():
+                if len(items) > 1 and any(it.source_row for it in items):
+                    sub = " + ".join(
+                        f"Satır {it.source_row} ({_fmt_q(it.qty)} adet)"
+                        if it.source_row else f"({_fmt_q(it.qty)} adet)"
+                        for it in items
+                    )
+                    parts.append(f"{src}: {sub}")
+                else:
+                    tot = 0.0
+                    for it in items:
+                        pq = parse_numeric_qty(it.qty) if it.qty else None
+                        tot += pq if pq is not None else 1.0
+                    parts.append(f"{src}: {format_qty_value(tot)} adet")
+            source_breakdown = ", ".join(parts)
 
         all_refs_list: list[str] = []
         for item in group:
@@ -1714,26 +2341,22 @@ def _unique_records(records: list[PartRecord]) -> dict[str, PartRecord]:
             all_codes=merged_all_codes,
             code_labels=merged_code_labels,
             status=merged_status,
+            source_row=group[0].source_row,
+            row_errors=tuple(group_row_errors),
         )
     return result
 
 
 def _read_table_with_detected_header(path: Path, sheet_name: str | None) -> tuple[pd.DataFrame, dict[str, str]]:
     with pd.ExcelFile(path) as book:
-        selected_sheet = sheet_name or book.sheet_names[0]
-        raw = pd.read_excel(book, sheet_name=selected_sheet, header=None, dtype=object)
-        for row_index in range(min(_MAX_SHEET_SCAN_ROWS, len(raw))):
-            headers = [_cell_text(value) for value in raw.iloc[row_index].tolist()]
-            keys = {_header_key(header) for header in headers}
-            if any(_header_field(header) == "part_number" for header in keys):
-                frame = pd.read_excel(book, sheet_name=selected_sheet, header=row_index, dtype=object)
-                resolved: dict[str, str] = {}
-                for column in frame.columns:
-                    role = _header_field(_cell_text(column))
-                    if role and role not in resolved:
-                        resolved[role] = str(column)
-                return frame, resolved
-    raise ValueError(f"{path.name}: ilk {_MAX_SHEET_SCAN_ROWS} satırda ürün kodu başlığı bulunamadı.")
+        selected_sheet = sheet_name or _select_customer_sheet(path)
+        sheet, header_row, raw_headers, detected, code_columns = _auto_layout(path, selected_sheet)
+        frame = pd.read_excel(book, sheet_name=sheet, header=header_row, dtype=object)
+        resolved: dict[str, str] = {}
+        for role, col_idx in detected.items():
+            if isinstance(col_idx, int) and col_idx < len(frame.columns):
+                resolved[role] = str(frame.columns[col_idx])
+        return frame, resolved
 
 
 def _find_rules_sheet(sheet_names: list[str]) -> str:
@@ -1802,7 +2425,8 @@ def _header_field(header: str) -> str | None:
 
 
 def _header_key(value: object) -> str:
-    text = unicodedata.normalize("NFKD", _cell_text(value).casefold())
+    text = _cell_text(value).replace("ı", "i").replace("İ", "i").casefold()
+    text = unicodedata.normalize("NFKD", text)
     return "".join(char for char in text if char.isalnum())
 
 
@@ -1815,7 +2439,8 @@ def _normalize_description(value: str) -> str:
 
 
 def _normalize_label(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value.casefold())
+    text = value.replace("ı", "i").replace("İ", "i").casefold()
+    normalized = unicodedata.normalize("NFKD", text)
     return "".join(character for character in normalized if character.isalnum())
 
 
@@ -1896,63 +2521,8 @@ def _contains_phrase(text: str, phrase: str) -> bool:
     return False
 
 
-def _infer_material_type(record: PartRecord, rulebook: RuleBook) -> str | None:
-    explicit = _normalize_label(record.material_type)
-    if explicit in rulebook.by_type_attribute:
-        return explicit
-
-    ref_clean = _normalize_label(record.reference)
-    if ref_clean in rulebook.by_type_attribute:
-        return ref_clean
-
-    desc_clean = record.description.casefold()
-    ref_lower = record.reference.casefold()
-
-    if "lehim" in ref_lower or "lehim" in desc_clean:
-        if "sarf" in rulebook.by_type_attribute:
-            return "sarf"
-
-    if "stm32" in desc_clean or "stm32" in record.part_number.casefold():
-        if "mcu" in rulebook.by_type_attribute:
-            return "mcu"
-
-    if "voltage regulator" in desc_clean or "regulator" in desc_clean:
-        if "icr" in rulebook.by_type_attribute:
-            return "icr"
-
-    if "humidity sensor" in desc_clean or "shtc3" in desc_clean:
-        if "isl" in rulebook.by_type_attribute:
-            return "isl"
-
-    if "makaron" in desc_clean or "makaron" in ref_lower:
-        if "sarf" in rulebook.by_type_attribute:
-            return "sarf"
-
-    if "display board" in desc_clean or "displayboard" in desc_clean or "display board" in ref_lower:
-        if "ymml" in rulebook.by_type_attribute:
-            return "ymml"
-        if "pcb" in rulebook.by_type_attribute:
-            return "pcb"
-
-    if "coil:" in desc_clean or "relay" in desc_clean or "röle" in desc_clean or "role" in desc_clean:
-        if "rel" in rulebook.by_type_attribute:
-            return "rel"
-
-    if "opto" in desc_clean or "ltv-" in desc_clean or "isp817" in desc_clean or "pc817" in desc_clean:
-        if "opt" in rulebook.by_type_attribute:
-            return "opt"
-
-    if "konnektör" in desc_clean or "connector" in desc_clean or "terminal block" in desc_clean or "modular jack" in desc_clean:
-        if "con" in rulebook.by_type_attribute:
-            return "con"
-
-    if "ac/dc converter" in desc_clean or "ac/dc" in desc_clean or "tny" in desc_clean or "tny" in record.part_number.casefold():
-        if "icr" in rulebook.by_type_attribute:
-            return "icr"
-
-    if "bridge" in desc_clean or "köprü" in desc_clean or "sdip-4l" in desc_clean:
-        if "dio" in rulebook.by_type_attribute:
-            return "dio"
+def _infer_material_type(record: PartRecord, rulebook: RuleBook | None) -> str | None:
+    by_type = rulebook.by_type_attribute if rulebook is not None else None
 
     # Part/Ref designator prefixes give a deterministic class for common BOM items.
     reference_map = {
@@ -1967,32 +2537,94 @@ def _infer_material_type(record: PartRecord, rulebook: RuleBook) -> str | None:
         "p": "con", "rl": "rel", "k": "rel", "hs": "con", "mk": "sarf",
         "br": "dio", "csn": "cap", "rsn": "res",
     }
+
+    explicit = _normalize_label(record.material_type)
+    if explicit and (explicit in by_type if by_type is not None else True):
+        return explicit
+
+    ref_clean = _normalize_label(record.reference)
+    if ref_clean and (ref_clean in by_type if by_type is not None else ref_clean in reference_map.values()):
+        return ref_clean
+
+    desc_clean = record.description.casefold()
+    ref_lower = record.reference.casefold()
+
+    if "lehim" in ref_lower or "lehim" in desc_clean:
+        if by_type is None or "sarf" in by_type:
+            return "sarf"
+
+    if "stm32" in desc_clean or "stm32" in record.part_number.casefold():
+        if by_type is None or "mcu" in by_type:
+            return "mcu"
+
+    if "voltage regulator" in desc_clean or "regulator" in desc_clean:
+        if by_type is None or "icr" in by_type:
+            return "icr"
+
+    if "humidity sensor" in desc_clean or "shtc3" in desc_clean:
+        if by_type is None or "isl" in by_type:
+            return "isl"
+
+    if "makaron" in desc_clean or "makaron" in ref_lower:
+        if by_type is None or "sarf" in by_type:
+            return "sarf"
+
+    if "display board" in desc_clean or "displayboard" in desc_clean or "display board" in ref_lower:
+        if by_type is not None and "ymml" in by_type:
+            return "ymml"
+        if by_type is None or "pcb" in by_type:
+            return "pcb"
+
+    if "coil:" in desc_clean or "relay" in desc_clean or "röle" in desc_clean or "role" in desc_clean:
+        if by_type is None or "rel" in by_type:
+            return "rel"
+
+    if "opto" in desc_clean or "ltv-" in desc_clean or "isp817" in desc_clean or "pc817" in desc_clean:
+        if by_type is None or "opt" in by_type:
+            return "opt"
+
+    if "konnektör" in desc_clean or "connector" in desc_clean or "terminal block" in desc_clean or "modular jack" in desc_clean:
+        if by_type is None or "con" in by_type:
+            return "con"
+
+    if "ac/dc converter" in desc_clean or "ac/dc" in desc_clean or "tny" in desc_clean or "tny" in record.part_number.casefold():
+        if by_type is None or "icr" in by_type:
+            return "icr"
+
+    if "bridge" in desc_clean or "köprü" in desc_clean or "sdip-4l" in desc_clean:
+        if by_type is None or "dio" in by_type:
+            return "dio"
+
     inferred: set[str] = set()
     for segment in re.split(r"[,;|]", record.reference.upper()):
-        match = re.match(r"\s*([A-Za-z0-9_]+)", segment)
-        if match:
-            raw_token = match.group(1).casefold()
-            # Try exact prefix match first
-            candidate = reference_map.get(raw_token)
-            if not candidate:
-                # Strip trailing digits or underscores
-                alpha_only = re.sub(r"[\d_].*$", "", raw_token)
-                candidate = reference_map.get(alpha_only)
-            if not candidate:
-                if raw_token.startswith("r") and not raw_token.startswith(("rl", "rv", "rp", "rt")):
-                    candidate = "res"
-                elif raw_token.startswith("c") and not raw_token.startswith(("cbl",)):
-                    candidate = "cap"
-                elif raw_token.startswith("d") or raw_token.startswith("br"):
-                    candidate = "dio"
-                elif raw_token.startswith("l"):
-                    candidate = "ind"
-                elif raw_token.startswith("j") or raw_token.startswith("p"):
-                    candidate = "con"
-            if candidate and candidate in rulebook.by_type_attribute:
-                inferred.add(candidate)
+        seg_clean = segment.strip()
+        if not seg_clean:
+            continue
+        _, base_ref, comp_type = _ref_base_component(seg_clean)
+        if not comp_type and not base_ref:
+            continue
+        ct = comp_type.casefold() if comp_type else ""
+        candidate = reference_map.get(ct)
+        if not candidate and base_ref:
+            candidate = reference_map.get(base_ref.casefold())
+        if not candidate and ct:
+            if ct.startswith("r") and not ct.startswith(("rl", "rv", "rp", "rt")):
+                candidate = "res"
+            elif ct.startswith("c") and not ct.startswith(("cbl", "csn")):
+                candidate = "cap"
+            elif ct.startswith("d") or ct.startswith("br") or ct.startswith("zd"):
+                candidate = "dio"
+            elif ct.startswith("l"):
+                candidate = "ind"
+            elif ct.startswith("j") or ct.startswith("p"):
+                candidate = "con"
+        if candidate and (by_type is None or candidate in by_type):
+            inferred.add(candidate)
     if len(inferred) == 1:
         return next(iter(inferred))
+
+    if rulebook is None:
+        return None
 
     # Ambiguous reference designators (for example Q3) are resolved only by a
     # unique type-specific Value/Type term present in the ERP description.

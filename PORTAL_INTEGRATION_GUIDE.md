@@ -211,6 +211,15 @@ BOM karşılaştırma motoru basit bir metin eşleştiricisi **değildir**. Otom
 * Dizgi referanslarında bir uyuşmazlık olduğunda sadece genel bir hata mesajı basılmaz; doğrudan hangi referansların ERP'de fazla veya müşteride eksik olduğu açıkça parantez içinde listelenir:  
   `Fark: ERP'de Farklı/Fazla: ST1L_C22, ST1R_C22`
 
+### 6. Temiz Hücre Kuralı (Clean Cell Rule)
+* Durumu `UYGUN` olan tüm satırlarda `Hata/Uyarı Durumu` hücresi kesinlikle temiz (`""`) tutulur. Operatörler yalnızca gerçek aksiyon gerektiren `HATA` ve `UYARI` satırlarında açıklama görür.
+
+### 7. Çoklu Parça Kodu ve Çift Yönlü Satır Eşleme
+* Müşteri BOM satırlarında noktalı virgül, boşluk veya parantezle ayrılmış alternatif üretici kodları (örn: `RC0603FR-0710KL; CR0603-FX-1002ELF`) veya `#` ile biten kodlar otomatik olarak bağımsız adaylar olarak ayrıştırılır ve ERP kodlarıyla çift yönlü eşleştirilir.
+
+### 8. Dinamik Çok Tablolu Excel Okuma Motoru
+* Müşteri Excel tablolarında karmaşık antetler, birden fazla tablo başlangıcı veya boş satırlar olsa bile veri profilleme motoru tablo başlıklarını ve veri sınırlarını içerik yoğunluğuna göre dinamik tespit eder.
+
 ---
 
 ## 4. Klasör ve Dosya Referansı
@@ -220,6 +229,7 @@ BOM karşılaştırma motoru basit bir metin eşleştiricisi **değildir**. Otom
 | [`src/bom_enricher/comparison.py`](file:///c:/Users/sudem/OneDrive/Belgeler/deka/src/bom_enricher/comparison.py) | Çok aşamalı eşleştirme, simetri uzlaştırma ve 13 sütunlu Excel rapor üreticisi. |
 | [`src/bom_enricher/excel_io.py`](file:///c:/Users/sudem/OneDrive/Belgeler/deka/src/bom_enricher/excel_io.py) | Müşteri ve ERP Excel dosyalarını akıllı başlık tespit algoritmasıyla okuyan modül. |
 | [`src/bom_enricher/web.py`](file:///c:/Users/sudem/OneDrive/Belgeler/deka/src/bom_enricher/web.py) | FastAPI REST API uç noktaları (`/api/compare`, `/health`). |
-| [`src/bom_enricher/semantic_parser.py`](file:///c:/Users/sudem/OneDrive/Belgeler/deka/src/bom_enricher/semantic_parser.py) | Elektriksel birim normalizasyonu ($10\mu F$, $100nF$, $10k\Omega$). |
+| [`src/bom_enricher/semantic_parser.py`](file:///c:/Users/sudem/OneDrive/Belgeler/deka/src/bom_enricher/semantic_parser.py) | Elektriksel birim normalizasyonu ($10\mu F$, $100nF$, $10k\Omega$, $m\Omega$). |
 | [`src/bom_enricher/static/`](file:///c:/Users/sudem/OneDrive/Belgeler/deka/src/bom_enricher/static/) | Modern, responsive, Türkçe web ön yüzü ve varlıkları. |
 | [`tests/test_comparison.py`](file:///c:/Users/sudem/OneDrive/Belgeler/deka/tests/test_comparison.py) | Karşılaştırma motorunun tüm testleri. |
+| [`tests/test_golden_corpus.py`](file:///c:/Users/sudem/OneDrive/Belgeler/deka/tests/test_golden_corpus.py) | 5 gerçek üretim veri setini regresyonsuz doğrulayan altın küme testleri. |
