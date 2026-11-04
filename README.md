@@ -19,7 +19,7 @@
 
 | Dal (Branch) | Kimler İçin? | Kapsam |
 | :--- | :--- | :--- |
-| **`feature/portal-bom-comparison`** | **Şirket Portalı & Backend Mühendisleri** | Ağır OCR, PDF ve yapay zekâ bağımlılıklarından arındırılmış; sadece **BOM Karşılaştırma Motoru** ve hafif FastAPI web servisini içeren bağımsız, hafif sürüm. |
+| **`portal-bom-comparison`** *(veya `feature/portal-bom-comparison`)* | **Şirket Portalı & Backend Mühendisleri** | Ağır OCR, PDF ve yapay zekâ bağımlılıklarından arındırılmış; sadece **BOM Karşılaştırma Motoru** ve hafif FastAPI web servisini içeren bağımsız, hafif sürüm. |
 | **`dev-sudem`** | **Geliştiriciler & Tam Sistem** | Datasheet Analizi (VLM / LLM) ve BOM Karşılaştırma dahil tüm modülleri içeren ana geliştirme dalı. |
 
 ---

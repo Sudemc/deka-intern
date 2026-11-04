@@ -30,4 +30,4 @@ markers = [
 ]
 
 [tool.setuptools.package-data]
-bom_enricher = ["static/*.html"]
+bom_enricher = ["static/*"]

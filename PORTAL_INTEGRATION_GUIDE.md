@@ -15,9 +15,10 @@ Modül; ağır PDF/OCR ve yapay zekâ kütüphanelerinden tamamen arındırılm�
 ### Adım Adım Kurulum
 ```bash
 # 1. Depoyu klonlayın ve portala özel karşılaştırma dalına geçin:
-git clone https://github.com/deka-internship/erp-data-manager.git
-cd erp-data-manager
-git checkout feature/portal-bom-comparison
+git clone https://github.com/Sudemc/deka-intern.git
+cd deka-intern
+git checkout portal-bom-comparison
+# (veya: git checkout feature/portal-bom-comparison)
 
 # 2. Sanal ortam (venv) oluşturun ve aktif edin:
 # Windows (PowerShell):
