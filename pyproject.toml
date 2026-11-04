@@ -5,24 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "bom-enricher"
 version = "1.0.0"
-description = "DEKA Elektronik Offline BOM Comparison & Datasheet Intelligence Engine"
+description = "DEKA Elektronik Offline BOM Comparison Engine"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pandas>=2.0",
     "openpyxl>=3.1",
-    "requests>=2.31",
     "fastapi>=0.110,<1",
     "uvicorn>=0.27,<1",
     "python-multipart>=0.0.9,<1",
-    "pypdf>=4.0",
-    "pdfplumber>=0.11",
-    "pypdfium2>=4.0",
-    "pillow>=10.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "httpx>=0.27,<1", "reportlab>=4.0"]
+dev = ["pytest>=8.0", "httpx>=0.27,<1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
