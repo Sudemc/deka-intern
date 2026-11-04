@@ -177,7 +177,7 @@ def _normalize_mega(text: str) -> str:
     Guards against hyphenated part numbers (e.g. 7M-27.120, VLP8040T-150M).
     """
     return re.sub(
-        r"(?<![a-zA-Z0-9\-_])(?:(\d+\s*[xX*]\s*))?(\d+(?:\.\d+)?)\s*(?:M[oO][hH][mM]|M[oO]hm|MΩ|Meg|MEG|M)(?![a-zA-Z0-9\-_])",
+        r"(?<![a-zA-Z0-9\-_])(?:(\d+\s*[xX*]\s*))?(\d+(?:\.\d+)?)\s*(?:M[oO][hH][mM]s?|M[oO]hms?|MΩ|Meg|MEG|M)(?![a-zA-Z0-9\-_])",
         lambda m: (m.group(1) or "") + m.group(2) + "megohm",
         text,
     )

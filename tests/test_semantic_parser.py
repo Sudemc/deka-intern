@@ -150,3 +150,10 @@ def test_pure_inductor_vs_capacitor_triggers_material_type_conflict():
     issues = compare_descriptions("100nF", "10uH Inductor", mpn_matched=False)
     assert issues == ["Açıklama Çelişkisi (Malzeme Tipi farklı: Müşteri Kapasitör, ERP Endüktans)"]
 
+
+
+def test_mohms_plural_parsed_as_megohm():
+    cust = '1 MOhms ±0.1% 0.1W, 1/10W Chip Resistor 0603 (1608 Metric) Thin Film'
+    erp = 'SMD 0603 Package, 1M, %0.1, 1/10W, Thin Film, General, Yageo'
+    issues = compare_descriptions(cust, erp, mpn_matched=True)
+    assert issues == []
