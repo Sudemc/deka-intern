@@ -19,6 +19,7 @@ from openpyxl import Workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
 from bom_enricher.comparison import RuleBook, compare_workbooks, load_rulebook
+
 try:
     from bom_enricher.datasheet_analyzer import (
         analyze_single_datasheet,
@@ -27,10 +28,10 @@ try:
     )
     from bom_enricher.vision_llm import VisionLLMClient
 except ImportError:
-    analyze_single_datasheet = None
-    generate_datasheet_excel_report = None
-    get_default_rulebook = None
-    VisionLLMClient = None
+    analyze_single_datasheet = None  # type: ignore[assignment]
+    generate_datasheet_excel_report = None  # type: ignore[assignment]
+    get_default_rulebook = None  # type: ignore[assignment]
+    VisionLLMClient = None  # type: ignore[assignment]
 
 
 _MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -108,18 +109,13 @@ def health() -> dict[str, str]:
 
 @app.get("/api/health/llm", tags=["Health"])
 def get_llm_health() -> dict[str, object]:
-    if VisionLLMClient is None:
-        return {
-            "status": "offline",
-            "message": "Vision LLM not installed in lightweight portal branch",
-            "text_model": "none",
-            "vision_model": "none",
-            "host": "http://127.0.0.1:11434",
-        }
-    vlm = VisionLLMClient()
-    is_online = vlm.is_available()
+    is_online = False
+    if VisionLLMClient is not None:
+        vlm = VisionLLMClient()
+        is_online = vlm.is_available()
     return {
         "status": "online" if is_online else "offline",
+        "datasheet_enabled": analyze_single_datasheet is not None,
         "text_model": "llama3.2:3b",
         "vision_model": "moondream:latest",
         "host": "http://127.0.0.1:11434",
@@ -291,6 +287,8 @@ async def analyze_datasheets(
     part_number: str | None = Form(None),
     material_type: str | None = Form(None),
 ) -> dict[str, object]:
+    if analyze_single_datasheet is None or generate_datasheet_excel_report is None:
+        raise HTTPException(status_code=501, detail="Datasheet analiz modülü bu dalda devre dışıdır.")
     all_datasheet_uploads: list[UploadFile] = []
     if file is not None and getattr(file, "filename", None):
         all_datasheet_uploads.append(file)
@@ -303,11 +301,6 @@ async def analyze_datasheets(
         if getattr(u, "filename", None):
             all_datasheet_uploads.append(u)
 
-    if analyze_single_datasheet is None:
-        raise HTTPException(
-            status_code=501,
-            detail="Datasheet analizi modülü bu hafif portal yapısında etkinleştirilmemiştir. Yalnızca BOM karşılaştırma motoru devrededir."
-        )
     if not all_datasheet_uploads:
         raise HTTPException(status_code=400, detail="En az bir PDF datasheet dosyası yükleyin.")
 
@@ -339,7 +332,7 @@ async def analyze_datasheets(
                     detail=f"Seçtiğiniz '{filename}' kural dosyasında 'BİRLEŞTİRİLMİŞ' sayfası bulunamadı. Lütfen DEKA Malzeme_Tipleri.xlsx kural dosyasını yükleyin veya sistemdeki varsayılan kuralları kullanmak için kural dosyası alanını boş bırakın."
                 ) from ve
         elif DEFAULT_RULES_PATH.exists():
-            rulebook = (get_default_rulebook() if get_default_rulebook else (load_rulebook(DEFAULT_RULES_PATH) if DEFAULT_RULES_PATH.exists() else None)) or RuleBook()
+            rulebook = get_default_rulebook() or RuleBook()
         else:
             rulebook = RuleBook()
 

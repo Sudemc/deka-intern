@@ -5,11 +5,12 @@ from openpyxl import Workbook, load_workbook
 import pytest
 from starlette.testclient import TestClient
 
-from bom_enricher.web import app
-import bom_enricher.web as web_mod
+from bom_enricher.web import analyze_single_datasheet, app
 
-_datasheet_available = getattr(web_mod, "analyze_single_datasheet", None) is not None
-_skip_datasheet = pytest.mark.skipif(not _datasheet_available, reason="Datasheet module not included in lightweight portal BOM comparison branch")
+_skip_datasheet = pytest.mark.skipif(
+    analyze_single_datasheet is None,
+    reason="Datasheet analyzer module is not installed on the portal-bom-comparison branch",
+)
 
 
 @pytest.fixture
